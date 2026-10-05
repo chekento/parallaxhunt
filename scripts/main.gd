@@ -1213,6 +1213,49 @@ func _update_player(delta: float) -> void:
         var drain: float = 0.018 if current_vehicle >= 0 else 0.055
         energy = maxf(0.0,energy-delta*drain*10.0)
 
+func _lane_is_clear(car_index: int, lane: int, radius_t: float = 0.045) -> bool:
+    if car_index<0 or car_index>=traffic.size():
+        return false
+    var c: Dictionary = traffic[car_index]
+    for k in range(traffic.size()):
+        if k==car_index:
+            continue
+        var other: Dictionary = traffic[k]
+        if int(other.road)!=int(c.road) or int(other.lane)!=lane or bool(other.reverse)!=bool(c.reverse):
+            continue
+        var gap: float = abs(float(other.t)-float(c.t))
+        gap=minf(gap,1.0-gap)
+        if gap<radius_t:
+            return false
+    return true
+
+func _choose_agent_activity(_a: Dictionary) -> Dictionary:
+    var candidates: Array = []
+    for st in storefronts:
+        if str(st.kind) in ["restaurant","cafe","shop","garage","workshop"]:
+            candidates.append({"kind":str(st.kind),"pos":Vector2(st.pos)})
+    for park in parks:
+        candidates.append({"kind":"park","pos":Vector2(park.rect.get_center())})
+    for prop in property_sites:
+        candidates.append({"kind":"residential","pos":Vector2(prop.pos)})
+    if candidates.is_empty():
+        return {"kind":"walk","pos":player_pos}
+    return Dictionary(candidates[rng.randi_range(0,candidates.size()-1)])
+
+func _nearest_road_t_to_point(road_index: int, target: Vector2) -> float:
+    if road_index<0 or road_index>=roads.size():
+        return 0.0
+    var best_t: float = 0.0
+    var best_d: float = INF
+    for n in range(41):
+        var tt: float = float(n)/40.0
+        var p: Vector2 = _sample_polyline(roads[road_index].points,tt)
+        var d: float = p.distance_to(target)
+        if d<best_d:
+            best_d=d
+            best_t=tt
+    return best_t
+
 func _update_traffic(delta: float) -> void:
     for i in range(traffic.size()):
         var c: Dictionary = traffic[i]
@@ -1314,7 +1357,7 @@ func _update_smart_agents(delta: float) -> void:
         var state: String = str(a.state)
 
         if Vector2(a.get("destination",Vector2.ZERO))==Vector2.ZERO:
-            var activity := _choose_agent_activity(a)
+            var activity: Dictionary = _choose_agent_activity(a)
             a["activity"]=str(activity.kind)
             a["destination"]=Vector2(activity.pos)
 
@@ -1345,7 +1388,7 @@ func _update_smart_agents(delta: float) -> void:
                 a["timer"]=rng.randf_range(18.0,38.0)
                 a["parking_progress"]=0.0
                 a["car_parked"]=false
-                var next_activity := _choose_agent_activity(a)
+                var next_activity: Dictionary = _choose_agent_activity(a)
                 a["activity"]=str(next_activity.kind)
                 a["destination"]=Vector2(next_activity.pos)
 
