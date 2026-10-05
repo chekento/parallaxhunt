@@ -81,6 +81,8 @@ var current_paint: String = ""
 var jobs_done: int = 0
 var active_job: Dictionary = {}
 var side_job_sites: Array = []
+var transit_riding: int = -1
+var transit_stops: Array = []
 var autosave_timer: float = 0.0
 var commerce_panel: PanelContainer
 var commerce_title: Label
@@ -120,6 +122,7 @@ func _ready() -> void:
     _generate_visual_props()
     _generate_storefronts()
     _generate_transit()
+    _build_transit_stops()
     _generate_collectibles()
     _build_ui()
     _build_audio()
@@ -522,7 +525,10 @@ func _generate_transit() -> void:
             "speed":0.010 + float(i) * 0.0015,
             "reverse":i % 2 == 1,
             "color":[Color("#64d7c1"),Color("#f0b45f"),Color("#7ab8ff"),Color("#c79bff")][i % 4],
-            "line":"B%d" % (12 + i * 4)
+            "line":"B%d" % (12 + i * 4),
+            "dwell":0.0,
+            "at_stop":false,
+            "stop_index":-1
         })
     var tram_routes := [1, 7, 10]
     for i in range(tram_routes.size()):
@@ -533,8 +539,21 @@ func _generate_transit() -> void:
             "speed":0.008 + float(i) * 0.0012,
             "reverse":i % 2 == 0,
             "color":[Color("#e66a84"),Color("#67cde8"),Color("#f0d36d")][i % 3],
-            "line":"T%d" % (2 + i)
+            "line":"T%d" % (2 + i),
+            "dwell":0.0,
+            "at_stop":false,
+            "stop_index":-1
         })
+
+func _build_transit_stops() -> void:
+    transit_stops.clear()
+    for vi in range(transit_vehicles.size()):
+        var tv: Dictionary = transit_vehicles[vi]
+        var rd = roads[int(tv.road)]
+        for si in range(4):
+            var tt: float = 0.12 + float(si)*0.24
+            var pos := _sample_polyline(rd.points,tt)
+            transit_stops.append({"vehicle":vi,"t":tt,"pos":pos,"line":str(tv.line),"name":"%s · Halt %d" % [str(tv.line),si+1]})
 
 func _generate_collectibles() -> void:
     fragments.clear()
@@ -781,6 +800,9 @@ func _update_sensor(delta: float) -> void:
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
 func _update_player(delta: float) -> void:
+    if transit_riding >= 0:
+        move_vec = Vector2.ZERO
+        return
     if map_open or missions_open or minigame_open or commerce_panel.visible:
         vehicle_velocity = move_toward(vehicle_velocity,0.0,delta*320.0)
         return
@@ -843,10 +865,41 @@ func _update_pedestrians(delta: float) -> void:
 
 func _update_transit(delta: float) -> void:
     for i in range(transit_vehicles.size()):
-        var tveh = transit_vehicles[i]
-        var direction := -1.0 if tveh.reverse else 1.0
-        tveh.t = fposmod(float(tveh.t) + float(tveh.speed) * delta * direction, 1.0)
-        transit_vehicles[i] = tveh
+        var tveh: Dictionary = transit_vehicles[i]
+        var dwell: float = float(tveh.get("dwell",0.0))
+        if dwell > 0.0:
+            dwell = maxf(0.0,dwell-delta)
+            tveh["dwell"]=dwell
+            tveh["at_stop"]=dwell>0.0
+            transit_vehicles[i]=tveh
+            continue
+        var direction: float = -1.0 if bool(tveh.reverse) else 1.0
+        var old_t: float = float(tveh.t)
+        var new_t: float = fposmod(old_t + float(tveh.speed)*delta*direction,1.0)
+        tveh["t"]=new_t
+        tveh["at_stop"]=false
+        tveh["stop_index"]=-1
+        for stop in transit_stops:
+            if int(stop.vehicle)!=i:
+                continue
+            var st: float = float(stop.t)
+            var crossed := false
+            if direction>0.0:
+                crossed = (old_t<=st and new_t>=st) or (new_t<old_t and (st>=old_t or st<=new_t))
+            else:
+                crossed = (old_t>=st and new_t<=st) or (new_t>old_t and (st<=old_t or st>=new_t))
+            if crossed:
+                tveh["t"]=st
+                tveh["dwell"]=3.2
+                tveh["at_stop"]=true
+                tveh["stop_index"]=transit_stops.find(stop)
+                break
+        transit_vehicles[i]=tveh
+    if transit_riding>=0 and transit_riding<transit_vehicles.size():
+        var ride: Dictionary = transit_vehicles[transit_riding]
+        var road = roads[int(ride.road)]
+        player_pos = _sample_polyline(road.points,float(ride.t))
+        camera_pos = player_pos
 
 func _update_secrets() -> void:
     for i in range(secrets.size()):
@@ -886,6 +939,8 @@ func _update_ui() -> void:
     var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
     if current_vehicle >= 0:
         mode = "Driving · %s" % str(parked_cars[current_vehicle]["class"]).capitalize()
+    elif transit_riding >= 0 and transit_riding < transit_vehicles.size():
+        mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     status_label.text = "%s · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,world_zoom,credits,int(energy),jobs_done]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
@@ -901,7 +956,10 @@ func _interact() -> void:
     var n := _nearest_interactable()
     if n.is_empty():
         return
-    if n.type == "interior_exit":
+    if n.type == "transit":
+        _toggle_transit(int(n.index))
+        return
+    elif n.type == "interior_exit":
         _leave_interior()
         return
     elif n.type == "interior_feature":
@@ -958,6 +1016,11 @@ func _interact() -> void:
             _play_sfx("vehicle")
 
 func _nearest_interactable() -> Dictionary:
+    if transit_riding>=0:
+        var tv: Dictionary = transit_vehicles[transit_riding]
+        if bool(tv.get("at_stop",false)):
+            return {"type":"transit","index":transit_riding,"action":"AUSSTEIGEN"}
+        return {}
     if interior_active:
         var exit_pos := Vector2(interior_size.x*0.5,interior_size.y-48)
         if interior_player_pos.distance_to(exit_pos) < 78.0:
@@ -984,6 +1047,16 @@ func _nearest_interactable() -> Dictionary:
         if d2 < 88.0 and d2 < bd:
             best = {"type":"secret","index":j,"action":"OPEN SECRET"}
             bd = d2
+    for ti in range(transit_vehicles.size()):
+        var tv: Dictionary = transit_vehicles[ti]
+        if not bool(tv.get("at_stop",false)):
+            continue
+        var rd = roads[int(tv.road)]
+        var tp: Vector2 = _sample_polyline(rd.points,float(tv.t))
+        var dt: float = player_pos.distance_to(tp)
+        if dt < 115.0 and dt < bd:
+            best = {"type":"transit","index":ti,"action":"EINSTEIGEN %s" % str(tv.line)}
+            bd = dt
     if not active_job.is_empty():
         var target_pos: Vector2 = Vector2(active_job.get("target",Vector2.ZERO))
         var djob: float = player_pos.distance_to(target_pos)
@@ -1044,6 +1117,7 @@ func _draw() -> void:
     _draw_trees()
     _draw_vegetation_props()
     _draw_storefronts()
+    _draw_transit_stops()
     _draw_jobboards()
     _draw_street_props()
     _draw_pedestrians()
@@ -1515,6 +1589,16 @@ func _draw_trees() -> void:
             draw_circle(c,t.r,t.tint.darkened(0.2))
             draw_circle(c+Vector2(-5,-5),t.r*0.62,t.tint.lightened(0.12))
             draw_circle(c+Vector2(7,-1),t.r*0.48,t.tint)
+
+func _draw_transit_stops() -> void:
+    for st in transit_stops:
+        if player_pos.distance_to(Vector2(st.pos))>1700.0:
+            continue
+        var c := _project(Vector2(st.pos),6)
+        draw_line(c,c+Vector2(0,-28),Color("#697980"),2.5,true)
+        draw_rect(Rect2(c+Vector2(-18,-44),Vector2(36,20)),Color(0.04,0.09,0.11,0.94),true)
+        draw_rect(Rect2(c+Vector2(-18,-44),Vector2(36,20)),Color("#72d7e6"),false,1.5)
+        draw_string(ThemeDB.fallback_font,c+Vector2(-14,-40),str(st.line),HORIZONTAL_ALIGNMENT_CENTER,28,9,Color.WHITE)
 
 func _draw_jobboards() -> void:
     for j in side_job_sites:
@@ -2346,6 +2430,32 @@ func _on_lightsout_cell(index: int) -> void:
     if not any_on:
         _finish_minigame()
 
+func _toggle_transit(index: int) -> void:
+    if transit_riding>=0:
+        var ride: Dictionary = transit_vehicles[transit_riding]
+        if not bool(ride.get("at_stop",false)):
+            _notify("Aussteigen erst am nächsten Halt.")
+            return
+        var road = roads[int(ride.road)]
+        var tang := _polyline_tangent(road.points,float(ride.t))
+        var normal := Vector2(-tang.y,tang.x)
+        player_pos = _sample_polyline(road.points,float(ride.t)) + normal*85.0
+        transit_riding=-1
+        _play_sfx("vehicle")
+        _notify("ÖPNV verlassen.")
+        return
+    if index<0 or index>=transit_vehicles.size():
+        return
+    var tv: Dictionary = transit_vehicles[index]
+    if not bool(tv.get("at_stop",false)):
+        _notify("Fahrzeug ist nicht am Halt.")
+        return
+    transit_riding=index
+    current_vehicle=-1
+    vehicle_velocity=0.0
+    _play_sfx("vehicle")
+    _notify("%s bestiegen." % str(tv.line))
+
 func _save_game() -> void:
     var data := {
         "player":[player_pos.x,player_pos.y],
@@ -2622,6 +2732,8 @@ func _draw_map_overlay() -> void:
         _draw_map_marker(_map_point(Vector2(p.pos),map_rect),Color("#d6a8ff"),"H")
     for j in side_job_sites:
         _draw_map_marker(_map_point(Vector2(j.pos),map_rect),Color("#8de9aa"),"J")
+    for ts in transit_stops:
+        _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
     if not active_job.is_empty():
         _draw_map_marker(_map_point(Vector2(active_job.get("target",Vector2.ZERO)),map_rect),Color("#ffffff"),"➤")
     for m in mission_sites:
@@ -2640,6 +2752,7 @@ func _draw_map_overlay() -> void:
         ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
         ["H","Kaufbare Immobilie / Hausgarage",Color("#d6a8ff")],
         ["J","Nebenjob-Board",Color("#8de9aa")],
+        ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
     ]
     for row in legend:
