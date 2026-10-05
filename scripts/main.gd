@@ -4002,36 +4002,151 @@ func _finish_minigame() -> void:
     _advance_native_chapter()
     _check_npc_contract()
 
+func _wire_bit_for_delta(d: Vector2i) -> int:
+    if d==Vector2i(0,-1): return 1
+    if d==Vector2i(1,0): return 2
+    if d==Vector2i(0,1): return 4
+    return 8
+
+func _rotate_wire_mask(mask: int) -> int:
+    var out := 0
+    if mask&1: out|=2
+    if mask&2: out|=4
+    if mask&4: out|=8
+    if mask&8: out|=1
+    return out
+
+func _wire_symbol(mask: int) -> String:
+    match mask:
+        10: return "━"
+        5: return "┃"
+        3: return "┗"
+        6: return "┏"
+        12: return "┓"
+        9: return "┛"
+        _: return "•"
+
 func _init_wire() -> void:
-    game_grid.columns = 4
     var diff: int = int(active_mission_site.get("difficulty",1))
-    game_target = [0,1,1,2,3,0,1,2,0,3,2,2,0,1,1,0]
-    if diff>=3:
-        game_target = [0,2,1,3,3,1,2,0,1,3,0,2,2,0,3,1]
+    var cols: int = 5 if diff>=3 else 4
+    var rows: int = cols
+    game_grid.columns = cols
+    var total: int = cols*rows
+    game_target = []
     game_current = []
-    for i in range(game_target.size()):
-        game_current.append((int(game_target[i])+1+rng.randi_range(0,2))%4)
-    game_status.text = "Drehe alle Leiterbahnen in die richtige Richtung."
+    game_target.resize(total)
+    game_current.resize(total)
+    for i in range(total):
+        game_target[i]=0
+
+    # Build one guaranteed connected snake from the left edge through every tile.
+    var path: Array = []
+    for x in range(cols):
+        if x%2==0:
+            for y in range(rows):
+                path.append(Vector2i(x,y))
+        else:
+            for y in range(rows-1,-1,-1):
+                path.append(Vector2i(x,y))
+
+    for i in range(path.size()-1):
+        var a: Vector2i = path[i]
+        var b: Vector2i = path[i+1]
+        var da: Vector2i = b-a
+        var db: Vector2i = a-b
+        var ia: int = a.y*cols+a.x
+        var ib: int = b.y*cols+b.x
+        game_target[ia]=int(game_target[ia])|_wire_bit_for_delta(da)
+        game_target[ib]=int(game_target[ib])|_wire_bit_for_delta(db)
+
+    var start_index: int = int(path[0].y)*cols+int(path[0].x)
+    var end_pos: Vector2i = path[path.size()-1]
+    var end_index: int = end_pos.y*cols+end_pos.x
+    game_target[start_index]=int(game_target[start_index])|8
+    game_target[end_index]=int(game_target[end_index])|2
+    game_secret=[end_index,cols]
+
+    for i in range(total):
+        var mask: int = int(game_target[i])
+        var turns: int = rng.randi_range(0,3)
+        for _t in range(turns):
+            mask=_rotate_wire_mask(mask)
+        game_current[i]=mask
+
+    game_status.text = "Verbinde SOURCE links mit TARGET rechts. Alle %d Leitungsfelder müssen Teil des Netzes sein." % total
     _render_wire()
 
 func _render_wire() -> void:
     for child in game_grid.get_children():
         child.queue_free()
-    var symbols := ["━","┃","┗","┛"]
+    var cols: int = int(game_secret[1])
+    var end_index: int = int(game_secret[0])
     for i in range(game_current.size()):
         var idx := i
-        game_grid.add_child(_game_button(str(symbols[int(game_current[i])]),_on_wire_cell.bind(idx)))
+        var label := _wire_symbol(int(game_current[i]))
+        if i==0:
+            label="S "+label
+        elif i==end_index:
+            label=label+" T"
+        var button := _game_button(label,_on_wire_cell.bind(idx))
+        if _wire_reachable_cells().has(i):
+            button.modulate=Color("#73f3ce")
+        game_grid.add_child(button)
+    game_info.text = "%s · Netz %d×%d" % [("REPLAY" if active_mission_replay else "HACKING-SUBMISSION"),cols,cols]
     await get_tree().process_frame
 
+func _wire_reachable_cells() -> Array:
+    var out: Array = []
+    if game_current.is_empty() or game_secret.size()<2:
+        return out
+    var cols: int = int(game_secret[1])
+    var rows: int = int(game_current.size()/cols)
+    if (int(game_current[0])&8)==0:
+        return out
+    var queue: Array = [0]
+    var seen: Dictionary = {0:true}
+    var dirs := [
+        [Vector2i(0,-1),1,4],
+        [Vector2i(1,0),2,8],
+        [Vector2i(0,1),4,1],
+        [Vector2i(-1,0),8,2]
+    ]
+    while not queue.is_empty():
+        var idx: int = int(queue.pop_front())
+        out.append(idx)
+        var x: int = idx%cols
+        var y: int = int(idx/cols)
+        var mask: int = int(game_current[idx])
+        for entry in dirs:
+            var d: Vector2i = entry[0]
+            var bit: int = int(entry[1])
+            var opposite: int = int(entry[2])
+            if (mask&bit)==0:
+                continue
+            var nx: int = x+d.x
+            var ny: int = y+d.y
+            if nx<0 or nx>=cols or ny<0 or ny>=rows:
+                continue
+            var ni: int = ny*cols+nx
+            if (int(game_current[ni])&opposite)==0:
+                continue
+            if not seen.has(ni):
+                seen[ni]=true
+                queue.append(ni)
+    return out
+
+func _wire_solved() -> bool:
+    if game_secret.size()<2:
+        return false
+    var end_index: int = int(game_secret[0])
+    var reachable := _wire_reachable_cells()
+    return reachable.size()==game_current.size() and reachable.has(end_index) and (int(game_current[end_index])&2)!=0
+
 func _on_wire_cell(index: int) -> void:
-    game_current[index] = (int(game_current[index])+1)%4
+    game_current[index]=_rotate_wire_mask(int(game_current[index]))
+    _play_sfx("hack_click")
     _render_wire()
-    var ok := true
-    for i in range(game_current.size()):
-        if int(game_current[i]) != int(game_target[i]):
-            ok = false
-            break
-    if ok:
+    if _wire_solved():
         _finish_minigame()
 
 func _init_slide() -> void:
