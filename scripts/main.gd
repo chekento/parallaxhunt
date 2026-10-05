@@ -126,6 +126,7 @@ var new_game_mode: bool = false
 var sound_enabled: bool = true
 var sensor_gain: float = 1.0
 var driving_assist: bool = true
+var haptics_enabled: bool = true
 var graphics_quality: int = 2
 var main_menu_panel: PanelContainer
 var menu_status: Label
@@ -136,6 +137,7 @@ var graphics_option_button: Button
 var pmdd_option_button: Button
 var sensor_option_button: Button
 var drive_option_button: Button
+var haptics_option_button: Button
 var dialogue_panel: PanelContainer
 var dialogue_title: Label
 var dialogue_body: Label
@@ -1331,6 +1333,10 @@ func _build_ui() -> void:
     drive_option_button.custom_minimum_size = Vector2(0,62)
     drive_option_button.pressed.connect(_cycle_drive_assist)
     options_box.add_child(drive_option_button)
+    haptics_option_button = Button.new()
+    haptics_option_button.custom_minimum_size = Vector2(0,62)
+    haptics_option_button.pressed.connect(_cycle_haptics)
+    options_box.add_child(haptics_option_button)
 
     var hint := Label.new()
     hint.text = "3 getrennte Spielstände · Autosave · Karte · Missionen · Optionen"
@@ -1341,6 +1347,8 @@ func _build_ui() -> void:
     layer.add_child(main_menu_panel)
 
 func _haptic(duration_ms: int = 45) -> void:
+    if not haptics_enabled:
+        return
     if OS.get_name()=="Android":
         Input.vibrate_handheld(duration_ms)
 
@@ -2972,6 +2980,12 @@ func _draw_photo_points() -> void:
             var req: Vector2 = Vector2(ph.dir).normalized()
             var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
             draw_string(ThemeDB.fallback_font,p+Vector2(-90,-30),str(ph.label),HORIZONTAL_ALIGNMENT_CENTER,180,12,Color.WHITE)
+            if not aligned:
+                var tip := p+req*38.0
+                var perp := Vector2(-req.y,req.x)
+                var arrow := PackedVector2Array([tip,tip-req*14.0+perp*7.0,tip-req*14.0-perp*7.0])
+                draw_colored_polygon(arrow,Color("#ffcf8a"))
+                draw_line(p+req*15.0,tip-req*8.0,Color("#ffcf8a"),2.5,true)
             draw_string(ThemeDB.fallback_font,p+Vector2(-90,34),"AUSRICHTUNG OK" if aligned else "PMDD-BLICK AUSRICHTEN",HORIZONTAL_ALIGNMENT_CENTER,180,10,Color("#73f3ce") if aligned else Color("#ffcf8a"))
 
 func _draw_transit_stops() -> void:
@@ -4576,6 +4590,11 @@ func _cycle_pmdd_option() -> void:
     _save_options()
     _refresh_option_labels()
 
+func _cycle_haptics() -> void:
+    haptics_enabled=not haptics_enabled
+    _save_options()
+    _refresh_option_labels()
+
 func _cycle_drive_assist() -> void:
     driving_assist=not driving_assist
     _save_options()
@@ -4601,11 +4620,13 @@ func _refresh_option_labels() -> void:
     sensor_option_button.text="Sensor-Empfindlichkeit · %.1fx" % sensor_gain
     if drive_option_button!=null:
         drive_option_button.text="Fahrhilfe · %s" % ("AN" if driving_assist else "AUS")
+    if haptics_option_button!=null:
+        haptics_option_button.text="Haptik · %s" % ("AN" if haptics_enabled else "AUS")
 
 func _save_options() -> void:
     var f := FileAccess.open("user://parallaxhunt_options.json",FileAccess.WRITE)
     if f:
-        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain,"drive_assist":driving_assist}))
+        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain,"drive_assist":driving_assist,"haptics":haptics_enabled}))
 
 func _load_options() -> void:
     if not FileAccess.file_exists("user://parallaxhunt_options.json"):
@@ -4620,6 +4641,7 @@ func _load_options() -> void:
         parallax_strength=float(d.get("pmdd",parallax_strength))
         sensor_gain=float(d.get("sensor",sensor_gain))
         driving_assist=bool(d.get("drive_assist",driving_assist))
+        haptics_enabled=bool(d.get("haptics",haptics_enabled))
 
 func _draw_title_art() -> void:
     var size := get_viewport_rect().size
