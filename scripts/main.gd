@@ -48,6 +48,7 @@ var interior_kind := ""
 var interior_accent := Color("#73f3ce")
 var interior_return_pos := Vector2.ZERO
 var interior_player_pos := Vector2(450,560)
+var interior_floor: int = 0
 var interior_size := Vector2(900,700)
 var world_zoom: float = 1.0
 var target_world_zoom: float = 1.0
@@ -679,7 +680,10 @@ func _generate_visual_props() -> void:
             "hair":[Color("#30251f"),Color("#6a4b30"),Color("#d8b77d"),Color("#22252c"),Color("#8d4a38")][rng.randi_range(0,4)],
             "role":["commuter","student","worker","shopper","runner"][rng.randi_range(0,4)],
             "bag":rng.randf() < 0.36,
-            "phase":rng.randf_range(0,TAU)
+            "phase":rng.randf_range(0,TAU),
+            "pause":0.0,
+            "target_t":rng.randf(),
+            "routine":["work","shop","park","home","transit"][rng.randi_range(0,4)]
         })
 
 
@@ -1378,12 +1382,42 @@ func _update_smart_agents(delta: float) -> void:
 
 func _update_pedestrians(delta: float) -> void:
     for i in range(pedestrians.size()):
-        var p = pedestrians[i]
-        var direction := -1.0 if p.reverse else 1.0
-        p.t = fposmod(float(p.t) + float(p.speed) * delta * direction, 1.0)
-        p.phase = fposmod(float(p.phase) + delta * 5.0, TAU)
-        pedestrians[i] = p
+        var p: Dictionary = pedestrians[i]
+        p["phase"]=fposmod(float(p.phase)+delta*5.0,TAU)
+        var pause: float = float(p.get("pause",0.0))
+        if pause>0.0:
+            p["pause"]=maxf(0.0,pause-delta)
+            pedestrians[i]=p
+            continue
 
+        var target_t: float = float(p.get("target_t",float(p.t)))
+        var diff: float = target_t-float(p.t)
+        if abs(diff)>0.5:
+            diff=-sign(diff)*(1.0-abs(diff))
+        var direction: float = sign(diff)
+        if abs(diff)>0.008:
+            p["reverse"]=direction<0.0
+            p["t"]=fposmod(float(p.t)+float(p.speed)*delta*direction,1.0)
+        else:
+            # Arrive at a routine stop, wait, then choose another destination.
+            var role: String = str(p.get("routine","work"))
+            var dwell: float = 1.5
+            if role=="shop": dwell=rng.randf_range(3.0,7.0)
+            elif role=="park": dwell=rng.randf_range(4.0,10.0)
+            elif role=="transit": dwell=rng.randf_range(2.0,5.0)
+            elif role=="home": dwell=rng.randf_range(5.0,12.0)
+            else: dwell=rng.randf_range(2.5,6.0)
+            p["pause"]=dwell
+            p["target_t"]=rng.randf_range(0.05,0.95)
+            if rng.randf()<0.18:
+                # Change sidewalk corridor at a nearby flat intersection.
+                var j := _junction_for_car(int(p.road),float(p.t),0.055)
+                if not j.is_empty():
+                    var new_road: int = int(j.b) if int(j.a)==int(p.road) else int(j.a)
+                    p["road"]=new_road
+                    p["t"]=float(j.tb) if new_road==int(j.b) else float(j.ta)
+                    p["side"]=-1.0 if rng.randf()<0.5 else 1.0
+        pedestrians[i]=p
 
 func _update_transit(delta: float) -> void:
     for i in range(transit_vehicles.size()):
@@ -1478,7 +1512,10 @@ func _interact() -> void:
     var n := _nearest_interactable()
     if n.is_empty():
         return
-    if n.type == "transit":
+    if n.type == "interior_floor":
+        _toggle_interior_floor()
+        return
+    elif n.type == "transit":
         _toggle_transit(int(n.index))
         return
     elif n.type == "interior_exit":
@@ -1578,6 +1615,8 @@ func _nearest_interactable() -> Dictionary:
         var exit_pos := Vector2(interior_size.x*0.5,interior_size.y-48)
         if interior_player_pos.distance_to(exit_pos) < 78.0:
             return {"type":"interior_exit","action":"EXIT"}
+        if interior_kind in ["openai_hq","home","shop","restaurant","cafe"] and interior_player_pos.distance_to(_interior_elevator_pos())<78.0:
+            return {"type":"interior_floor","action":"ETAGE %d" % (2 if interior_floor==0 else 1)}
         var feature := _interior_feature_pos()
         if interior_player_pos.distance_to(feature) < 82.0:
             return {"type":"interior_feature","action":"USE","message":_interior_feature_message()}
@@ -1720,6 +1759,7 @@ func _draw() -> void:
     _draw_ambient_overlay()
     _draw_touch_controls()
     _draw_peek_meter()
+    _draw_mission_compass()
     if map_open:
         _draw_map_overlay()
     elif missions_open:
@@ -2761,6 +2801,7 @@ func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vect
     else:
         service_vehicle_index=-1
     interior_active = true
+    interior_floor = 0
     interior_name = name
     interior_kind = kind
     interior_accent = accent
@@ -2792,9 +2833,18 @@ func _notify(text: String) -> void:
     tw.tween_interval(1.0)
     tw.tween_property(district_banner,"modulate:a",0.0,0.65)
 
+func _interior_elevator_pos() -> Vector2:
+    return Vector2(interior_size.x-105,interior_size.y-115)
+
+func _toggle_interior_floor() -> void:
+    interior_floor=1-interior_floor
+    interior_player_pos=Vector2(interior_size.x-145,interior_size.y-150)
+    _play_sfx("vehicle")
+    _notify("%s · Etage %d" % [interior_name,interior_floor+1])
+
 func _interior_feature_pos() -> Vector2:
     if interior_kind == "openai_hq":
-        return Vector2(interior_size.x*0.5,210)
+        return Vector2(interior_size.x*0.5,210 if interior_floor==0 else 285)
     if interior_kind in ["garage","workshop"]:
         return Vector2(interior_size.x*0.68,250)
     if interior_kind in ["restaurant","cafe"]:
@@ -2829,10 +2879,19 @@ func _draw_interior_scene() -> void:
         draw_line(origin+Vector2(20,y),origin+Vector2(interior_size.x-20,y),Color(1,1,1,0.025),1.0)
     draw_circle(origin+Vector2(interior_size.x*0.28,180),80,Color(accent.r,accent.g,accent.b,0.035))
     draw_circle(origin+Vector2(interior_size.x*0.72,180),80,Color(accent.r,accent.g,accent.b,0.035))
+    if interior_floor==1:
+        draw_rect(Rect2(origin+Vector2(20,70),Vector2(interior_size.x-40,405)),Color(accent.r,accent.g,accent.b,0.035),true)
     # room partitions
     draw_line(origin+Vector2(250,90),origin+Vector2(250,470),Color(0.45,0.56,0.62,0.30),4.0)
     draw_line(origin+Vector2(650,90),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
     draw_line(origin+Vector2(250,470),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
+    # Elevator / stairs for multi-level interiors.
+    if interior_kind in ["openai_hq","home","shop","restaurant","cafe"]:
+        var lift := origin+_interior_elevator_pos()
+        draw_rect(Rect2(lift-Vector2(32,24),Vector2(64,48)),Color(0.07,0.11,0.14,0.94),true)
+        draw_rect(Rect2(lift-Vector2(32,24),Vector2(64,48)),Color(accent.r,accent.g,accent.b,0.48),false,2.0)
+        draw_string(ThemeDB.fallback_font,lift+Vector2(-22,-5),"LIFT",HORIZONTAL_ALIGNMENT_CENTER,44,10,Color.WHITE)
+        draw_string(ThemeDB.fallback_font,lift+Vector2(-28,38),"ETAGE %d" % (interior_floor+1),HORIZONTAL_ALIGNMENT_CENTER,56,9,Color("#9fb3bd"))
     # proximity-sliding exit door
     var exitp := origin+Vector2(interior_size.x*0.5,interior_size.y-48)
     var door_near: float = clampf(1.0-interior_player_pos.distance_to(Vector2(interior_size.x*0.5,interior_size.y-48))/135.0,0.0,1.0)
@@ -2858,7 +2917,7 @@ func _draw_interior_scene() -> void:
         _draw_shop_interior(origin,accent)
     _draw_interior_people(origin)
     _draw_interior_room_labels(origin)
-    draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),interior_name,HORIZONTAL_ALIGNMENT_LEFT,420,22,Color(0.94,0.98,0.99,0.92))
+    draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),"%s · Etage %d" % [interior_name,interior_floor+1],HORIZONTAL_ALIGNMENT_LEFT,520,22,Color(0.94,0.98,0.99,0.92))
 
 func _enter_vertical(index: int) -> void:
     if index<0 or index>=vertical_sites.size():
@@ -3853,6 +3912,68 @@ func _complete_side_job() -> void:
     _notify("Auftrag erledigt · +%d Credits" % pay)
     _save_game()
     _advance_native_chapter()
+
+func _current_objective_pos() -> Vector2:
+    if native_chapters.is_empty():
+        return Vector2.ZERO
+    var c: Dictionary = native_chapters[mini(native_chapter,native_chapters.size()-1)]
+    var kind := str(c.kind)
+    if kind=="frag":
+        for f in fragments:
+            if not bool(f.taken): return Vector2(f.pos)
+    elif kind=="secret":
+        for sec in secrets:
+            if not bool(sec.found): return Vector2(sec.pos)
+    elif kind=="cache":
+        for ca in caches:
+            if not bool(ca.taken): return Vector2(ca.pos)
+    elif kind=="glyph":
+        for g in glyphs:
+            if not bool(g.taken): return Vector2(g.pos)
+    elif kind=="npc":
+        for npc in named_npcs:
+            if str(npc.id)==str(c.id): return Vector2(npc.pos)
+    elif kind=="relay":
+        for v in vertical_sites:
+            if str(v.kind)=="roof" and not bool(vertical_flags.get(str(v.id),false)): return Vector2(v.pos)
+    elif kind=="sublevel":
+        for v in vertical_sites:
+            if str(v.kind)=="sublevel" and not bool(vertical_flags.get(str(v.id),false)): return Vector2(v.pos)
+    elif kind=="visit_openai":
+        for l in landmarks:
+            if str(l.kind)=="openai_hq": return Vector2(l.pos)
+    elif kind=="hack":
+        for m in mission_sites:
+            if str(m.id)==str(c.id): return Vector2(m.pos)
+    elif kind=="jobs":
+        if not active_job.is_empty(): return Vector2(active_job.get("target",Vector2.ZERO))
+        if not side_job_sites.is_empty(): return Vector2(side_job_sites[0].pos)
+    elif kind=="paint":
+        for st in storefronts:
+            if str(st.kind) in ["garage","workshop"]: return Vector2(st.pos)
+    elif kind in ["property","stored_car"]:
+        if not property_sites.is_empty(): return Vector2(property_sites[0].pos)
+    return Vector2.ZERO
+
+func _draw_mission_compass() -> void:
+    if main_menu_active or map_open or missions_open or interior_active:
+        return
+    var target := _current_objective_pos()
+    if target==Vector2.ZERO:
+        return
+    var delta := target-player_pos
+    var distance := delta.length()
+    if distance<55.0:
+        return
+    var size := get_viewport_rect().size
+    var center := Vector2(size.x*0.5,345)
+    var dir := delta.normalized()
+    var angle := dir.angle()+PI*0.5
+    var arrow := PackedVector2Array([Vector2(0,-18),Vector2(12,12),Vector2(0,7),Vector2(-12,12)])
+    for i in range(arrow.size()):
+        arrow[i]=arrow[i].rotated(angle)+center
+    draw_colored_polygon(arrow,Color("#73f3ce"))
+    draw_string(ThemeDB.fallback_font,center+Vector2(-90,38),"%d m · %s" % [int(distance/10.0),str(native_chapters[native_chapter].title)],HORIZONTAL_ALIGNMENT_CENTER,180,13,Color("#d9f5ef"))
 
 func _toggle_map() -> void:
     if minigame_open:
