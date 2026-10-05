@@ -70,6 +70,8 @@ var cache_count: int = 0
 var glyph_count: int = 0
 var photo_points: Array = []
 var photo_count: int = 0
+var scan_points: Array = []
+var scan_collect_count: int = 0
 var visited_districts: Dictionary = {}
 var driven_classes: Dictionary = {}
 var current_district := ""
@@ -521,6 +523,8 @@ func _build_native_gameplay_data() -> void:
         {"title":"Photo Hunt II","desc":"Vervollständige acht Fotopunkte.","kind":"photo","goal":8},
         {"title":"District Lens","desc":"Sammle fünfzehn PMDD-Fotopunkte aus verschiedenen Stadtzonen.","kind":"photo","goal":15},
         {"title":"Stadtarchiv","desc":"Sichere insgesamt 25 Sammlerstücke aus Caches, Sigils und Photo Hunt.","kind":"archive","goal":25},
+        {"title":"Street Signals","desc":"Finde und scanne fünf versteckte Stadt-Signale.","kind":"scan_collect","goal":5},
+        {"title":"Urban Spectrum","desc":"Scanne fünfzehn versteckte Street Signals.","kind":"scan_collect","goal":15},
         {"title":"Hacking Marathon","desc":"Schließe mindestens zehn unterschiedliche Hacking-Terminals ab.","kind":"hack_count","goal":10},
         {"title":"Sammler","desc":"Berge acht Caches und sechs Stadtsigils.","kind":"collector","goal":14},
         {"title":"Hack Replay","desc":"Wiederhole fünf Hacking-Terminals für Bonus-Credits.","kind":"hack_replays","goal":5},
@@ -566,6 +570,33 @@ func _build_story_content() -> void:
         {"id":"sub_harbor","name":"Harbor Service Sublevel","pos":Vector2(13350,6400),"kind":"sublevel","accent":Color("#ffb66f")},
         {"id":"sub_transit","name":"Transit Utility Node","pos":Vector2(23200,6000),"kind":"sublevel","accent":Color("#9adbe5")},
         {"id":"sub_bio","name":"Bio Utility Lab","pos":Vector2(12850,12850),"kind":"sublevel","accent":Color("#82e59b")}
+    ]
+    scan_points = [
+        {"id":"scan_oldwall","label":"Oldwall Echo","pos":Vector2(1450,2950),"taken":false,"district":"Altstadt","reward":18},
+        {"id":"scan_culture","label":"Culture Pulse","pos":Vector2(6500,2900),"taken":false,"district":"Kulturviertel","reward":18},
+        {"id":"scan_glass","label":"Glasscode 7","pos":Vector2(11100,3000),"taken":false,"district":"Glasdistrikt","reward":20},
+        {"id":"scan_north","label":"Green Signal","pos":Vector2(16700,2500),"taken":false,"district":"Nordpark","reward":18},
+        {"id":"scan_solar","label":"Helio Tag","pos":Vector2(22100,2850),"taken":false,"district":"Solar Heights","reward":20},
+        {"id":"scan_canal","label":"Canal Cipher","pos":Vector2(1850,5600),"taken":false,"district":"Kanäle","reward":18},
+        {"id":"scan_center","label":"Civic Trace","pos":Vector2(6500,5650),"taken":false,"district":"Zentrum","reward":20},
+        {"id":"scan_harbor","label":"Dock Signal","pos":Vector2(11600,5650),"taken":false,"district":"Hafen","reward":18},
+        {"id":"scan_industry","label":"Foundry Mark","pos":Vector2(16900,6000),"taken":false,"district":"Industrie","reward":20},
+        {"id":"scan_transit","label":"Route Ghost","pos":Vector2(22100,6000),"taken":false,"district":"Transit Yard","reward":20},
+        {"id":"scan_garden","label":"Garden Frequency","pos":Vector2(2100,9600),"taken":false,"district":"Gärten","reward":18},
+        {"id":"scan_uni","label":"Campus Packet","pos":Vector2(6400,9700),"taken":false,"district":"Universität","reward":18},
+        {"id":"scan_observe","label":"Astra Whisper","pos":Vector2(11600,9600),"taken":false,"district":"Observatorium","reward":22},
+        {"id":"scan_ring","label":"Ring Marker","pos":Vector2(16900,9600),"taken":false,"district":"Außenring","reward":18},
+        {"id":"scan_neon","label":"Neon Ghost","pos":Vector2(22100,9700),"taken":false,"district":"Neon Mile","reward":22},
+        {"id":"scan_moor","label":"Moor Signal","pos":Vector2(2000,12800),"taken":false,"district":"Moorhafen","reward":18},
+        {"id":"scan_expo","label":"Expo Ping","pos":Vector2(6500,12800),"taken":false,"district":"Messe","reward":20},
+        {"id":"scan_bio","label":"Bio Signature","pos":Vector2(11600,13000),"taken":false,"district":"Bioquartier","reward":22},
+        {"id":"scan_aurora","label":"Aurora Trace","pos":Vector2(16900,13000),"taken":false,"district":"Aurora Hills","reward":22},
+        {"id":"scan_terminal","label":"Terminal Hash","pos":Vector2(22200,13000),"taken":false,"district":"Terminal East","reward":20},
+        {"id":"scan_aero","label":"Runway Ghost","pos":Vector2(1900,16500),"taken":false,"district":"Aerodrome","reward":22},
+        {"id":"scan_wind","label":"Wind Harmonic","pos":Vector2(6500,16500),"taken":false,"district":"Windfeld","reward":22},
+        {"id":"scan_data","label":"Data Shard","pos":Vector2(11600,16500),"taken":false,"district":"Data Fields","reward":24},
+        {"id":"scan_coast","label":"Coastline Ping","pos":Vector2(16900,16500),"taken":false,"district":"Küstenband","reward":22},
+        {"id":"scan_rail","label":"Rail Pulse","pos":Vector2(22200,16500),"taken":false,"district":"Railworks","reward":24}
     ]
     photo_points = [
         {"id":"photo_clock","label":"Clock Tower Parallax","pos":Vector2(1850,1950),"dir":Vector2(0.75,-0.20),"taken":false,"district":"Altstadt","reward":32},
@@ -1832,6 +1863,23 @@ func _update_ui() -> void:
 func _scan() -> void:
     scan_time = 2.2
     _play_sfx("scan")
+    var found := false
+    for i in range(scan_points.size()):
+        if bool(scan_points[i].taken):
+            continue
+        var d: float = player_pos.distance_to(Vector2(scan_points[i].pos))
+        if d<145.0:
+            scan_points[i]["taken"]=true
+            scan_collect_count+=1
+            credits+=int(scan_points[i].reward)
+            found=true
+            _play_sfx("collect")
+            _show_reward_popup("STREET SIGNAL GESCANNT","%s · %s\n+%d CR" % [str(scan_points[i].label),str(scan_points[i].district),int(scan_points[i].reward)],Color("#78d8ff"))
+            _save_game()
+            _advance_native_chapter()
+            break
+    if not found:
+        _notify("Scan aktiv · versteckte Signale in der Nähe werden sichtbar.")
 
 func _interact() -> void:
     if map_open or missions_open or minigame_open or dialogue_panel.visible:
@@ -2107,6 +2155,7 @@ func _draw() -> void:
     _draw_storefronts()
     _draw_named_npcs()
     _draw_story_collectibles()
+    _draw_scan_points()
     _draw_photo_points()
     _draw_race_markers()
     _draw_transit_stops()
@@ -2814,6 +2863,23 @@ func _dialogue_city() -> void:
 func _close_dialogue() -> void:
     dialogue_panel.visible=false
     active_dialogue_npc=-1
+
+func _draw_scan_points() -> void:
+    for sp in scan_points:
+        if bool(sp.taken) or player_pos.distance_to(Vector2(sp.pos))>1200.0:
+            continue
+        var distance: float = player_pos.distance_to(Vector2(sp.pos))
+        var visible: bool = scan_time>0.0 or distance<95.0
+        if not visible:
+            continue
+        var p := _project(Vector2(sp.pos),10)
+        var flicker := 0.6+0.4*sin(Time.get_ticks_msec()/120.0+float(sp.pos.x)*0.003)
+        draw_rect(Rect2(p-Vector2(11,9),Vector2(22,18)),Color(0.30,0.70,0.95,0.05+0.09*flicker),true)
+        draw_rect(Rect2(p-Vector2(11,9),Vector2(22,18)),Color(0.48,0.84,1.0,0.55+0.35*flicker),false,1.5)
+        draw_line(p+Vector2(-6,0),p+Vector2(6,0),Color("#78d8ff"),2.0)
+        draw_line(p+Vector2(0,-5),p+Vector2(0,5),Color("#78d8ff"),2.0)
+        if distance<180.0:
+            draw_string(ThemeDB.fallback_font,p+Vector2(-65,-28),"SCAN SIGNAL",HORIZONTAL_ALIGNMENT_CENTER,130,10,Color("#ccefff"))
 
 func _draw_photo_points() -> void:
     for ph in photo_points:
@@ -4236,6 +4302,9 @@ func _reset_game_state() -> void:
     cache_count=0
     glyph_count=0
     photo_count=0
+    scan_collect_count=0
+    for i in range(scan_points.size()):
+        scan_points[i]["taken"]=false
     visited_districts.clear()
     driven_classes.clear()
     hack_replays=0
@@ -4408,6 +4477,8 @@ func _save_game() -> void:
         "glyph_count":glyph_count,
         "photo_count":photo_count,
         "photos":photo_points.map(func(x): return bool(x.taken)),
+        "scan_collect_count":scan_collect_count,
+        "scan_points":scan_points.map(func(x): return bool(x.taken)),
         "visited_districts":visited_districts,
         "driven_classes":driven_classes,
         "hack_replays":hack_replays,
@@ -4461,6 +4532,11 @@ func _load_game(slot: int = selected_save_slot) -> void:
     cache_count = int(d.get("cache_count",0))
     glyph_count = int(d.get("glyph_count",0))
     photo_count = int(d.get("photo_count",0))
+    scan_collect_count = int(d.get("scan_collect_count",0))
+    var scan_taken = d.get("scan_points",[])
+    if scan_taken is Array:
+        for i in range(mini(scan_taken.size(),scan_points.size())):
+            scan_points[i]["taken"]=bool(scan_taken[i])
     var photo_taken = d.get("photos",[])
     if photo_taken is Array:
         for i in range(mini(photo_taken.size(),photo_points.size())):
@@ -4899,6 +4975,8 @@ func _check_milestones() -> void:
     var milestones := [
         ["photos_5",photo_count>=5,60,"Photo Scout"],
         ["photos_15",photo_count>=15,110,"District Lens"],
+        ["signals_10",scan_collect_count>=10,90,"Signal Hunter"],
+        ["signals_all",scan_collect_count>=scan_points.size() and scan_points.size()>0,220,"Spectrum Archivist"],
         ["photos_all",photo_count>=photo_points.size() and photo_points.size()>0,260,"Photo Master"],
         ["cars_5",driven_classes.size()>=5,75,"Class Explorer"],
         ["cars_all",driven_classes.size()>=VEHICLE_CLASSES.size(),220,"Full Garage"],
@@ -5146,7 +5224,8 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="districts": return mini(visited_districts.size(),int(c.goal))
     if kind=="hack_count": return mini(_completed_hack_count(),int(c.goal))
     if kind=="collector": return mini(cache_count+glyph_count,int(c.goal))
-    if kind=="archive": return mini(cache_count+glyph_count+photo_count,int(c.goal))
+    if kind=="archive": return mini(cache_count+glyph_count+photo_count+scan_collect_count,int(c.goal))
+    if kind=="scan_collect": return mini(scan_collect_count,int(c.goal))
     if kind=="hack_replays": return mini(hack_replays,int(c.goal))
     if kind=="races": return mini(race_wins,int(c.goal))
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
@@ -5161,6 +5240,7 @@ func _draw_collection_overlay() -> void:
     var y := 285.0
     var sections := [
         ["PMDD PHOTO HUNT",photo_count,photo_points.size(),Color("#ffb3e6")],
+        ["STREET SIGNALS",scan_collect_count,scan_points.size(),Color("#78d8ff")],
         ["FAHRZEUGKLASSEN",driven_classes.size(),VEHICLE_CLASSES.size(),Color("#73f3ce")],
         ["HACKING TERMINALS",_completed_hack_count(),mission_sites.size(),Color("#ffdf75")],
         ["STADTTEILE",visited_districts.size(),districts.size(),Color("#9ad5ff")],
@@ -5197,7 +5277,7 @@ func _draw_collection_overlay() -> void:
     draw_string(ThemeDB.fallback_font,Vector2(80,y),"MEILENSTEINE",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffd36b"))
     y+=38
     var milestones := [
-        ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
+        ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Signal Hunter","signals_10"],["Spectrum Archivist","signals_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
         ["Urban Explorer","districts_15"],["Security Runner","hacks_8"],["Street Trialist","races_3"],["City Professional","jobs_10"]
     ]
     for m in milestones:
