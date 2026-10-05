@@ -100,6 +100,10 @@ var dialogue_title: Label
 var dialogue_body: Label
 var dialogue_actions: VBoxContainer
 var active_dialogue_npc: int = -1
+var npc_trust: Dictionary = {}
+var active_npc_contract: Dictionary = {}
+var npc_contracts_done: Dictionary = {}
+var transit_trip_count: int = 0
 var owned_cars: Array = []
 var current_paint: String = ""
 var service_vehicle_index: int = -1
@@ -198,6 +202,7 @@ func _process(delta: float) -> void:
         camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
         _update_secrets()
         _update_district()
+        _check_npc_contract()
     _update_ui()
     queue_redraw()
 
@@ -1610,6 +1615,7 @@ func _interact() -> void:
             _notify("Daten-Cache geborgen · +18 CR")
             _save_game()
             _advance_native_chapter()
+            _check_npc_contract()
         return
     elif n.type == "glyph":
         var gidx: int = int(n.index)
@@ -2356,9 +2362,11 @@ func _talk_named_npc(index: int) -> void:
     for child in dialogue_actions.get_children():
         child.queue_free()
     var mission_btn := _commerce_button("MISSION BESPRECHEN",_dialogue_mission)
+    var contract_btn := _commerce_button("PERSÖNLICHER AUFTRAG",_dialogue_contract)
     var city_btn := _commerce_button("ÜBER DIE STADT",_dialogue_city)
     var close_btn := _commerce_button("GESPRÄCH BEENDEN",_close_dialogue)
     dialogue_actions.add_child(mission_btn)
+    dialogue_actions.add_child(contract_btn)
     dialogue_actions.add_child(city_btn)
     dialogue_actions.add_child(close_btn)
     dialogue_panel.visible=true
@@ -2380,10 +2388,92 @@ func _dialogue_mission() -> void:
     dialogue_body.text=str(hint)
     if not bool(npc_flags.get(id,false)):
         npc_flags[id]=true
+        npc_trust[id]=int(npc_trust.get(id,0))+1
         credits+=12
         _play_sfx("collect")
         _save_game()
         _advance_native_chapter()
+
+func _dialogue_contract() -> void:
+    if active_dialogue_npc<0 or active_dialogue_npc>=named_npcs.size():
+        return
+    var npc: Dictionary = named_npcs[active_dialogue_npc]
+    var id := str(npc.id)
+    if bool(npc_contracts_done.get(id,false)):
+        dialogue_body.text="%s: Den persönlichen Auftrag hast du bereits abgeschlossen. Vertrauen %d." % [str(npc.name),int(npc_trust.get(id,0))]
+        return
+    if not active_npc_contract.is_empty() and str(active_npc_contract.get("npc",""))!=id:
+        dialogue_body.text="Du hast bereits einen persönlichen Auftrag von %s aktiv." % str(active_npc_contract.get("npc_name","jemand anderem"))
+        return
+    if active_npc_contract.is_empty():
+        active_npc_contract=_make_npc_contract(id,str(npc.name))
+        _save_game()
+    dialogue_body.text=_contract_description(active_npc_contract)
+
+func _make_npc_contract(id: String, npc_name: String) -> Dictionary:
+    if id=="mira":
+        return {"npc":id,"npc_name":npc_name,"kind":"cache","start":cache_count,"goal":2,"reward":85,"title":"Miras verlorene Archive","target":Vector2.ZERO}
+    if id=="nova":
+        return {"npc":id,"npc_name":npc_name,"kind":"visit","start":0,"goal":1,"reward":95,"title":"Novas Hafenroute","target":Vector2(7550,12600)}
+    if id=="luna":
+        return {"npc":id,"npc_name":npc_name,"kind":"hack","hack":"gridRepair","goal":1,"reward":110,"title":"Lunas Grid-Diagnose","target":Vector2(23100,1750)}
+    if id=="iris":
+        return {"npc":id,"npc_name":npc_name,"kind":"hack","hack":"firewall","goal":1,"reward":125,"title":"Iris Firewall-Audit","target":Vector2(12650,12650)}
+    if id=="vio":
+        return {"npc":id,"npc_name":npc_name,"kind":"hack","hack":"cipherGate","goal":1,"reward":105,"title":"Vios Cipher Challenge","target":Vector2(23600,8700)}
+    if id=="bram":
+        return {"npc":id,"npc_name":npc_name,"kind":"transit","start":transit_trip_count,"goal":1,"reward":75,"title":"Brams Liniencheck","target":Vector2(23200,5400)}
+    return {"npc":id,"npc_name":npc_name,"kind":"visit","goal":1,"reward":70,"title":"Persönlicher Auftrag","target":Vector2(player_pos)}
+
+func _contract_description(c: Dictionary) -> String:
+    if c.is_empty():
+        return "Kein persönlicher Auftrag aktiv."
+    var kind := str(c.kind)
+    if kind=="cache":
+        return "%s: Berge %d zusätzliche Daten-Caches. Belohnung %d CR." % [str(c.title),int(c.goal),int(c.reward)]
+    if kind=="visit":
+        return "%s: Erreiche den markierten Zielpunkt. Belohnung %d CR." % [str(c.title),int(c.reward)]
+    if kind=="hack":
+        return "%s: Schließe das markierte Hacking-Terminal ab. Belohnung %d CR." % [str(c.title),int(c.reward)]
+    if kind=="transit":
+        return "%s: Fahre mindestens eine Station mit Bus oder Tram. Belohnung %d CR." % [str(c.title),int(c.reward)]
+    return str(c.title)
+
+func _npc_contract_target() -> Vector2:
+    if active_npc_contract.is_empty():
+        return Vector2.ZERO
+    var kind := str(active_npc_contract.kind)
+    if kind=="cache":
+        for ca in caches:
+            if not bool(ca.taken):
+                return Vector2(ca.pos)
+    return Vector2(active_npc_contract.get("target",Vector2.ZERO))
+
+func _check_npc_contract() -> void:
+    if active_npc_contract.is_empty():
+        return
+    var kind := str(active_npc_contract.kind)
+    var complete := false
+    if kind=="cache":
+        complete=(cache_count-int(active_npc_contract.get("start",0)))>=int(active_npc_contract.goal)
+    elif kind=="visit":
+        var target := Vector2(active_npc_contract.get("target",Vector2.ZERO))
+        complete=target!=Vector2.ZERO and player_pos.distance_to(target)<120.0
+    elif kind=="hack":
+        complete=bool(hack_done.get(str(active_npc_contract.get("hack","")),false))
+    elif kind=="transit":
+        complete=(transit_trip_count-int(active_npc_contract.get("start",0)))>=int(active_npc_contract.goal)
+    if not complete:
+        return
+    var id := str(active_npc_contract.npc)
+    var reward := int(active_npc_contract.reward)
+    credits+=reward
+    npc_trust[id]=int(npc_trust.get(id,0))+2
+    npc_contracts_done[id]=true
+    _play_sfx("secret")
+    _notify("%s abgeschlossen · +%d CR · Vertrauen gestiegen" % [str(active_npc_contract.title),reward])
+    active_npc_contract={}
+    _save_game()
 
 func _dialogue_city() -> void:
     if active_dialogue_npc<0 or active_dialogue_npc>=named_npcs.size():
@@ -3227,6 +3317,7 @@ func _finish_minigame() -> void:
     _close_minigame()
     _notify("%s abgeschlossen." % str(active_mission_site.name))
     _advance_native_chapter()
+    _check_npc_contract()
 
 func _init_wire() -> void:
     game_grid.columns = 4
@@ -3476,8 +3567,11 @@ func _toggle_transit(index: int) -> void:
         var normal := Vector2(-tang.y,tang.x)
         player_pos = _sample_polyline(road.points,float(ride.t)) + normal*85.0
         transit_riding=-1
+        transit_trip_count+=1
         _play_sfx("vehicle")
         _notify("ÖPNV verlassen.")
+        _check_npc_contract()
+        _save_game()
         return
     if index<0 or index>=transit_vehicles.size():
         return
@@ -3580,6 +3674,10 @@ func _reset_game_state() -> void:
     active_job={}
     hack_done.clear()
     npc_flags.clear()
+    npc_trust.clear()
+    npc_contracts_done.clear()
+    active_npc_contract={}
+    transit_trip_count=0
     vertical_flags.clear()
     relay_count=0
     sublevel_count=0
@@ -3740,6 +3838,10 @@ func _save_game() -> void:
         "cache_count":cache_count,
         "glyph_count":glyph_count,
         "npc_flags":npc_flags,
+        "npc_trust":npc_trust,
+        "npc_contracts_done":npc_contracts_done,
+        "active_npc_contract":_serialize_contract(active_npc_contract),
+        "transit_trip_count":transit_trip_count,
         "vertical_flags":vertical_flags,
         "relay_count":relay_count,
         "sublevel_count":sublevel_count,
@@ -3781,6 +3883,10 @@ func _load_game(slot: int = selected_save_slot) -> void:
     cache_count = int(d.get("cache_count",0))
     glyph_count = int(d.get("glyph_count",0))
     npc_flags = Dictionary(d.get("npc_flags",{}))
+    npc_trust = Dictionary(d.get("npc_trust",{}))
+    npc_contracts_done = Dictionary(d.get("npc_contracts_done",{}))
+    active_npc_contract = _deserialize_contract(Dictionary(d.get("active_npc_contract",{})))
+    transit_trip_count = int(d.get("transit_trip_count",0))
     vertical_flags = Dictionary(d.get("vertical_flags",{}))
     relay_count = int(d.get("relay_count",0))
     sublevel_count = int(d.get("sublevel_count",0))
@@ -3792,6 +3898,24 @@ func _load_game(slot: int = selected_save_slot) -> void:
     if glyph_taken is Array:
         for i in range(mini(glyph_taken.size(),glyphs.size())):
             glyphs[i]["taken"]=bool(glyph_taken[i])
+
+func _serialize_contract(c: Dictionary) -> Dictionary:
+    if c.is_empty():
+        return {}
+    var out := c.duplicate(true)
+    if out.has("target") and out.target is Vector2:
+        var t: Vector2 = Vector2(out.target)
+        out["target"]=[t.x,t.y]
+    return out
+
+func _deserialize_contract(c: Dictionary) -> Dictionary:
+    if c.is_empty():
+        return {}
+    var out := c.duplicate(true)
+    var target = out.get("target",[])
+    if target is Array and target.size()>=2:
+        out["target"]=Vector2(float(target[0]),float(target[1]))
+    return out
 
 func _serialize_job(job: Dictionary) -> Dictionary:
     if job.is_empty():
@@ -3981,6 +4105,9 @@ func _complete_side_job() -> void:
     _advance_native_chapter()
 
 func _current_objective_pos() -> Vector2:
+    var contract_target := _npc_contract_target()
+    if contract_target!=Vector2.ZERO:
+        return contract_target
     if native_chapters.is_empty():
         return Vector2.ZERO
     var c: Dictionary = native_chapters[mini(native_chapter,native_chapters.size()-1)]
@@ -4098,6 +4225,9 @@ func _draw_map_overlay() -> void:
         _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
     if not active_job.is_empty():
         _draw_map_marker(_map_point(Vector2(active_job.get("target",Vector2.ZERO)),map_rect),Color("#ffffff"),"➤")
+    var contract_target := _npc_contract_target()
+    if contract_target!=Vector2.ZERO:
+        _draw_map_marker(_map_point(contract_target,map_rect),Color("#ff9fe8"),"◆")
     for m in mission_sites:
         var done := bool(hack_done.get(str(m.id),false))
         _draw_map_marker(_map_point(Vector2(m.pos),map_rect),Color("#66717a") if done else Color("#ffdf75"),"!")
@@ -4118,6 +4248,7 @@ func _draw_map_overlay() -> void:
         ["↓","Sublevel / Untergrundknoten",Color("#ffb66f")],
         ["J","Nebenjob-Board",Color("#8de9aa")],
         ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
+        ["◆","Persönlicher NPC-Auftrag",Color("#ff9fe8")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
     ]
     for row in legend:
