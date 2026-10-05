@@ -70,6 +70,7 @@ var cache_count: int = 0
 var glyph_count: int = 0
 var photo_points: Array = []
 var photo_count: int = 0
+var photo_flash_alpha: float = 0.0
 var scan_points: Array = []
 var scan_collect_count: int = 0
 var visited_districts: Dictionary = {}
@@ -242,6 +243,7 @@ func _process(delta: float) -> void:
         _update_transit(delta)
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
+    photo_flash_alpha=maxf(0.0,photo_flash_alpha-delta*2.8)
     autosave_timer += delta
     if autosave_timer >= 12.0:
         autosave_timer = 0.0
@@ -640,6 +642,19 @@ func _build_story_content() -> void:
         {"pos":Vector2(23400,16200),"taken":false,"district":"Railworks"}
     ]
 
+func _random_vehicle_class(allow_hyper: bool = true) -> String:
+    var roll := rng.randf()*100.0
+    if roll<16.0: return "micro"
+    if roll<33.0: return "hatch"
+    if roll<54.0: return "sedan"
+    if roll<63.0: return "executive"
+    if roll<75.0: return "suv"
+    if roll<82.0: return "pickup"
+    if roll<90.0: return "van"
+    if roll<96.0: return "delivery"
+    if roll<99.3: return "sport"
+    return "hyper" if allow_hyper else "sport"
+
 func _generate_city() -> void:
     buildings.clear()
     trees.clear()
@@ -685,14 +700,14 @@ func _generate_city() -> void:
         var p := _sample_polyline(rd.points, t_sample)
         var tangent := _polyline_tangent(rd.points, t_sample)
         var normal := Vector2(-tangent.y, tangent.x)
-        var cls: String = VEHICLE_CLASSES[rng.randi_range(0,VEHICLE_CLASSES.size()-1)]
+        var cls: String = _random_vehicle_class(true)
         parked_cars.append({"pos":p + normal * rng.randf_range(45,70), "class":cls, "heading":tangent.angle(), "color":_car_color(cls), "occupied":false})
 
 func _generate_traffic() -> void:
     traffic.clear()
     for i in range(155):
         var road_index := rng.randi_range(0, roads.size()-1)
-        var cls: String = VEHICLE_CLASSES[rng.randi_range(0,VEHICLE_CLASSES.size()-1)]
+        var cls: String = _random_vehicle_class(true)
         var reverse := rng.randf()<0.5
         traffic.append({
             "road":road_index,
@@ -722,7 +737,7 @@ func _generate_smart_agents() -> void:
     smart_agents.clear()
     for i in range(28):
         var road_index := rng.randi_range(0,17)
-        var smart_cls: String = VEHICLE_CLASSES[rng.randi_range(0,7)]
+        var smart_cls: String = _random_vehicle_class(false)
         smart_agents.append({
             "state":"walking" if i%3==0 else "driving",
             "road":road_index,
@@ -1962,6 +1977,7 @@ func _interact() -> void:
         if aligned and not bool(photo_points[pidx].taken):
             photo_points[pidx]["taken"]=true
             photo_count+=1
+            photo_flash_alpha=1.0
             credits+=int(photo_points[pidx].reward)
             _play_sfx("photo")
             _notify("PHOTO HUNT · %s · +%d CR" % [str(photo_points[pidx].label),int(photo_points[pidx].reward)])
@@ -2168,6 +2184,10 @@ func _draw() -> void:
     _draw_collectibles()
     _draw_player()
     _draw_ambient_overlay()
+    if photo_flash_alpha>0.0:
+        draw_rect(Rect2(Vector2.ZERO,get_viewport_rect().size),Color(1,1,1,photo_flash_alpha*0.72),true)
+        var frame := Rect2(Vector2(42,130),get_viewport_rect().size-Vector2(84,260))
+        draw_rect(frame,Color(1,1,1,photo_flash_alpha*0.45),false,4.0)
     _draw_touch_controls()
     _draw_peek_meter()
     _draw_mission_compass()
@@ -5325,7 +5345,12 @@ func _draw_collection_overlay() -> void:
     for cls in VEHICLE_CLASSES:
         var seen: bool = bool(driven_classes.get(cls,false))
         var up: Dictionary = _vehicle_upgrade_state(cls)
-        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %-10s · %-11s · E%d H%d B%d" % [("✓" if seen else "○"),cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(cls,"ROAD")),int(up.engine),int(up.handling),int(up.brake)],HORIZONTAL_ALIGNMENT_LEFT,850,14,Color("#8de9aa") if seen else Color("#c7d6de"))
+        var rarity := "COMMON"
+        if cls in ["executive","suv","pickup"]: rarity="UNCOMMON"
+        elif cls in ["van","delivery"]: rarity="UTILITY"
+        elif cls=="sport": rarity="RARE"
+        elif cls=="hyper": rarity="ULTRA RARE"
+        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %-10s · %-10s · %-10s · E%d H%d B%d" % [("✓" if seen else "○"),cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(cls,"ROAD")),rarity,int(up.engine),int(up.handling),int(up.brake)],HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#8de9aa") if seen else Color("#c7d6de"))
         y+=31
 
     y+=12
