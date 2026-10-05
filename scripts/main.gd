@@ -4466,7 +4466,9 @@ func _car_color(cls: String) -> Color:
         "sport":[Color("#ff6eaa"),Color("#68efd7"),Color("#f2df61"),Color("#bba2ff")]
     }
     var arr: Array = palettes[cls]
-    return arr[rng.randi_range(0,arr.size()-1)]func _draw_home_interior(origin: Vector2, accent: Color) -> void:
+    return arr[rng.randi_range(0,arr.size()-1)]
+
+func _draw_home_interior(origin: Vector2, accent: Color) -> void:
     if interior_floor==0:
         draw_rect(Rect2(origin+Vector2(300,130),Vector2(250,150)),Color("#2c3438"),true)
         draw_rect(Rect2(origin+Vector2(325,155),Vector2(95,55)),Color("#59686f"),true)
