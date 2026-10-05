@@ -551,7 +551,14 @@ func _generate_traffic() -> void:
             "turn_cooldown":rng.randf_range(0.0,2.0),
             "parking":false,
             "park_timer":0.0,
-            "lateral":0.0
+            "lateral":0.0,
+            "lane_change":0.0,
+            "lane_from":0,
+            "lane_to":0,
+            "indicator":0,
+            "turn_anim":0.0,
+            "turn_from":Vector2.ZERO,
+            "turn_to":Vector2.ZERO
         })
     _generate_smart_agents()
 
@@ -574,7 +581,10 @@ func _generate_smart_agents() -> void:
             "phase":rng.randf_range(0,TAU),
             "parking_progress":0.0,
             "car_parked":false,
-            "parked_t":0.0
+            "parked_t":0.0,
+            "activity":"home",
+            "destination":Vector2.ZERO,
+            "dwell":0.0
         })
 
 func _generate_visual_props() -> void:
@@ -1203,11 +1213,12 @@ func _update_traffic(delta: float) -> void:
     for i in range(traffic.size()):
         var c: Dictionary = traffic[i]
         c["turn_cooldown"]=maxf(0.0,float(c.get("turn_cooldown",0.0))-delta)
+        c["turn_anim"]=maxf(0.0,float(c.get("turn_anim",0.0))-delta)
         var direction: float = -1.0 if bool(c.reverse) else 1.0
         var target_speed: float = float(c.cruise)
 
-        # Car-following: keep a usable distance in the same lane and direction.
-        var best_gap := 999.0
+        # Car-following on the active lane.
+        var best_gap: float = 999.0
         for k in range(traffic.size()):
             if k==i:
                 continue
@@ -1216,9 +1227,24 @@ func _update_traffic(delta: float) -> void:
                 continue
             var gap: float = (float(other.t)-float(c.t))*direction
             if gap<0.0:
-                gap += 1.0
+                gap+=1.0
             if gap>0.0 and gap<best_gap:
                 best_gap=gap
+
+        # Overtake / lane change if the current lane is blocked.
+        if best_gap<0.050 and float(c.get("lane_change",0.0))<=0.0:
+            var other_lane: int = 1-int(c.lane)
+            if _lane_is_clear(i,other_lane,0.050):
+                c["lane_from"]=int(c.lane)
+                c["lane_to"]=other_lane
+                c["lane"]=other_lane
+                c["lane_change"]=1.0
+                c["indicator"]=1 if other_lane>int(c.lane_from) else -1
+        if float(c.get("lane_change",0.0))>0.0:
+            c["lane_change"]=maxf(0.0,float(c.lane_change)-delta*1.65)
+            if float(c.lane_change)<=0.0:
+                c["indicator"]=0
+
         if best_gap<0.018:
             target_speed=0.0
         elif best_gap<0.035:
@@ -1226,7 +1252,6 @@ func _update_traffic(delta: float) -> void:
         elif best_gap<0.055:
             target_speed*=0.68
 
-        # Signal logic at same-level crossings.
         var j := _junction_for_car(int(c.road),float(c.t),0.028)
         if not j.is_empty():
             var jt: float = float(j.ta) if int(j.a)==int(c.road) else float(j.tb)
@@ -1240,19 +1265,37 @@ func _update_traffic(delta: float) -> void:
         speed_now=move_toward(speed_now,target_speed,delta*0.08)
         c["speed"]=speed_now
         var old_t: float = float(c.t)
+        var old_pos: Vector2 = Vector2(_traffic_world_transform(c).pos)
         var new_t: float = fposmod(old_t+speed_now*delta*direction,1.0)
 
-        # At flat intersections some cars turn onto the crossing road.
         if not j.is_empty() and float(c.turn_cooldown)<=0.0 and _junction_green(j,int(c.road)):
             var jt2: float = float(j.ta) if int(j.a)==int(c.road) else float(j.tb)
             var crossed: bool = (direction>0.0 and old_t<=jt2 and new_t>=jt2) or (direction<0.0 and old_t>=jt2 and new_t<=jt2)
-            if crossed and rng.randf()<0.27:
-                var new_road: int = int(j.b) if int(j.a)==int(c.road) else int(j.a)
+            if crossed and rng.randf()<0.30:
+                var old_road: int = int(c.road)
+                var new_road: int = int(j.b) if int(j.a)==old_road else int(j.a)
+                var new_t_at_j: float = float(j.tb) if new_road==int(j.b) else float(j.ta)
+                # Choose the legal direction that best matches a real left/right turn instead of random teleporting.
+                var old_tangent := _polyline_tangent(roads[old_road].points,jt2)
+                if bool(c.reverse):
+                    old_tangent*=-1.0
+                var tangent_forward := _polyline_tangent(roads[new_road].points,new_t_at_j)
+                var tangent_reverse := -tangent_forward
+                var turn_forward: float = abs(old_tangent.angle_to(tangent_forward))
+                var turn_reverse: float = abs(old_tangent.angle_to(tangent_reverse))
+                var choose_reverse: bool = turn_reverse<turn_forward
+                if rng.randf()<0.48:
+                    choose_reverse=not choose_reverse
                 c["road"]=new_road
-                c["t"]=float(j.tb) if new_road==int(j.b) else float(j.ta)
-                c["reverse"]=rng.randf()<0.5
+                c["t"]=new_t_at_j
+                c["reverse"]=choose_reverse
                 c["lane"]=rng.randi_range(0,1)
-                c["turn_cooldown"]=2.5
+                c["turn_cooldown"]=2.8
+                c["turn_anim"]=0.55
+                c["turn_from"]=old_pos
+                var temp: Dictionary = c.duplicate()
+                c["turn_to"]=Vector2(_traffic_world_transform(temp).pos)
+                c["indicator"]=1 if old_tangent.cross(Vector2(_traffic_world_transform(temp).tangent))>0.0 else -1
                 traffic[i]=c
                 continue
         c["t"]=new_t
@@ -1265,42 +1308,72 @@ func _update_smart_agents(delta: float) -> void:
         a["timer"]=float(a.timer)-delta
         a["phase"]=fposmod(float(a.phase)+delta*5.0,TAU)
         var state: String = str(a.state)
+
+        if Vector2(a.get("destination",Vector2.ZERO))==Vector2.ZERO:
+            var activity := _choose_agent_activity(a)
+            a["activity"]=str(activity.kind)
+            a["destination"]=Vector2(activity.pos)
+
         if state=="walking":
-            var dir: float = -1.0 if bool(a.reverse) else 1.0
-            a["t"]=fposmod(float(a.t)+float(a.speed)*0.42*delta*dir,1.0)
-            if float(a.timer)<=0.0:
+            var dest: Vector2 = Vector2(a.destination)
+            var walk_target_t: float = _nearest_road_t_to_point(int(a.road),dest)
+            var diff: float = walk_target_t-float(a.t)
+            if abs(diff)>0.5:
+                diff=-sign(diff)*(1.0-abs(diff))
+            var dir: float = sign(diff)
+            if abs(diff)>0.010:
+                a["t"]=fposmod(float(a.t)+float(a.speed)*0.38*delta*dir,1.0)
+                a["reverse"]=dir<0.0
+            else:
+                a["dwell"]=float(a.get("dwell",0.0))+delta
+            if float(a.get("dwell",0.0))>rng.randf_range(2.5,5.5) or float(a.timer)<=0.0:
                 a["state"]="entering"
                 a["timer"]=1.1
                 a["parking_progress"]=0.0
+                a["dwell"]=0.0
                 if bool(a.get("car_parked",false)):
                     a["t"]=float(a.get("parked_t",a.t))
+
         elif state=="entering":
             a["parking_progress"]=minf(1.0,float(a.parking_progress)+delta/1.1)
             if float(a.timer)<=0.0:
                 a["state"]="driving"
-                a["timer"]=rng.randf_range(18.0,42.0)
+                a["timer"]=rng.randf_range(18.0,38.0)
                 a["parking_progress"]=0.0
                 a["car_parked"]=false
+                var next_activity := _choose_agent_activity(a)
+                a["activity"]=str(next_activity.kind)
+                a["destination"]=Vector2(next_activity.pos)
+
         elif state=="driving":
-            var dir2: float = -1.0 if bool(a.reverse) else 1.0
-            a["t"]=fposmod(float(a.t)+float(a.speed)*delta*dir2,1.0)
-            if float(a.timer)<=0.0:
+            var target_t: float = _nearest_road_t_to_point(int(a.road),Vector2(a.destination))
+            var diff_drive: float = target_t-float(a.t)
+            if abs(diff_drive)>0.5:
+                diff_drive=-sign(diff_drive)*(1.0-abs(diff_drive))
+            var dir2: float = sign(diff_drive)
+            if abs(diff_drive)>0.020 and float(a.timer)>0.0:
+                a["reverse"]=dir2<0.0
+                a["t"]=fposmod(float(a.t)+float(a.speed)*delta*dir2,1.0)
+            else:
                 a["state"]="parking"
                 a["timer"]=1.8
                 a["parking_progress"]=0.0
                 a["parked_t"]=float(a.t)
+
         elif state=="parking":
             a["parking_progress"]=minf(1.0,float(a.parking_progress)+delta/1.8)
             if float(a.timer)<=0.0:
                 a["state"]="parked"
-                a["timer"]=rng.randf_range(4.0,10.0)
+                a["timer"]=rng.randf_range(2.5,6.0)
                 a["parking_progress"]=1.0
+
         elif state=="parked":
             if float(a.timer)<=0.0:
                 a["state"]="walking"
-                a["timer"]=rng.randf_range(10.0,24.0)
+                a["timer"]=rng.randf_range(9.0,18.0)
                 a["parking_progress"]=0.0
                 a["car_parked"]=true
+
         smart_agents[i]=a
 
 func _update_pedestrians(delta: float) -> void:
@@ -2422,12 +2495,33 @@ func _draw_traffic() -> void:
     for c in traffic:
         var tr := _traffic_world_transform(c)
         var pos: Vector2 = Vector2(tr.pos)
+        var tangent: Vector2 = Vector2(tr.tangent)
+
+        if float(c.get("turn_anim",0.0))>0.0:
+            var amount: float = 1.0-clampf(float(c.turn_anim)/0.55,0.0,1.0)
+            amount=amount*amount*(3.0-2.0*amount)
+            pos=Vector2(c.turn_from).lerp(Vector2(c.turn_to),amount)
+
+        if float(c.get("lane_change",0.0))>0.0:
+            var road = roads[int(c.road)]
+            var normal := Vector2(-tangent.y,tangent.x)
+            var from_lane: int = int(c.get("lane_from",int(c.lane)))
+            var to_lane: int = int(c.get("lane_to",int(c.lane)))
+            var phase: float = 1.0-clampf(float(c.lane_change),0.0,1.0)
+            var from_off: float = float(road.width)*(0.18+float(from_lane)*0.14)
+            var to_off: float = float(road.width)*(0.18+float(to_lane)*0.14)
+            pos += normal*(lerpf(from_off,to_off,phase)-to_off)
+
         var traffic_draw_distance: float = [1050.0,1450.0,1800.0][graphics_quality]
         if player_pos.distance_to(pos)>traffic_draw_distance:
             continue
-        var tangent: Vector2 = Vector2(tr.tangent)
         _draw_car(pos,tangent.angle(),str(c["class"]),Color(c.color),false)
-    _draw_smart_agents()
+        var ind: int = int(c.get("indicator",0))
+        if ind!=0 and int(Time.get_ticks_msec()/320)%2==0:
+            var fwd := tangent.normalized()
+            var side := Vector2(-fwd.y,fwd.x)*float(ind)
+            var lamp := _project(pos,5)+fwd*12.0+side*7.0
+            draw_circle(lamp,2.8,Color("#ffb343"))
 
 func _draw_smart_agents() -> void:
     for a in smart_agents:
