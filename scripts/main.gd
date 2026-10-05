@@ -157,6 +157,12 @@ var sublevel_count: int = 0
 var transit_riding: int = -1
 var transit_stops: Array = []
 var autosave_timer: float = 0.0
+var race_sites: Array = []
+var active_race: Dictionary = {}
+var race_best: Dictionary = {}
+var race_wins: int = 0
+var vehicle_upgrades: Dictionary = {}
+var milestones_claimed: Dictionary = {}
 var commerce_panel: PanelContainer
 var commerce_title: Label
 var commerce_info: Label
@@ -239,6 +245,8 @@ func _process(delta: float) -> void:
         _update_district()
         _check_npc_contract()
         _check_active_job_progress()
+        _update_active_race(delta)
+        _check_milestones()
     _update_ui()
     queue_redraw()
 
@@ -465,6 +473,14 @@ func _build_native_gameplay_data() -> void:
         {"id":"jobs_harbor","name":"Hafen Dispatch","pos":Vector2(13250,5850)},
         {"id":"jobs_terminal","name":"Terminal Courier Hub","pos":Vector2(23200,12600)}
     ]
+    race_sites = [
+        {"id":"oldtown_loop","name":"Oldtown Handling Loop","pos":Vector2(2700,2600),"limit":58.0,"reward":90,"group":"CITY","points":[Vector2(5000,2600),Vector2(5000,4450),Vector2(2700,4450),Vector2(900,3200),Vector2(2700,2600)]},
+        {"id":"glass_sprint","name":"Glass District Sprint","pos":Vector2(10100,2600),"limit":48.0,"reward":105,"group":"ROAD","points":[Vector2(12800,2600),Vector2(15400,4450),Vector2(12800,6500),Vector2(10100,4450)]},
+        {"id":"harbor_run","name":"Harbor Utility Run","pos":Vector2(12800,6500),"limit":62.0,"reward":115,"group":"UTILITY","points":[Vector2(15400,6500),Vector2(15400,9000),Vector2(12800,9000),Vector2(10100,6500)]},
+        {"id":"neon_velocity","name":"Neon Velocity Trial","pos":Vector2(21000,9000),"limit":42.0,"reward":145,"group":"PERFORMANCE","points":[Vector2(24400,9000),Vector2(24400,11600),Vector2(21000,11600),Vector2(18100,9000)]},
+        {"id":"coastal_gt","name":"Coastal GT","pos":Vector2(18100,14300),"limit":52.0,"reward":135,"group":"ROAD","points":[Vector2(21000,14300),Vector2(24400,16050),Vector2(21000,16800),Vector2(18100,16050)]},
+        {"id":"hyperline","name":"Hyperline Challenge","pos":Vector2(24400,7600),"limit":36.0,"reward":190,"group":"HYPER","points":[Vector2(21000,6800),Vector2(18100,5000),Vector2(15400,2600),Vector2(12800,900)]}
+    ]
     native_chapters = [
         {"title":"Echo-Signale bergen","desc":"Sammle fünf Echo-Signale in der Stadt.","kind":"frag","goal":5},
         {"title":"Mira finden","desc":"Sprich mit Mira im Zentrum.","kind":"npc","id":"mira","goal":1},
@@ -494,6 +510,8 @@ func _build_native_gameplay_data() -> void:
         {"title":"Hacking Marathon","desc":"Schließe mindestens zehn unterschiedliche Hacking-Terminals ab.","kind":"hack_count","goal":10},
         {"title":"Sammler","desc":"Berge acht Caches und sechs Stadtsigils.","kind":"collector","goal":14},
         {"title":"Hack Replay","desc":"Wiederhole fünf Hacking-Terminals für Bonus-Credits.","kind":"hack_replays","goal":5},
+        {"title":"Street Trials","desc":"Gewinne drei unterschiedliche Zeitprüfungen.","kind":"races","goal":3},
+        {"title":"Tuning-Projekt","desc":"Kaufe drei Werkstatt-Upgrades für deine Fahrzeugklassen.","kind":"upgrades","goal":3},
         {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
     ]
     if shop_stock.is_empty():
@@ -1307,10 +1325,10 @@ func _update_player(delta: float) -> void:
     if current_vehicle >= 0:
         var car: Dictionary = parked_cars[current_vehicle]
         var cls: String = str(car["class"])
-        var max_speed: float = float(VEHICLE_SPEEDS.get(cls,400.0))
-        var accel: float = float(VEHICLE_ACCEL.get(cls,240.0))
-        var brake: float = float(VEHICLE_BRAKE.get(cls,350.0))
-        var handling: float = float(VEHICLE_HANDLING.get(cls,2.2))
+        var max_speed: float = float(VEHICLE_SPEEDS.get(cls,400.0)) * _vehicle_tune_multiplier(cls,"engine")
+        var accel: float = float(VEHICLE_ACCEL.get(cls,240.0)) * _vehicle_tune_multiplier(cls,"engine")
+        var brake: float = float(VEHICLE_BRAKE.get(cls,350.0)) * _vehicle_tune_multiplier(cls,"brake")
+        var handling: float = float(VEHICLE_HANDLING.get(cls,2.2)) * _vehicle_tune_multiplier(cls,"handling")
         var throttle: float = clampf(-move_vec.y,-1.0,1.0)
         var steer: float = clampf(move_vec.x,-1.0,1.0)
         var desired_speed: float = max_speed*throttle if throttle>=0.0 else max_speed*0.30*throttle
@@ -1726,7 +1744,10 @@ func _interact() -> void:
     var n := _nearest_interactable()
     if n.is_empty():
         return
-    if n.type == "interior_floor":
+    if n.type == "race":
+        _start_race(int(n.index))
+        return
+    elif n.type == "interior_floor":
         _toggle_interior_floor()
         return
     elif n.type == "transit":
@@ -1852,6 +1873,11 @@ func _nearest_interactable() -> Dictionary:
             return {"type":"interior_feature","action":"USE","message":_interior_feature_message()}
         return {}
     if current_vehicle >= 0:
+        if active_race.is_empty():
+            for ri in range(race_sites.size()):
+                var drace: float = player_pos.distance_to(Vector2(race_sites[ri].pos))
+                if drace<145.0:
+                    return {"type":"race","index":ri,"action":"ZEITPRÜFUNG"}
         for si in range(storefronts.size()):
             var vst: Dictionary = storefronts[si]
             if str(vst.kind) not in ["garage","workshop"]:
@@ -1987,6 +2013,7 @@ func _draw() -> void:
     _draw_named_npcs()
     _draw_story_collectibles()
     _draw_photo_points()
+    _draw_race_markers()
     _draw_transit_stops()
     _draw_jobboards()
     _draw_street_props()
@@ -4101,6 +4128,11 @@ func _reset_game_state() -> void:
     visited_districts.clear()
     driven_classes.clear()
     hack_replays=0
+    race_best.clear()
+    race_wins=0
+    vehicle_upgrades.clear()
+    milestones_claimed.clear()
+    active_race={}
     for i in range(photo_points.size()):
         photo_points[i]["taken"]=false
     inventory={"scan_cell":0,"energy_drink":0,"transit_pass":0}
@@ -4259,6 +4291,10 @@ func _save_game() -> void:
         "visited_districts":visited_districts,
         "driven_classes":driven_classes,
         "hack_replays":hack_replays,
+        "race_best":race_best,
+        "race_wins":race_wins,
+        "vehicle_upgrades":vehicle_upgrades,
+        "milestones_claimed":milestones_claimed,
         "npc_flags":npc_flags,
         "npc_trust":npc_trust,
         "npc_contracts_done":npc_contracts_done,
@@ -4312,6 +4348,10 @@ func _load_game(slot: int = selected_save_slot) -> void:
     visited_districts = Dictionary(d.get("visited_districts",{}))
     driven_classes = Dictionary(d.get("driven_classes",{}))
     hack_replays = int(d.get("hack_replays",0))
+    race_best = Dictionary(d.get("race_best",{}))
+    race_wins = int(d.get("race_wins",0))
+    vehicle_upgrades = Dictionary(d.get("vehicle_upgrades",{}))
+    milestones_claimed = Dictionary(d.get("milestones_claimed",{}))
     npc_flags = Dictionary(d.get("npc_flags",{}))
     npc_trust = Dictionary(d.get("npc_trust",{}))
     npc_contracts_done = Dictionary(d.get("npc_contracts_done",{}))
@@ -4447,10 +4487,17 @@ func _buy_shop_item(item: String, cost: int) -> void:
     _open_shop_menu()
 
 func _open_garage_menu() -> void:
-    _open_commerce(interior_name,"Werkstatt · Fahre ein Fahrzeug vor oder nutze die Lackierung.")
+    _open_commerce(interior_name,"Werkstatt · Lackierung + klassenbasiertes Performance-Tuning.")
     var colors := [["Arctic",Color("#e7edf1")],["Crimson",Color("#e95862")],["Ocean",Color("#5ba8df")],["Mint",Color("#66d7b0")],["Violet",Color("#9b7ad7")],["Sunburst",Color("#efcf55")]]
     for entry in colors:
         commerce_actions.add_child(_commerce_button("Lack %s · 45 CR" % str(entry[0]),_paint_current_vehicle.bind(str(entry[0]),Color(entry[1]))))
+    var idx: int = service_vehicle_index if service_vehicle_index>=0 else current_vehicle
+    if idx>=0 and idx<parked_cars.size():
+        var cls: String = str(parked_cars[idx]["class"])
+        var up: Dictionary = _vehicle_upgrade_state(cls)
+        commerce_actions.add_child(_commerce_button("Motor Stufe %d → %d · %d CR" % [int(up.engine),mini(3,int(up.engine)+1),_upgrade_cost(int(up.engine))],_buy_vehicle_upgrade.bind(cls,"engine")))
+        commerce_actions.add_child(_commerce_button("Handling Stufe %d → %d · %d CR" % [int(up.handling),mini(3,int(up.handling)+1),_upgrade_cost(int(up.handling))],_buy_vehicle_upgrade.bind(cls,"handling")))
+        commerce_actions.add_child(_commerce_button("Bremsen Stufe %d → %d · %d CR" % [int(up.brake),mini(3,int(up.brake)+1),_upgrade_cost(int(up.brake))],_buy_vehicle_upgrade.bind(cls,"brake")))
 
 func _paint_current_vehicle(paint_name: String, color: Color) -> void:
     var idx: int = service_vehicle_index if service_vehicle_index>=0 else current_vehicle
@@ -4611,7 +4658,148 @@ func _check_active_job_progress() -> void:
     if done:
         _complete_side_job()
 
+func _vehicle_upgrade_state(cls: String) -> Dictionary:
+    if not vehicle_upgrades.has(cls):
+        vehicle_upgrades[cls]={"engine":0,"handling":0,"brake":0}
+    return Dictionary(vehicle_upgrades[cls])
+
+func _vehicle_tune_multiplier(cls: String, channel: String) -> float:
+    var up := _vehicle_upgrade_state(cls)
+    var level: int = int(up.get(channel,0))
+    if channel=="engine":
+        return 1.0+float(level)*0.075
+    if channel=="handling":
+        return 1.0+float(level)*0.085
+    return 1.0+float(level)*0.10
+
+func _upgrade_cost(level: int) -> int:
+    return [80,135,220,9999][clampi(level,0,3)]
+
+func _buy_vehicle_upgrade(cls: String, channel: String) -> void:
+    var up := _vehicle_upgrade_state(cls)
+    var level: int = int(up.get(channel,0))
+    if level>=3:
+        _notify("%s ist bereits auf Maximalstufe." % channel.capitalize())
+        return
+    var cost := _upgrade_cost(level)
+    if credits<cost:
+        _play_sfx("error")
+        _notify("Nicht genug Credits · %d benötigt." % cost)
+        return
+    credits-=cost
+    up[channel]=level+1
+    vehicle_upgrades[cls]=up
+    _play_sfx("cash")
+    _notify("%s · %s jetzt Stufe %d" % [cls.capitalize(),channel.capitalize(),level+1])
+    _save_game()
+    _advance_native_chapter()
+    _open_garage_menu()
+
+func _total_upgrade_count() -> int:
+    var total := 0
+    for cls in vehicle_upgrades.keys():
+        var up: Dictionary = Dictionary(vehicle_upgrades[cls])
+        total += int(up.get("engine",0))+int(up.get("handling",0))+int(up.get("brake",0))
+    return total
+
+func _start_race(index: int) -> void:
+    if index<0 or index>=race_sites.size() or current_vehicle<0:
+        return
+    var race: Dictionary = race_sites[index]
+    var cls: String = str(parked_cars[current_vehicle]["class"])
+    var required: String = str(race.group)
+    var actual: String = str(VEHICLE_SPEED_GROUP.get(cls,"ROAD"))
+    var allowed := required==actual or required=="ROAD" and actual in ["ROAD","PERFORMANCE","HYPER"] or required=="PERFORMANCE" and actual in ["PERFORMANCE","HYPER"]
+    if not allowed:
+        _play_sfx("error")
+        _notify("%s benötigt Klasse %s · aktuelles Fahrzeug: %s" % [str(race.name),required,actual])
+        return
+    active_race={"index":index,"checkpoint":0,"remaining":float(race.limit),"elapsed":0.0}
+    _play_sfx("mission")
+    _notify("%s gestartet · %.0f Sekunden" % [str(race.name),float(race.limit)])
+
+func _update_active_race(delta: float) -> void:
+    if active_race.is_empty():
+        return
+    if current_vehicle<0:
+        _notify("Zeitprüfung abgebrochen · Fahrzeug verlassen.")
+        active_race={}
+        return
+    var race: Dictionary = race_sites[int(active_race.index)]
+    active_race["remaining"]=float(active_race.remaining)-delta
+    active_race["elapsed"]=float(active_race.elapsed)+delta
+    if float(active_race.remaining)<=0.0:
+        _play_sfx("error")
+        _notify("%s · Zeit abgelaufen." % str(race.name))
+        active_race={}
+        return
+    var cp_index: int = int(active_race.checkpoint)
+    var pts: Array = Array(race.points)
+    if cp_index<pts.size() and player_pos.distance_to(Vector2(pts[cp_index]))<145.0:
+        active_race["checkpoint"]=cp_index+1
+        _play_sfx("hack_click")
+        if cp_index+1>=pts.size():
+            var elapsed: float = float(active_race.elapsed)
+            var id: String = str(race.id)
+            var previous: float = float(race_best.get(id,99999.0))
+            if elapsed<previous:
+                race_best[id]=elapsed
+            credits+=int(race.reward)
+            race_wins+=1
+            active_race={}
+            _play_sfx("mission")
+            _notify("%s geschafft · %.1fs · +%d CR" % [str(race.name),elapsed,int(race.reward)])
+            _save_game()
+            _advance_native_chapter()
+
+func _draw_race_markers() -> void:
+    for i in range(race_sites.size()):
+        var race: Dictionary = race_sites[i]
+        var p := _project(Vector2(race.pos),12)
+        if player_pos.distance_to(Vector2(race.pos))<1800.0:
+            draw_arc(p,18,0,TAU,26,Color("#ffcf68"),2.0,true)
+            draw_string(ThemeDB.fallback_font,p+Vector2(-55,30),"TRIAL",HORIZONTAL_ALIGNMENT_CENTER,110,10,Color("#ffdf94"))
+    if active_race.is_empty():
+        return
+    var race: Dictionary = race_sites[int(active_race.index)]
+    var pts: Array = Array(race.points)
+    var cp: int = int(active_race.checkpoint)
+    if cp<pts.size():
+        var q := _project(Vector2(pts[cp]),8)
+        var pulse := 22.0+sin(Time.get_ticks_msec()/150.0)*4.0
+        draw_circle(q,pulse,Color(1.0,0.82,0.30,0.055))
+        draw_arc(q,pulse,0,TAU,30,Color("#ffd45c"),3.0,true)
+        draw_string(ThemeDB.fallback_font,q+Vector2(-55,-34),"CHECK %d/%d" % [cp+1,pts.size()],HORIZONTAL_ALIGNMENT_CENTER,110,11,Color.WHITE)
+    var size := get_viewport_rect().size
+    draw_string(ThemeDB.fallback_font,Vector2(size.x*0.5-140,405),"%s · %.1fs" % [str(race.name),float(active_race.remaining)],HORIZONTAL_ALIGNMENT_CENTER,280,18,Color("#ffd96d"))
+
+func _check_milestones() -> void:
+    var milestones := [
+        ["photos_5",photo_count>=5,60,"Photo Scout"],
+        ["photos_all",photo_count>=photo_points.size() and photo_points.size()>0,180,"Photo Master"],
+        ["cars_5",driven_classes.size()>=5,75,"Class Explorer"],
+        ["cars_all",driven_classes.size()>=VEHICLE_CLASSES.size(),220,"Full Garage"],
+        ["districts_15",visited_districts.size()>=15,85,"Urban Explorer"],
+        ["hacks_8",_completed_hack_count()>=8,90,"Security Runner"],
+        ["races_3",race_wins>=3,110,"Street Trialist"],
+        ["jobs_10",jobs_done>=10,120,"City Professional"]
+    ]
+    for m in milestones:
+        var id := str(m[0])
+        if bool(m[1]) and not bool(milestones_claimed.get(id,false)):
+            milestones_claimed[id]=true
+            credits+=int(m[2])
+            _play_sfx("mission")
+            _notify("MEILENSTEIN · %s · +%d CR" % [str(m[3]),int(m[2])])
+            _save_game()
+
 func _current_objective_pos() -> Vector2:
+    if not active_race.is_empty():
+        var rr: Dictionary = race_sites[int(active_race.index)]
+        var cp: int = int(active_race.checkpoint)
+        var rpts: Array = Array(rr.points)
+        if cp<rpts.size():
+            return Vector2(rpts[cp])
     var contract_target := _npc_contract_target()
     if contract_target!=Vector2.ZERO:
         return contract_target
@@ -4739,6 +4927,8 @@ func _draw_map_overlay() -> void:
     for ph in photo_points:
         if not bool(ph.taken):
             _draw_map_marker(_map_point(Vector2(ph.pos),map_rect),Color("#ffb3e6"),"◎")
+    for race in race_sites:
+        _draw_map_marker(_map_point(Vector2(race.pos),map_rect),Color("#ffd36b"),"R")
     for i in range(storefronts.size()):
         var st = storefronts[i]
         var col := Color("#ffd27a") if st.kind in ["restaurant","cafe"] else (Color("#73f3ce") if st.kind=="shop" else Color("#ff9b72"))
@@ -4769,6 +4959,7 @@ func _draw_map_overlay() -> void:
         ["★","Sehenswürdigkeit / Landmark",Color("#9ad5ff")],
         ["N","Benannter NPC / Kontakt",Color("#c7f2e7")],
         ["◎","PMDD Photo Point",Color("#ffb3e6")],
+        ["R","Zeitprüfung / Fahrchallenge",Color("#ffd36b")],
         ["R","Restaurant / Café",Color("#ffd27a")],
         ["G","Garage / Werkstatt",Color("#ff9b72")],
         ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
@@ -4821,6 +5012,8 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="hack_count": return mini(_completed_hack_count(),int(c.goal))
     if kind=="collector": return mini(cache_count+glyph_count,int(c.goal))
     if kind=="hack_replays": return mini(hack_replays,int(c.goal))
+    if kind=="races": return mini(race_wins,int(c.goal))
+    if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
     return 1
 
 func _draw_missions_overlay() -> void:
@@ -4828,7 +5021,7 @@ func _draw_missions_overlay() -> void:
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#9ad5ff"),false,2.0)
     draw_string(ThemeDB.fallback_font,Vector2(72,220),"MISSIONEN",HORIZONTAL_ALIGNMENT_LEFT,600,30,Color.WHITE)
-    draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Fahrzeuge %d/%d · Stadtteile %d/%d · Hacks %d/%d · Replays %d" % [photo_count,photo_points.size(),driven_classes.size(),VEHICLE_CLASSES.size(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),hack_replays],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
+    draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Fahrzeuge %d/%d · Stadtteile %d/%d · Hacks %d/%d · Rennen %d · Tuning %d" % [photo_count,photo_points.size(),driven_classes.size(),VEHICLE_CLASSES.size(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),race_wins,_total_upgrade_count()],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
     var y := 300.0
     for i in range(native_chapters.size()):
         var c: Dictionary = native_chapters[i]
