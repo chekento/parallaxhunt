@@ -38,6 +38,13 @@ var mission_secrets := 0
 var current_district := ""
 var camera_status := "Sensor-PMDD"
 var world_clock := 19.15
+var interior_active := false
+var interior_name := ""
+var interior_kind := ""
+var interior_accent := Color("#73f3ce")
+var interior_return_pos := Vector2.ZERO
+var interior_player_pos := Vector2(450,560)
+var interior_size := Vector2(900,700)
 
 # True multi-touch state: left and right touches can coexist.
 var move_touch := -1
@@ -82,15 +89,17 @@ func _ready() -> void:
 func _process(delta: float) -> void:
     _update_sensor(delta)
     _update_player(delta)
-    _update_traffic(delta)
-    _update_pedestrians(delta)
-    _update_transit(delta)
+    if not interior_active:
+        _update_traffic(delta)
+        _update_pedestrians(delta)
+        _update_transit(delta)
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
     view_amount = view_amount.lerp((sensor_view * 0.72 + view_touch * 0.95).limit_length(1.0), minf(1.0, delta * 8.0))
-    camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
-    _update_secrets()
-    _update_district()
+    if not interior_active:
+        camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
+        _update_secrets()
+        _update_district()
     _update_ui()
     queue_redraw()
 
@@ -182,6 +191,7 @@ func _build_landmarks() -> void:
     landmarks = [
         {"name":"Old Clock Tower","district":"Altstadt","pos":Vector2(1850,1650),"size":Vector2(360,300),"h":220.0,"kind":"clock","accent":Color("#ffcd8a")},
         {"name":"Crystal Forum","district":"Glass Quarter","pos":Vector2(8050,1700),"size":Vector2(520,380),"h":310.0,"kind":"crystal","accent":Color("#67d9ff")},
+        {"name":"OpenAI HQ","district":"Glass Quarter","pos":Vector2(9000,3150),"size":Vector2(820,520),"h":295.0,"kind":"openai_hq","accent":Color("#f2f7f7")},
         {"name":"Nordpark Glasshouse","district":"Nordpark","pos":Vector2(12800,1480),"size":Vector2(600,420),"h":120.0,"kind":"greenhouse","accent":Color("#8ff0b4")},
         {"name":"Solar Beacon","district":"Solar Heights","pos":Vector2(20600,1550),"size":Vector2(460,360),"h":255.0,"kind":"solar_beacon","accent":Color("#f1e36f")},
         {"name":"Canal Rotunda","district":"Kanäle","pos":Vector2(2700,6500),"size":Vector2(480,420),"h":145.0,"kind":"rotunda","accent":Color("#64e7e4")},
@@ -563,6 +573,15 @@ func _update_sensor(delta: float) -> void:
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
 func _update_player(delta: float) -> void:
+    if interior_active:
+        if move_vec.length() < 0.04:
+            return
+        var iv := move_vec.normalized() * WALK_SPEED * minf(1.0,move_vec.length())
+        interior_player_pos += iv * delta
+        interior_player_pos.x = clampf(interior_player_pos.x,45.0,interior_size.x-45.0)
+        interior_player_pos.y = clampf(interior_player_pos.y,45.0,interior_size.y-45.0)
+        player_heading = iv.angle()
+        return
     if move_vec.length() < 0.04:
         vehicle_velocity = move_toward(vehicle_velocity, 0.0, delta * 280.0)
         return
@@ -642,8 +661,11 @@ func _update_district() -> void:
 
 func _update_ui() -> void:
     mission_label.text = "Echoes · %d/10   Secrets · %d/4" % [mission_fragments, mission_secrets]
-    detail_label.text = "Move with left thumb. Use right thumb or device tilt to look behind height layers."
-    var mode := "On foot"
+    if interior_active:
+        detail_label.text = "%s · Interior. Explore the rooms and return through the lobby exit." % interior_name
+    else:
+        detail_label.text = "Move with left thumb. Use right thumb or device tilt to look behind height layers."
+    var mode := "Inside · %s" % interior_name if interior_active else "On foot"
     if current_vehicle >= 0:
         mode = "Driving · %s" % str(parked_cars[current_vehicle]["class"]).capitalize()
     status_label.text = "%s  ·  %s  ·  Peek %d%%\n%s" % [current_district, mode, int(view_amount.length()*100.0), camera_status]
@@ -659,7 +681,21 @@ func _interact() -> void:
     var n := _nearest_interactable()
     if n.is_empty():
         return
-    if n.type == "fragment":
+    if n.type == "interior_exit":
+        _leave_interior()
+        return
+    elif n.type == "interior_feature":
+        _play_sfx("collect")
+        _notify(n.get("message","Interior system online."))
+        return
+    elif n.type == "storefront":
+        var st = storefronts[int(n.index)]
+        _enter_interior(str(st.name),str(st.kind),st.accent,player_pos)
+        return
+    elif n.type == "openai_hq":
+        _enter_interior("OpenAI HQ","openai_hq",Color("#f2f7f7"),player_pos)
+        return
+    elif n.type == "fragment":
         var idx: int = n.index
         if not fragments[idx].taken:
             fragments[idx].taken = true
@@ -685,6 +721,14 @@ func _interact() -> void:
             _play_sfx("vehicle")
 
 func _nearest_interactable() -> Dictionary:
+    if interior_active:
+        var exit_pos := Vector2(interior_size.x*0.5,interior_size.y-48)
+        if interior_player_pos.distance_to(exit_pos) < 78.0:
+            return {"type":"interior_exit","action":"EXIT"}
+        var feature := _interior_feature_pos()
+        if interior_player_pos.distance_to(feature) < 82.0:
+            return {"type":"interior_feature","action":"USE","message":_interior_feature_message()}
+        return {}
     if current_vehicle >= 0:
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
     var best := {}
@@ -710,10 +754,29 @@ func _nearest_interactable() -> Dictionary:
         if d3 < 82.0 and d3 < bd:
             best = {"type":"car","index":k,"action":"ENTER CAR"}
             bd = d3
+    for si in range(storefronts.size()):
+        var ds := player_pos.distance_to(storefronts[si].pos)
+        if ds < 88.0 and ds < bd:
+            best = {"type":"storefront","index":si,"action":"ENTER"}
+            bd = ds
+    for l in landmarks:
+        if str(l.kind) == "openai_hq":
+            var entrance := l.pos + Vector2(0,l.size.y*0.5+48)
+            var dl := player_pos.distance_to(entrance)
+            if dl < 105.0 and dl < bd:
+                best = {"type":"openai_hq","action":"ENTER OPENAI HQ"}
+                bd = dl
     return best
 
 func _draw() -> void:
     draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color("#07131b"))
+    if interior_active:
+        _draw_interior_scene()
+        _draw_interior_player()
+        _draw_ambient_overlay()
+        _draw_touch_controls()
+        _draw_peek_meter()
+        return
     _draw_district_ground()
     _draw_water()
     _draw_parks()
@@ -971,6 +1034,8 @@ func _draw_landmarks() -> void:
         draw_ellipse(base+Vector2(8,14),Vector2(l.size.x*0.34,l.size.y*0.25),0.0,Color(0,0,0,0.18))
         if kind == "clock":
             _draw_landmark_tower(base,top,accent,true)
+        elif kind == "openai_hq":
+            _draw_landmark_openai(l,base,top,accent)
         elif kind == "crystal":
             _draw_landmark_crystal(base,top,accent)
         elif kind in ["greenhouse","conservatory"]:
@@ -992,6 +1057,41 @@ func _draw_landmarks() -> void:
         else:
             _draw_landmark_terminal(base,top,accent)
         draw_string(ThemeDB.fallback_font,base+Vector2(-110,52),str(l.name),HORIZONTAL_ALIGNMENT_CENTER,220,16,Color(0.93,0.98,1.0,0.80))
+
+func _draw_landmark_openai(l: Dictionary, base: Vector2, top: Vector2, accent: Color) -> void:
+    # Stylized in-game interpretation: twin glass volumes joined by a luminous skybridge.
+    var spread := 92.0
+    var left_base := base+Vector2(-spread,18)
+    var right_base := base+Vector2(spread,18)
+    var left_top := top+Vector2(-spread,14)
+    var right_top := top+Vector2(spread,14)
+    var glass := Color("#bddde8")
+    var side_col := Color("#334b57")
+    var lt := PackedVector2Array([left_base+Vector2(-48,26),left_base+Vector2(48,26),left_top+Vector2(38,10),left_top+Vector2(-38,10)])
+    var rt := PackedVector2Array([right_base+Vector2(-48,26),right_base+Vector2(48,26),right_top+Vector2(38,10),right_top+Vector2(-38,10)])
+    draw_colored_polygon(lt,side_col)
+    draw_colored_polygon(rt,side_col.lightened(0.04))
+    for k in range(1,7):
+        var v := float(k)/7.0
+        draw_line(lt[0].lerp(lt[3],v),lt[1].lerp(lt[2],v),Color(glass.r,glass.g,glass.b,0.34),2.0)
+        draw_line(rt[0].lerp(rt[3],v),rt[1].lerp(rt[2],v),Color(glass.r,glass.g,glass.b,0.34),2.0)
+    for k in range(1,4):
+        var u := float(k)/4.0
+        draw_line(lt[0].lerp(lt[1],u),lt[3].lerp(lt[2],u),Color(1,1,1,0.12),1.0)
+        draw_line(rt[0].lerp(rt[1],u),rt[3].lerp(rt[2],u),Color(1,1,1,0.12),1.0)
+    var bridge_y := top.lerp(base,0.44).y
+    var bridge := Rect2(base.x-spread+34,bridge_y-13,(spread*2)-68,26)
+    draw_rect(bridge,Color(0.44,0.74,0.84,0.24),true)
+    draw_rect(bridge,Color(0.82,0.94,0.97,0.64),false,2.0)
+    draw_line(Vector2(bridge.position.x,bridge.position.y+8),Vector2(bridge.end.x,bridge.position.y+8),Color(1,1,1,0.16),1.0)
+    # Public visitor entrance/plaza.
+    draw_rect(Rect2(base+Vector2(-64,34),Vector2(128,34)),Color(0.04,0.08,0.10,0.88),true)
+    draw_rect(Rect2(base+Vector2(-64,34),Vector2(128,34)),Color(0.88,0.96,0.97,0.42),false,2.0)
+    draw_string(ThemeDB.fallback_font,base+Vector2(-54,44),"OPENAI HQ",HORIZONTAL_ALIGNMENT_CENTER,108,14,Color("#f2f7f7"))
+    var emblem := base+Vector2(0,21)
+    draw_circle(emblem,10,Color(0.96,0.98,0.98,0.10))
+    draw_arc(emblem,10,0,TAU,20,Color("#f2f7f7"),1.7,true)
+    draw_arc(emblem,6,0.6,5.7,18,Color("#f2f7f7"),1.3,true)
 
 func _draw_landmark_tower(base: Vector2, top: Vector2, accent: Color, clock: bool) -> void:
     var w := 54.0
@@ -1502,6 +1602,161 @@ func _draw_player() -> void:
     var pack := chest - f*4.0
     draw_rect(Rect2(pack-Vector2(3,4),Vector2(6,8)),Color("#20343f"),true)
     draw_circle(pack+Vector2(0,-1),1.6,Color("#73f3ce"))
+
+func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vector2) -> void:
+    interior_active = true
+    interior_name = name
+    interior_kind = kind
+    interior_accent = accent
+    interior_return_pos = return_pos
+    interior_player_pos = Vector2(interior_size.x*0.5,interior_size.y-120)
+    current_vehicle = -1
+    vehicle_velocity = 0.0
+    _play_sfx("collect")
+    _notify("%s · entered" % name)
+
+func _leave_interior() -> void:
+    interior_active = false
+    player_pos = interior_return_pos + Vector2(0,42)
+    camera_pos = player_pos
+    _play_sfx("vehicle")
+    _notify("Back outside · %s" % current_district)
+
+func _notify(text: String) -> void:
+    district_banner.text = text
+    district_banner.modulate = Color(1,1,1,1)
+    var tw := create_tween()
+    tw.tween_interval(1.0)
+    tw.tween_property(district_banner,"modulate:a",0.0,0.65)
+
+func _interior_feature_pos() -> Vector2:
+    if interior_kind == "openai_hq":
+        return Vector2(interior_size.x*0.5,210)
+    if interior_kind in ["garage","workshop"]:
+        return Vector2(interior_size.x*0.68,250)
+    if interior_kind in ["restaurant","cafe"]:
+        return Vector2(interior_size.x*0.30,250)
+    return Vector2(interior_size.x*0.5,250)
+
+func _interior_feature_message() -> String:
+    if interior_kind == "openai_hq":
+        return "Visitor lab display: multimodal research visualization active."
+    if interior_kind == "garage":
+        return "Garage service bay ready for vehicle storage and paint systems."
+    if interior_kind == "workshop":
+        return "Workshop diagnostics online."
+    if interior_kind in ["restaurant","cafe"]:
+        return "A quiet table restores the pace of the journey."
+    return "Interactive display online."
+
+func _draw_interior_scene() -> void:
+    var size := get_viewport_rect().size
+    var origin := size*0.5 - interior_size*0.5
+    var accent := interior_accent
+    draw_rect(Rect2(origin,interior_size),Color("#111a20"),true)
+    draw_rect(Rect2(origin,interior_size),Color(accent.r,accent.g,accent.b,0.28),false,3.0)
+    # floor grid and light pools
+    for x in range(30,int(interior_size.x),54):
+        draw_line(origin+Vector2(x,20),origin+Vector2(x,interior_size.y-20),Color(1,1,1,0.025),1.0)
+    for y in range(30,int(interior_size.y),54):
+        draw_line(origin+Vector2(20,y),origin+Vector2(interior_size.x-20,y),Color(1,1,1,0.025),1.0)
+    draw_circle(origin+Vector2(interior_size.x*0.28,180),80,Color(accent.r,accent.g,accent.b,0.035))
+    draw_circle(origin+Vector2(interior_size.x*0.72,180),80,Color(accent.r,accent.g,accent.b,0.035))
+    # room partitions
+    draw_line(origin+Vector2(250,90),origin+Vector2(250,470),Color(0.45,0.56,0.62,0.30),4.0)
+    draw_line(origin+Vector2(650,90),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
+    draw_line(origin+Vector2(250,470),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
+    # exit door
+    var exitp := origin+Vector2(interior_size.x*0.5,interior_size.y-48)
+    draw_rect(Rect2(exitp-Vector2(42,18),Vector2(84,36)),Color(0.08,0.12,0.14,0.92),true)
+    draw_rect(Rect2(exitp-Vector2(42,18),Vector2(84,36)),Color(accent.r,accent.g,accent.b,0.50),false,2.0)
+    draw_string(ThemeDB.fallback_font,exitp+Vector2(-32,-6),"EXIT",HORIZONTAL_ALIGNMENT_CENTER,64,12,Color.WHITE)
+    if interior_kind == "openai_hq":
+        _draw_openai_interior(origin,accent)
+    elif interior_kind in ["garage","workshop"]:
+        _draw_garage_interior(origin,accent)
+    elif interior_kind in ["restaurant","cafe"]:
+        _draw_restaurant_interior(origin,accent)
+    else:
+        _draw_shop_interior(origin,accent)
+    draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),interior_name,HORIZONTAL_ALIGNMENT_LEFT,420,22,Color(0.94,0.98,0.99,0.92))
+
+func _draw_openai_interior(origin: Vector2, accent: Color) -> void:
+    # glass lobby + visitor lab pods + bridge gallery
+    draw_rect(Rect2(origin+Vector2(285,90),Vector2(330,115)),Color(0.44,0.71,0.79,0.10),true)
+    draw_rect(Rect2(origin+Vector2(285,90),Vector2(330,115)),Color(0.83,0.94,0.97,0.34),false,2.0)
+    for k in range(1,6):
+        draw_line(origin+Vector2(285+k*55,90),origin+Vector2(285+k*55,205),Color(1,1,1,0.08),1.0)
+    var feature := origin+_interior_feature_pos()
+    draw_circle(feature,44,Color(0.95,0.98,0.98,0.06))
+    draw_circle(feature,27,Color(0.95,0.98,0.98,0.04))
+    for a in range(0,360,60):
+        var d := Vector2.from_angle(deg_to_rad(float(a)))
+        draw_arc(feature+d*14,12,0,TAU,16,Color(0.93,0.98,0.98,0.50),1.4,true)
+    draw_string(ThemeDB.fallback_font,feature+Vector2(-68,58),"VISITOR LAB",HORIZONTAL_ALIGNMENT_CENTER,136,12,Color("#eaf5f6"))
+    # research pods
+    for q in [Vector2(330,330),Vector2(450,330),Vector2(570,330)]:
+        var c := origin+q
+        draw_rect(Rect2(c-Vector2(38,24),Vector2(76,48)),Color(0.10,0.17,0.20,0.9),true)
+        draw_rect(Rect2(c-Vector2(38,24),Vector2(76,48)),Color(0.75,0.91,0.94,0.22),false,1.5)
+        draw_line(c+Vector2(-24,0),c+Vector2(24,0),Color(0.45,0.86,0.91,0.32),2.0)
+        draw_circle(c+Vector2(0,-8),4,Color("#73f3ce"))
+    # reception
+    draw_rect(Rect2(origin+Vector2(70,140),Vector2(120,44)),Color("#24323a"),true)
+    draw_line(origin+Vector2(74,142),origin+Vector2(186,142),Color(0.85,0.95,0.96,0.24),2.0)
+    draw_string(ThemeDB.fallback_font,origin+Vector2(90,154),"WELCOME",HORIZONTAL_ALIGNMENT_CENTER,80,10,Color.WHITE)
+
+func _draw_garage_interior(origin: Vector2, accent: Color) -> void:
+    for x in [330.0,520.0]:
+        var c := origin+Vector2(x,260)
+        draw_rect(Rect2(c-Vector2(64,110),Vector2(128,220)),Color(0.10,0.12,0.14,0.82),true)
+        draw_line(c+Vector2(-48,-82),c+Vector2(-48,82),Color(accent.r,accent.g,accent.b,0.36),4.0)
+        draw_line(c+Vector2(48,-82),c+Vector2(48,82),Color(accent.r,accent.g,accent.b,0.36),4.0)
+        draw_rect(Rect2(c-Vector2(35,18),Vector2(70,36)),Color("#59646b"),true)
+    var feature := origin+_interior_feature_pos()
+    draw_rect(Rect2(feature-Vector2(42,22),Vector2(84,44)),Color(0.08,0.12,0.14,0.95),true)
+    draw_rect(Rect2(feature-Vector2(42,22),Vector2(84,44)),Color(accent.r,accent.g,accent.b,0.55),false,2.0)
+    draw_string(ThemeDB.fallback_font,feature+Vector2(-30,-5),"SERVICE",HORIZONTAL_ALIGNMENT_CENTER,60,10,Color.WHITE)
+
+func _draw_restaurant_interior(origin: Vector2, accent: Color) -> void:
+    for yy in [190.0,330.0]:
+        for xx in [360.0,520.0]:
+            var c := origin+Vector2(xx,yy)
+            draw_circle(c,28,Color("#684e3f"))
+            for a in range(0,360,90):
+                var d := Vector2.from_angle(deg_to_rad(float(a)))
+                draw_circle(c+d*45,10,Color("#334047"))
+    var counter := origin+Vector2(730,190)
+    draw_rect(Rect2(counter-Vector2(60,24),Vector2(120,48)),Color("#5e493d"),true)
+    draw_line(counter+Vector2(-55,-18),counter+Vector2(55,-18),Color(accent.r,accent.g,accent.b,0.42),2.0)
+
+func _draw_shop_interior(origin: Vector2, accent: Color) -> void:
+    for x in [330.0,450.0,570.0]:
+        draw_rect(Rect2(origin+Vector2(x-32,130),Vector2(64,250)),Color("#263139"),true)
+        for y in [175.0,235.0,295.0]:
+            draw_line(origin+Vector2(x-26,y),origin+Vector2(x+26,y),Color(accent.r,accent.g,accent.b,0.28),2.0)
+    var desk := origin+_interior_feature_pos()
+    draw_rect(Rect2(desk-Vector2(45,20),Vector2(90,40)),Color("#36434a"),true)
+
+func _draw_interior_player() -> void:
+    var size := get_viewport_rect().size
+    var origin := size*0.5-interior_size*0.5
+    var p := origin+interior_player_pos
+    var f := Vector2.from_angle(player_heading)
+    var side := Vector2(-f.y,f.x)
+    var walking := move_vec.length()>0.08
+    var phase := Time.get_ticks_msec()/95.0 if walking else 0.0
+    var swing := sin(phase)*4.0 if walking else 0.0
+    draw_ellipse(p+Vector2(3,6),Vector2(9,5),player_heading,Color(0,0,0,0.24))
+    draw_line(p,p+Vector2(-swing,13),Color("#667682"),3.0,true)
+    draw_line(p,p+Vector2(swing,13),Color("#758692"),3.0,true)
+    var chest := p+Vector2(0,-9)
+    var torso := PackedVector2Array([chest+side*6-f*5,chest-side*6-f*5,p-side*6,p+side*6])
+    draw_colored_polygon(torso,Color("#e8f2f6"))
+    draw_circle(chest-f*10,5.0,Color("#e8ba96"))
+    draw_arc(chest-f*10+Vector2(0,-1),5.1,PI,TAU,12,Color("#263039"),2.2,true)
+    draw_line(chest-side*6,chest-side*6+Vector2(-swing,7),Color("#cfdde4"),2.2)
+    draw_line(chest+side*6,chest+side*6+Vector2(swing,7),Color("#cfdde4"),2.2)
 
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
