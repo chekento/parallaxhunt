@@ -1340,6 +1340,10 @@ func _build_ui() -> void:
     mvb.add_child(hint)
     layer.add_child(main_menu_panel)
 
+func _haptic(duration_ms: int = 45) -> void:
+    if OS.get_name()=="Android":
+        Input.vibrate_handheld(duration_ms)
+
 func _build_audio() -> void:
     sfx_player = AudioStreamPlayer.new()
     sfx_player.volume_db = -7.0
@@ -1435,6 +1439,9 @@ func _update_player(delta: float) -> void:
         interior_player_pos.y = clampf(interior_player_pos.y,45.0,interior_size.y-45.0)
         player_heading = iv.angle()
         return
+    if current_vehicle>=0 and not active_race.is_empty() and float(active_race.get("countdown",0.0))>0.0:
+        vehicle_velocity=move_toward(vehicle_velocity,0.0,delta*600.0)
+        return
     if move_vec.length() < 0.04:
         vehicle_velocity = move_toward(vehicle_velocity, 0.0, delta * 280.0)
         return
@@ -1474,6 +1481,7 @@ func _update_player(delta: float) -> void:
             var impact_speed: float = abs(vehicle_velocity)
             vehicle_velocity*=-0.06
             _play_sfx("impact")
+            _haptic(75 if impact_speed>170.0 else 35)
             if impact_speed>170.0:
                 _notify("Kollision · Geschwindigkeit reduzieren")
         car["pos"]=player_pos
@@ -1890,6 +1898,7 @@ func _scan() -> void:
             credits+=int(scan_points[i].reward)
             found=true
             _play_sfx("collect")
+            _haptic(35)
             _show_reward_popup("STREET SIGNAL GESCANNT","%s · %s\n+%d CR" % [str(scan_points[i].label),str(scan_points[i].district),int(scan_points[i].reward)],Color("#78d8ff"))
             _save_game()
             _advance_native_chapter()
@@ -3994,6 +4003,7 @@ func _finish_minigame() -> void:
     credits += reward_credits
     _save_game()
     _play_sfx("secret")
+    _haptic(55)
     game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if was_replay else "%s erhalten" % site_reward),reward_credits]
     await get_tree().create_timer(0.65).timeout
     _close_minigame()
@@ -5111,9 +5121,11 @@ func _start_race(index: int) -> void:
         _show_reward_popup("FALSCHE FAHRZEUGKLASSE","%s benötigt %s\nAktuell: %s · %s" % [str(race.name),required,cls.capitalize(),actual],Color("#ff8f7a"))
         _notify("%s benötigt Klasse %s · aktuelles Fahrzeug: %s" % [str(race.name),required,actual])
         return
-    active_race={"index":index,"checkpoint":0,"remaining":float(race.limit),"elapsed":0.0}
-    _play_sfx("mission")
-    _notify("%s gestartet · %.0f Sekunden" % [str(race.name),float(race.limit)])
+    active_race={"index":index,"checkpoint":0,"remaining":float(race.limit),"elapsed":0.0,"countdown":3.0,"count_tick":3}
+    vehicle_velocity=0.0
+    _play_sfx("hack_click")
+    _haptic(35)
+    _notify("%s · Start in 3…" % str(race.name))
 
 func _update_active_race(delta: float) -> void:
     if active_race.is_empty():
@@ -5123,6 +5135,21 @@ func _update_active_race(delta: float) -> void:
         active_race={}
         return
     var race: Dictionary = race_sites[int(active_race.index)]
+    var countdown: float = float(active_race.get("countdown",0.0))
+    if countdown>0.0:
+        var next_count: float = maxf(0.0,countdown-delta)
+        active_race["countdown"]=next_count
+        var tick: int = int(ceil(next_count))
+        if tick<int(active_race.get("count_tick",3)):
+            active_race["count_tick"]=tick
+            if tick>0:
+                _play_sfx("hack_click")
+                _haptic(28)
+            else:
+                _play_sfx("mission")
+                _haptic(60)
+                _show_reward_popup("GO!",str(race.name),Color("#ffd36b"))
+        return
     active_race["remaining"]=float(active_race.remaining)-delta
     active_race["elapsed"]=float(active_race.elapsed)+delta
     if float(active_race.remaining)<=0.0:
@@ -5170,7 +5197,12 @@ func _draw_race_markers() -> void:
         draw_arc(q,pulse,0,TAU,30,Color("#ffd45c"),3.0,true)
         draw_string(ThemeDB.fallback_font,q+Vector2(-55,-34),"CHECK %d/%d" % [cp+1,pts.size()],HORIZONTAL_ALIGNMENT_CENTER,110,11,Color.WHITE)
     var size := get_viewport_rect().size
-    draw_string(ThemeDB.fallback_font,Vector2(size.x*0.5-140,405),"%s · %.1fs" % [str(race.name),float(active_race.remaining)],HORIZONTAL_ALIGNMENT_CENTER,280,18,Color("#ffd96d"))
+    var countdown: float = float(active_race.get("countdown",0.0))
+    if countdown>0.0:
+        draw_string(ThemeDB.fallback_font,Vector2(size.x*0.5-100,395),str(maxi(1,int(ceil(countdown)))),HORIZONTAL_ALIGNMENT_CENTER,200,54,Color("#ffd96d"))
+        draw_string(ThemeDB.fallback_font,Vector2(size.x*0.5-150,455),str(race.name),HORIZONTAL_ALIGNMENT_CENTER,300,16,Color.WHITE)
+    else:
+        draw_string(ThemeDB.fallback_font,Vector2(size.x*0.5-140,405),"%s · %.1fs" % [str(race.name),float(active_race.remaining)],HORIZONTAL_ALIGNMENT_CENTER,280,18,Color("#ffd96d"))
 
 func _check_milestones() -> void:
     var milestones := [
