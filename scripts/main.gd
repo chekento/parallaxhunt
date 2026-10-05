@@ -80,6 +80,20 @@ var game_tries: int = 0
 var game_memory_seq: Array = []
 var game_memory_input: Array = []
 var game_memory_locked: bool = false
+var main_menu_active: bool = true
+var selected_save_slot: int = 1
+var new_game_mode: bool = false
+var sound_enabled: bool = true
+var sensor_gain: float = 1.0
+var graphics_quality: int = 2
+var main_menu_panel: PanelContainer
+var menu_status: Label
+var menu_slot_buttons: Array = []
+var options_box: VBoxContainer
+var sound_option_button: Button
+var graphics_option_button: Button
+var pmdd_option_button: Button
+var sensor_option_button: Button
 var owned_cars: Array = []
 var current_paint: String = ""
 var service_vehicle_index: int = -1
@@ -132,7 +146,7 @@ func _ready() -> void:
     _build_landmarks()
     _build_native_gameplay_data()
     _build_story_content()
-    _load_game()
+    _load_options()
     _generate_city()
     _generate_traffic()
     _generate_visual_props()
@@ -145,11 +159,16 @@ func _ready() -> void:
     _bootstrap_android_camera()
     camera_pos = player_pos
     current_district = _district_at(player_pos).get("name", "Megacity")
+    _refresh_main_menu()
     _update_ui()
     queue_redraw()
 
 func _process(delta: float) -> void:
     _update_sensor(delta)
+    if main_menu_active:
+        world_clock = fposmod(world_clock + delta * 0.006,24.0)
+        queue_redraw()
+        return
     if interior_active:
         target_world_zoom = 1.0
     elif current_vehicle >= 0:
@@ -177,6 +196,8 @@ func _process(delta: float) -> void:
     queue_redraw()
 
 func _input(event: InputEvent) -> void:
+    if main_menu_active:
+        return
     if event is InputEventScreenTouch:
         var t := event as InputEventScreenTouch
         if t.pressed:
@@ -783,6 +804,14 @@ func _build_ui() -> void:
     district_banner.modulate = Color(1,1,1,0)
     layer.add_child(district_banner)
 
+    var pause_button := Button.new()
+    pause_button.text = "☰"
+    pause_button.position = Vector2(690,42)
+    pause_button.size = Vector2(70,72)
+    pause_button.add_theme_font_size_override("font_size",28)
+    pause_button.pressed.connect(_return_to_main_menu)
+    layer.add_child(pause_button)
+
     var map_button := Button.new()
     map_button.text = "MAP"
     map_button.position = Vector2(770,42)
@@ -896,6 +925,106 @@ func _build_ui() -> void:
     interact_button.pressed.connect(_interact)
     layer.add_child(interact_button)
 
+    # Full-screen native main menu. Added last so it owns input while visible.
+    main_menu_panel = PanelContainer.new()
+    main_menu_panel.position = Vector2(70,270)
+    main_menu_panel.size = Vector2(940,1780)
+    var msb := StyleBoxFlat.new()
+    msb.bg_color = Color(0.018,0.045,0.064,0.88)
+    msb.border_color = Color(0.45,0.95,0.82,0.32)
+    msb.set_border_width_all(2)
+    msb.corner_radius_top_left = 34
+    msb.corner_radius_top_right = 34
+    msb.corner_radius_bottom_left = 34
+    msb.corner_radius_bottom_right = 34
+    main_menu_panel.add_theme_stylebox_override("panel",msb)
+    var mvb := VBoxContainer.new()
+    mvb.add_theme_constant_override("separation",14)
+    main_menu_panel.add_child(mvb)
+    var logo := Label.new()
+    logo.text = "PARALLAX HUNT"
+    logo.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    logo.add_theme_font_size_override("font_size",56)
+    logo.modulate = Color("#eafafa")
+    mvb.add_child(logo)
+    var subtitle := Label.new()
+    subtitle.text = "NATIVE FEATURE ALPHA · PMDD MEGACITY"
+    subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    subtitle.add_theme_font_size_override("font_size",19)
+    subtitle.modulate = Color("#73f3ce")
+    mvb.add_child(subtitle)
+    menu_status = Label.new()
+    menu_status.text = "Wähle einen Spielstand."
+    menu_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    menu_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    menu_status.add_theme_font_size_override("font_size",17)
+    menu_status.modulate = Color("#c7d6de")
+    mvb.add_child(menu_status)
+
+    var continue_button := Button.new()
+    continue_button.text = "FORTFAHREN"
+    continue_button.custom_minimum_size = Vector2(0,84)
+    continue_button.add_theme_font_size_override("font_size",24)
+    continue_button.pressed.connect(_continue_latest_save)
+    mvb.add_child(continue_button)
+
+    var new_button := Button.new()
+    new_button.text = "NEUES SPIEL"
+    new_button.custom_minimum_size = Vector2(0,76)
+    new_button.add_theme_font_size_override("font_size",21)
+    new_button.pressed.connect(_select_new_game_mode)
+    mvb.add_child(new_button)
+
+    var slot_title := Label.new()
+    slot_title.text = "SPIELSTÄNDE"
+    slot_title.add_theme_font_size_override("font_size",18)
+    slot_title.modulate = Color("#9ad5ff")
+    mvb.add_child(slot_title)
+    menu_slot_buttons.clear()
+    for slot in range(1,4):
+        var sb := Button.new()
+        sb.custom_minimum_size = Vector2(0,92)
+        sb.add_theme_font_size_override("font_size",18)
+        sb.pressed.connect(_select_save_slot.bind(slot))
+        mvb.add_child(sb)
+        menu_slot_buttons.append(sb)
+
+    var options_button := Button.new()
+    options_button.text = "OPTIONEN"
+    options_button.custom_minimum_size = Vector2(0,72)
+    options_button.add_theme_font_size_override("font_size",19)
+    options_button.pressed.connect(_toggle_options_box)
+    mvb.add_child(options_button)
+
+    options_box = VBoxContainer.new()
+    options_box.visible = false
+    options_box.add_theme_constant_override("separation",8)
+    mvb.add_child(options_box)
+    sound_option_button = Button.new()
+    sound_option_button.custom_minimum_size = Vector2(0,62)
+    sound_option_button.pressed.connect(_cycle_sound_option)
+    options_box.add_child(sound_option_button)
+    graphics_option_button = Button.new()
+    graphics_option_button.custom_minimum_size = Vector2(0,62)
+    graphics_option_button.pressed.connect(_cycle_graphics_option)
+    options_box.add_child(graphics_option_button)
+    pmdd_option_button = Button.new()
+    pmdd_option_button.custom_minimum_size = Vector2(0,62)
+    pmdd_option_button.pressed.connect(_cycle_pmdd_option)
+    options_box.add_child(pmdd_option_button)
+    sensor_option_button = Button.new()
+    sensor_option_button.custom_minimum_size = Vector2(0,62)
+    sensor_option_button.pressed.connect(_cycle_sensor_option)
+    options_box.add_child(sensor_option_button)
+
+    var hint := Label.new()
+    hint.text = "3 getrennte Spielstände · Autosave · Karte · Missionen · Optionen"
+    hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    hint.add_theme_font_size_override("font_size",14)
+    hint.modulate = Color("#8fa7b2")
+    mvb.add_child(hint)
+    layer.add_child(main_menu_panel)
+
 func _build_audio() -> void:
     sfx_player = AudioStreamPlayer.new()
     sfx_player.volume_db = -7.0
@@ -938,6 +1067,8 @@ func _make_chime(freqs: Array, durations: Array, amp: float) -> AudioStreamWAV:
     return wav
 
 func _play_sfx(name: String) -> void:
+    if not sound_enabled:
+        return
     if not sounds.has(name):
         return
     sfx_player.stop()
@@ -961,7 +1092,7 @@ func _update_sensor(delta: float) -> void:
     if OS.get_name() == "Android":
         var g := Input.get_gravity()
         if g.length() > 1.0:
-            var target := Vector2(g.x / 9.8, -g.y / 9.8) * 0.32
+            var target := Vector2(g.x / 9.8, -g.y / 9.8) * 0.32 * sensor_gain
             sensor_view = sensor_view.lerp(target.limit_length(0.58), minf(1.0,delta*3.5))
             return
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
@@ -1423,6 +1554,9 @@ func _nearest_interactable() -> Dictionary:
 
 func _draw() -> void:
     draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color("#07131b"))
+    if main_menu_active:
+        _draw_title_art()
+        return
     if interior_active:
         _draw_interior_scene()
         _draw_interior_player()
@@ -2140,7 +2274,8 @@ func _draw_pedestrians() -> void:
     for ped in pedestrians:
         var rd = roads[ped.road]
         var pos := _sample_polyline(rd.points,float(ped.t))
-        if player_pos.distance_to(pos) > 1700.0:
+        var ped_draw_distance: float = [900.0,1300.0,1700.0][graphics_quality]
+        if player_pos.distance_to(pos) > ped_draw_distance:
             continue
         var tan := _polyline_tangent(rd.points,float(ped.t))
         if ped.reverse:
@@ -2177,7 +2312,8 @@ func _draw_traffic() -> void:
     for c in traffic:
         var tr := _traffic_world_transform(c)
         var pos: Vector2 = Vector2(tr.pos)
-        if player_pos.distance_to(pos)>1800:
+        var traffic_draw_distance: float = [1050.0,1450.0,1800.0][graphics_quality]
+        if player_pos.distance_to(pos)>traffic_draw_distance:
             continue
         var tangent: Vector2 = Vector2(tr.tangent)
         _draw_car(pos,tangent.angle(),str(c["class"]),Color(c.color),false)
@@ -2969,7 +3105,236 @@ func _toggle_transit(index: int) -> void:
     _play_sfx("vehicle")
     _notify("%s bestiegen." % str(tv.line))
 
+func _read_save_summary(slot: int) -> Dictionary:
+    var path := _save_path(slot)
+    if not FileAccess.file_exists(path):
+        return {}
+    var file := FileAccess.open(path,FileAccess.READ)
+    if not file:
+        return {}
+    var parsed = JSON.parse_string(file.get_as_text())
+    if parsed is Dictionary:
+        return parsed
+    return {}
+
+func _latest_save_slot() -> int:
+    var best_slot := 0
+    var best_time := -1.0
+    for slot in range(1,4):
+        var d := _read_save_summary(slot)
+        if d.is_empty():
+            continue
+        var stamp := float(d.get("saved_at",0.0))
+        if stamp>best_time:
+            best_time=stamp
+            best_slot=slot
+    return best_slot
+
+func _refresh_main_menu() -> void:
+    if main_menu_panel==null:
+        return
+    main_menu_panel.visible=main_menu_active
+    for slot in range(1,4):
+        var d := _read_save_summary(slot)
+        var b: Button = menu_slot_buttons[slot-1]
+        if d.is_empty():
+            b.text = "SPIELSTAND %d · LEER" % slot
+        else:
+            var ch: int = int(d.get("chapter",0))+1
+            var cr: int = int(d.get("credits",0))
+            b.text = "SPIELSTAND %d · Mission %02d · %d CR" % [slot,ch,cr]
+    if new_game_mode:
+        menu_status.text="NEUES SPIEL · Slot wählen (vorhandener Stand wird überschrieben)"
+    else:
+        menu_status.text="Fortsetzen oder einen der drei Spielstände wählen."
+    _refresh_option_labels()
+
+func _continue_latest_save() -> void:
+    var slot := _latest_save_slot()
+    if slot<=0:
+        new_game_mode=true
+        _refresh_main_menu()
+        return
+    _start_game_from_slot(slot,false)
+
+func _select_new_game_mode() -> void:
+    new_game_mode=true
+    _refresh_main_menu()
+
+func _select_save_slot(slot: int) -> void:
+    var exists := FileAccess.file_exists(_save_path(slot))
+    _start_game_from_slot(slot,new_game_mode or not exists)
+
+func _start_game_from_slot(slot: int, fresh: bool) -> void:
+    selected_save_slot=clampi(slot,1,3)
+    if fresh:
+        _reset_game_state()
+    else:
+        _load_game(selected_save_slot)
+    main_menu_active=false
+    new_game_mode=false
+    main_menu_panel.visible=false
+    options_box.visible=false
+    camera_pos=player_pos
+    current_district=str(_district_at(player_pos).get("name","Megacity"))
+    if fresh:
+        _save_game()
+    _play_sfx("collect")
+    queue_redraw()
+
+func _reset_game_state() -> void:
+    player_pos=Vector2(5200,4200)
+    camera_pos=player_pos
+    credits=520
+    energy=100.0
+    owned_property=""
+    owned_cars.clear()
+    current_paint=""
+    jobs_done=0
+    active_job={}
+    hack_done.clear()
+    npc_flags.clear()
+    vertical_flags.clear()
+    relay_count=0
+    sublevel_count=0
+    native_chapter=0
+    mission_fragments=0
+    mission_secrets=0
+    cache_count=0
+    glyph_count=0
+    inventory={"scan_cell":0,"energy_drink":0,"transit_pass":0}
+    shop_stock={"energy_drink":8,"scan_cell":6,"transit_pass":3}
+    transit_riding=-1
+    current_vehicle=-1
+    service_vehicle_index=-1
+    for i in range(fragments.size()):
+        fragments[i]["taken"]=false
+    for i in range(secrets.size()):
+        secrets[i]["found"]=false
+        secrets[i]["revealed"]=false
+    for i in range(caches.size()):
+        caches[i]["taken"]=false
+    for i in range(glyphs.size()):
+        glyphs[i]["taken"]=false
+    _save_game()
+
+func _return_to_main_menu() -> void:
+    _save_game()
+    minigame_open=false
+    game_panel.visible=false
+    commerce_panel.visible=false
+    map_open=false
+    missions_open=false
+    main_menu_active=true
+    main_menu_panel.visible=true
+    move_vec=Vector2.ZERO
+    _refresh_main_menu()
+
+func _toggle_options_box() -> void:
+    options_box.visible=not options_box.visible
+
+func _cycle_sound_option() -> void:
+    sound_enabled=not sound_enabled
+    _save_options()
+    _refresh_option_labels()
+
+func _cycle_graphics_option() -> void:
+    graphics_quality=(graphics_quality+1)%3
+    _save_options()
+    _refresh_option_labels()
+
+func _cycle_pmdd_option() -> void:
+    if parallax_strength<1.35:
+        parallax_strength=1.75
+    elif parallax_strength<2.05:
+        parallax_strength=2.35
+    else:
+        parallax_strength=1.10
+    _save_options()
+    _refresh_option_labels()
+
+func _cycle_sensor_option() -> void:
+    if sensor_gain<0.8:
+        sensor_gain=1.0
+    elif sensor_gain<1.25:
+        sensor_gain=1.5
+    else:
+        sensor_gain=0.6
+    _save_options()
+    _refresh_option_labels()
+
+func _refresh_option_labels() -> void:
+    if sound_option_button==null:
+        return
+    sound_option_button.text="Sound · %s" % ("AN" if sound_enabled else "AUS")
+    var qualities := ["ECO","BALANCED","HIGH"]
+    graphics_option_button.text="Grafik · %s" % qualities[graphics_quality]
+    pmdd_option_button.text="PMDD Tiefe · %.2fx" % parallax_strength
+    sensor_option_button.text="Sensor-Empfindlichkeit · %.1fx" % sensor_gain
+
+func _save_options() -> void:
+    var f := FileAccess.open("user://parallaxhunt_options.json",FileAccess.WRITE)
+    if f:
+        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain}))
+
+func _load_options() -> void:
+    if not FileAccess.file_exists("user://parallaxhunt_options.json"):
+        return
+    var f := FileAccess.open("user://parallaxhunt_options.json",FileAccess.READ)
+    if not f:
+        return
+    var d = JSON.parse_string(f.get_as_text())
+    if d is Dictionary:
+        sound_enabled=bool(d.get("sound",sound_enabled))
+        graphics_quality=clampi(int(d.get("graphics",graphics_quality)),0,2)
+        parallax_strength=float(d.get("pmdd",parallax_strength))
+        sensor_gain=float(d.get("sensor",sensor_gain))
+
+func _draw_title_art() -> void:
+    var size := get_viewport_rect().size
+    var t := Time.get_ticks_msec()/1000.0
+    # Atmospheric gradient bands.
+    draw_rect(Rect2(Vector2.ZERO,size),Color("#07131b"),true)
+    draw_rect(Rect2(0,size.y*0.38,size.x,size.y*0.62),Color("#0d2029"),true)
+    var horizon := size.y*0.43
+    # Three PMDD skyline layers with slow independent drift.
+    for layer in range(3):
+        var layer_y := horizon + float(layer)*85.0
+        var alpha := 0.24+float(layer)*0.17
+        var drift := sin(t*(0.18+float(layer)*0.05))*18.0*float(layer+1)
+        for i in range(13):
+            var w := 60.0+float((i*37+layer*29)%70)
+            var h := 110.0+float((i*71+layer*43)%230)
+            var x := -40.0+float(i)*92.0+drift
+            var col := Color(0.12+layer*0.035,0.26+layer*0.045,0.32+layer*0.05,alpha)
+            draw_rect(Rect2(x,layer_y-h,w,h),col,true)
+            if (i+layer)%3==0:
+                draw_line(Vector2(x+8,layer_y-h+18),Vector2(x+w-8,layer_y-h+18),Color(0.45,0.95,0.82,0.10+alpha*0.35),2.0)
+    # Perspective road.
+    var road_top := Vector2(size.x*0.5,horizon+120)
+    var road_bottom_y := size.y
+    var road_poly := PackedVector2Array([
+        road_top+Vector2(-55,0),road_top+Vector2(55,0),
+        Vector2(size.x*0.88,road_bottom_y),Vector2(size.x*0.12,road_bottom_y)
+    ])
+    draw_colored_polygon(road_poly,Color("#111b21"))
+    for k in range(8):
+        var yy := lerpf(road_top.y,road_bottom_y,float(k)/8.0)
+        var span := lerpf(8.0,170.0,float(k)/8.0)
+        draw_line(Vector2(size.x*0.5-span*0.08,yy),Vector2(size.x*0.5+span*0.08,yy),Color(0.85,0.90,0.82,0.26),3.0)
+    # PMDD secret pulse.
+    var pulse := Vector2(size.x*0.5,horizon-145)
+    var pr := 42.0+sin(t*2.0)*8.0
+    draw_circle(pulse,pr,Color(0.45,0.95,0.82,0.035))
+    draw_arc(pulse,pr,0,TAU,36,Color(0.45,0.95,0.82,0.33),2.0,true)
+    draw_arc(pulse,pr*0.55,t*0.3,t*0.3+PI*1.55,28,Color("#9ad5ff"),2.0,true)
+
+func _save_path(slot: int = selected_save_slot) -> String:
+    return "user://parallaxhunt_save_%d.json" % clampi(slot,1,3)
+
 func _save_game() -> void:
+    if main_menu_active:
+        return
     var data := {
         "player":[player_pos.x,player_pos.y],
         "credits":credits,
@@ -2992,16 +3357,19 @@ func _save_game() -> void:
         "relay_count":relay_count,
         "sublevel_count":sublevel_count,
         "caches":caches.map(func(x): return bool(x.taken)),
-        "glyphs":glyphs.map(func(x): return bool(x.taken))
+        "glyphs":glyphs.map(func(x): return bool(x.taken)),
+        "saved_at":Time.get_unix_time_from_system(),
+        "slot":selected_save_slot
     }
-    var file := FileAccess.open("user://parallaxhunt_save.json",FileAccess.WRITE)
+    var file := FileAccess.open(_save_path(),FileAccess.WRITE)
     if file:
         file.store_string(JSON.stringify(data))
 
-func _load_game() -> void:
-    if not FileAccess.file_exists("user://parallaxhunt_save.json"):
+func _load_game(slot: int = selected_save_slot) -> void:
+    selected_save_slot=clampi(slot,1,3)
+    if not FileAccess.file_exists(_save_path()):
         return
-    var file := FileAccess.open("user://parallaxhunt_save.json",FileAccess.READ)
+    var file := FileAccess.open(_save_path(),FileAccess.READ)
     if not file:
         return
     var parsed = JSON.parse_string(file.get_as_text())
