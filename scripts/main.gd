@@ -4485,7 +4485,27 @@ func _open_jobboard(index: int) -> void:
         var target: Vector2 = targets[rng.randi_range(0,targets.size()-1)]
         var km_factor: float = source.distance_to(target)/1000.0
         var pay: int = clampi(int(55.0+km_factor*13.0),60,190)
-        active_job={"kind":func _complete_side_job() -> void:
+        active_job={"kind":"delivery","title":"Stadtlieferung","target":target,"pay":pay}
+    elif type_roll==1:
+        var photo_target := _next_photo_target()
+        if photo_target==Vector2.ZERO:
+            photo_target=Vector2(9000,3560)
+        active_job={"kind":"photo","title":"PMDD-Fotosurvey","target":photo_target,"start":photo_count,"goal":1,"pay":95}
+    elif type_roll==2:
+        var hack_target := _next_hack_replay_target()
+        active_job={"kind":"hack_replay","title":"Security Regression Test","target":hack_target,"start":hack_replays,"goal":1,"pay":105}
+    elif type_roll==3:
+        active_job={"kind":"transit","title":"ÖPNV Qualitätscheck","target":_nearest_transit_stop_pos(source),"start":transit_trip_count,"goal":1,"pay":75}
+    else:
+        var unvisited := _next_unvisited_district_center()
+        if unvisited==Vector2.ZERO:
+            unvisited=Vector2(18400,9100)
+        active_job={"kind":"district","title":"District Survey","target":unvisited,"goal":1,"pay":90}
+    _play_sfx("mission")
+    _notify("%s angenommen · %d CR" % [str(active_job.title),int(active_job.pay)])
+    _save_game()
+
+func _complete_side_job() -> void:
     if active_job.is_empty():
         return
     var pay: int = int(active_job.get("pay",60))
@@ -4493,7 +4513,7 @@ func _open_jobboard(index: int) -> void:
     jobs_done += 1
     var title: String = str(active_job.get("title","Auftrag"))
     active_job={}
-    _play_sfx("secret")
+    _play_sfx("cash")
     _notify("%s erledigt · +%d Credits" % [title,pay])
     _save_game()
     _advance_native_chapter()
@@ -4514,11 +4534,11 @@ func _next_hack_replay_target() -> Vector2:
     return Vector2.ZERO
 
 func _nearest_transit_stop_pos(from: Vector2) -> Vector2:
-    var best := INF
+    var best: float = INF
     var out := Vector2.ZERO
     for st in transit_stops:
         var p := Vector2(st.pos)
-        var d := from.distance_to(p)
+        var d: float = from.distance_to(p)
         if d<best:
             best=d
             out=p
@@ -4535,32 +4555,21 @@ func _check_active_job_progress() -> void:
     if active_job.is_empty():
         return
     var kind := str(active_job.get("kind","delivery"))
-    var done := false
+    var done: bool = false
     if kind=="photo":
         done=(photo_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
-        active_job["target"]=_next_photo_target()
+        if not done:
+            active_job["target"]=_next_photo_target()
     elif kind=="hack_replay":
         done=(hack_replays-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
-        active_job["target"]=_next_hack_replay_target()
+        if not done:
+            active_job["target"]=_next_hack_replay_target()
     elif kind=="transit":
         done=(transit_trip_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
     elif kind=="district":
         done=player_pos.distance_to(Vector2(active_job.get("target",Vector2.ZERO)))<260.0
     if done:
         _complete_side_job()
-
-
-func _complete_side_job() -> void:
-    if active_job.is_empty():
-        return
-    var pay: int = int(active_job.get("pay",60))
-    credits += pay
-    jobs_done += 1
-    active_job={}
-    _play_sfx("secret")
-    _notify("Auftrag erledigt · +%d Credits" % pay)
-    _save_game()
-    _advance_native_chapter()
 
 func _current_objective_pos() -> Vector2:
     var contract_target := _npc_contract_target()
