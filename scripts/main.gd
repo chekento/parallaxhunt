@@ -87,6 +87,11 @@ var named_npcs: Array = []
 var caches: Array = []
 var glyphs: Array = []
 var npc_flags: Dictionary = {}
+var vertical_sites: Array = []
+var vertical_flags: Dictionary = {}
+var current_vertical_id: String = ""
+var relay_count: int = 0
+var sublevel_count: int = 0
 var transit_riding: int = -1
 var transit_stops: Array = []
 var autosave_timer: float = 0.0
@@ -316,6 +321,9 @@ func _build_native_gameplay_data() -> void:
         {"title":"Verlorene Caches","desc":"Berge vier Daten-Caches.","kind":"cache","goal":4},
         {"title":"Stadtsigils","desc":"Sichere drei Stadtsigils.","kind":"glyph","goal":3},
         {"title":"Nova am Hafen","desc":"Sprich mit Nova im Hafen.","kind":"npc","id":"nova","goal":1},
+        {"title":"Aufstieg","desc":"Finde einen Dachzugang und aktiviere ein Relay.","kind":"relay","goal":1},
+        {"title":"Über den Dächern","desc":"Synchronisiere drei Dach-Relays.","kind":"relay","goal":3},
+        {"title":"Unter der Stadt","desc":"Aktiviere zwei Sublevel-Knoten.","kind":"sublevel","goal":2},
         {"title":"OpenAI HQ","desc":"Besuche das OpenAI HQ im Glasdistrikt.","kind":"visit_openai","goal":1},
         {"title":"Solar Grid Repair","desc":"Löse das Leitungs-Puzzle am Solar Grid Terminal.","kind":"hack","id":"gridRepair","goal":1},
         {"title":"Transit Mosaic","desc":"Setze das Transit-Routing als Schiebepuzzle zusammen.","kind":"hack","id":"transitMosaic","goal":1},
@@ -359,6 +367,15 @@ func _build_story_content() -> void:
         {"pos":Vector2(18700,9150),"taken":false},
         {"pos":Vector2(7400,12700),"taken":false},
         {"pos":Vector2(12600,12800),"taken":false}
+    ]
+    vertical_sites = [
+        {"id":"roof_glass","name":"Glass Quarter Roof","pos":Vector2(12150,2450),"kind":"roof","accent":Color("#67d9ff")},
+        {"id":"roof_solar","name":"Solar Beacon Roof","pos":Vector2(22500,2200),"kind":"roof","accent":Color("#f1e36f")},
+        {"id":"roof_neon","name":"Neon Mile Roof","pos":Vector2(23500,9250),"kind":"roof","accent":Color("#ff80ef")},
+        {"id":"roof_observatory","name":"Observatory Roof","pos":Vector2(13000,9300),"kind":"roof","accent":Color("#c3a6ff")},
+        {"id":"sub_harbor","name":"Harbor Service Sublevel","pos":Vector2(13350,6400),"kind":"sublevel","accent":Color("#ffb66f")},
+        {"id":"sub_transit","name":"Transit Utility Node","pos":Vector2(23200,6000),"kind":"sublevel","accent":Color("#9adbe5")},
+        {"id":"sub_bio","name":"Bio Utility Lab","pos":Vector2(12850,12850),"kind":"sublevel","accent":Color("#82e59b")}
     ]
     glyphs = [
         {"pos":Vector2(2450,1450),"taken":false,"district":"Altstadt"},
@@ -1029,6 +1046,9 @@ func _interact() -> void:
         _enter_interior("OpenAI HQ","openai_hq",Color("#f2f7f7"),player_pos)
         _advance_native_chapter()
         return
+    elif n.type == "vertical":
+        _enter_vertical(int(n.index))
+        return
     elif n.type == "property":
         _interact_property(int(n.index))
         return
@@ -1160,6 +1180,11 @@ func _nearest_interactable() -> Dictionary:
         if djb < 110.0 and djb < bd:
             best = {"type":"jobboard","index":ji,"action":"JOBS"}
             bd = djb
+    for vi in range(vertical_sites.size()):
+        var dv: float = player_pos.distance_to(Vector2(vertical_sites[vi].pos))
+        if dv < 105.0 and dv < bd:
+            best = {"type":"vertical","index":vi,"action":"AUFSTIEG" if str(vertical_sites[vi].kind)=="roof" else "SUBLEVEL"}
+            bd = dv
     for pi in range(property_sites.size()):
         var dp := player_pos.distance_to(Vector2(property_sites[pi].pos))
         if dp < 105.0 and dp < bd:
@@ -2110,6 +2135,7 @@ func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vect
 func _leave_interior() -> void:
     commerce_panel.visible = false
     interior_active = false
+    current_vertical_id = ""
     player_pos = interior_return_pos + Vector2(0,42)
     camera_pos = player_pos
     _play_sfx("vehicle")
@@ -2134,6 +2160,10 @@ func _interior_feature_pos() -> Vector2:
 func _interior_feature_message() -> String:
     if interior_kind == "openai_hq":
         return "Visitor lab display: multimodal research visualization active."
+    if interior_kind == "roof":
+        return "Dach-Relay synchronisieren."
+    if interior_kind == "sublevel":
+        return "Sublevel-Knoten aktivieren."
     if interior_kind == "garage":
         return "Garage service bay ready for vehicle storage and paint systems."
     if interior_kind == "workshop":
@@ -2166,6 +2196,10 @@ func _draw_interior_scene() -> void:
     draw_string(ThemeDB.fallback_font,exitp+Vector2(-32,-6),"EXIT",HORIZONTAL_ALIGNMENT_CENTER,64,12,Color.WHITE)
     if interior_kind == "openai_hq":
         _draw_openai_interior(origin,accent)
+    elif interior_kind == "roof":
+        _draw_roof_interior(origin,accent)
+    elif interior_kind == "sublevel":
+        _draw_sublevel_interior(origin,accent)
     elif interior_kind in ["garage","workshop"]:
         _draw_garage_interior(origin,accent)
     elif interior_kind in ["restaurant","cafe"]:
@@ -2175,6 +2209,57 @@ func _draw_interior_scene() -> void:
     else:
         _draw_shop_interior(origin,accent)
     draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),interior_name,HORIZONTAL_ALIGNMENT_LEFT,420,22,Color(0.94,0.98,0.99,0.92))
+
+func _enter_vertical(index: int) -> void:
+    if index<0 or index>=vertical_sites.size():
+        return
+    var site: Dictionary = vertical_sites[index]
+    current_vertical_id = str(site.id)
+    _enter_interior(str(site.name),str(site.kind),Color(site.accent),player_pos)
+
+func _activate_vertical_feature() -> void:
+    if current_vertical_id=="":
+        return
+    if bool(vertical_flags.get(current_vertical_id,false)):
+        _notify("Knoten bereits synchronisiert.")
+        return
+    vertical_flags[current_vertical_id]=true
+    if interior_kind=="roof":
+        relay_count += 1
+        credits += 28
+        _notify("Dach-Relay synchronisiert · +28 CR")
+    else:
+        sublevel_count += 1
+        credits += 32
+        _notify("Sublevel-Knoten aktiviert · +32 CR")
+    _play_sfx("secret")
+    _save_game()
+    _advance_native_chapter()
+
+func _draw_roof_interior(origin: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(origin+Vector2(90,90),Vector2(720,360)),Color("#16222a"),true)
+    for i in range(8):
+        var x := origin.x+110+float(i)*90.0
+        var h := 60.0+float((i*37)%120)
+        draw_rect(Rect2(x,origin.y+450-h,55,h),Color(0.16,0.23,0.28,0.9),true)
+        draw_line(Vector2(x,origin.y+450-h),Vector2(x+55,origin.y+450-h),Color(accent.r,accent.g,accent.b,0.22),2.0)
+    var relay := origin+_interior_feature_pos()
+    draw_line(relay+Vector2(0,40),relay+Vector2(0,-45),Color("#59676e"),5.0,true)
+    draw_circle(relay+Vector2(0,-52),11,accent)
+    draw_circle(relay+Vector2(0,-52),26,Color(accent.r,accent.g,accent.b,0.08))
+    draw_string(ThemeDB.fallback_font,relay+Vector2(-55,64),"ROOF RELAY",HORIZONTAL_ALIGNMENT_CENTER,110,12,Color.WHITE)
+
+func _draw_sublevel_interior(origin: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(origin+Vector2(85,90),Vector2(730,390)),Color("#0b1115"),true)
+    for y in [135.0,205.0,275.0,345.0]:
+        draw_line(origin+Vector2(105,y),origin+Vector2(795,y),Color(0.35,0.45,0.49,0.14),4.0)
+    for x in [165.0,340.0,515.0,690.0]:
+        draw_line(origin+Vector2(x,110),origin+Vector2(x,455),Color(0.26,0.34,0.38,0.16),3.0)
+    var node := origin+_interior_feature_pos()
+    draw_rect(Rect2(node-Vector2(42,28),Vector2(84,56)),Color(0.07,0.11,0.14,0.96),true)
+    draw_rect(Rect2(node-Vector2(42,28),Vector2(84,56)),Color(accent.r,accent.g,accent.b,0.62),false,2.0)
+    draw_circle(node,8,accent)
+    draw_string(ThemeDB.fallback_font,node+Vector2(-45,50),"UTILITY NODE",HORIZONTAL_ALIGNMENT_CENTER,90,11,Color.WHITE)
 
 func _draw_openai_interior(origin: Vector2, accent: Color) -> void:
     # glass lobby + visitor lab pods + bridge gallery
@@ -2610,6 +2695,9 @@ func _save_game() -> void:
         "cache_count":cache_count,
         "glyph_count":glyph_count,
         "npc_flags":npc_flags,
+        "vertical_flags":vertical_flags,
+        "relay_count":relay_count,
+        "sublevel_count":sublevel_count,
         "caches":caches.map(func(x): return bool(x.taken)),
         "glyphs":glyphs.map(func(x): return bool(x.taken))
     }
@@ -2645,6 +2733,9 @@ func _load_game() -> void:
     cache_count = int(d.get("cache_count",0))
     glyph_count = int(d.get("glyph_count",0))
     npc_flags = Dictionary(d.get("npc_flags",{}))
+    vertical_flags = Dictionary(d.get("vertical_flags",{}))
+    relay_count = int(d.get("relay_count",0))
+    sublevel_count = int(d.get("sublevel_count",0))
     var cache_taken = d.get("caches",[])
     if cache_taken is Array:
         for i in range(mini(cache_taken.size(),caches.size())):
@@ -2692,7 +2783,9 @@ func _close_commerce() -> void:
 func _use_interior_feature() -> void:
     if commerce_panel.visible:
         return
-    if interior_kind in ["restaurant","cafe"]:
+    if interior_kind in ["roof","sublevel"]:
+        _activate_vertical_feature()
+    elif interior_kind in ["restaurant","cafe"]:
         _open_restaurant_menu()
     elif interior_kind=="shop":
         _open_shop_menu()
@@ -2883,6 +2976,8 @@ func _draw_map_overlay() -> void:
         _draw_map_marker(_map_point(Vector2(st.pos),map_rect),col,"R" if st.kind in ["restaurant","cafe"] else ("G" if st.kind in ["garage","workshop"] else "S"))
     for p in property_sites:
         _draw_map_marker(_map_point(Vector2(p.pos),map_rect),Color("#d6a8ff"),"H")
+    for vs in vertical_sites:
+        _draw_map_marker(_map_point(Vector2(vs.pos),map_rect),Color(vs.accent),"↑" if str(vs.kind)=="roof" else "↓")
     for j in side_job_sites:
         _draw_map_marker(_map_point(Vector2(j.pos),map_rect),Color("#8de9aa"),"J")
     for ts in transit_stops:
@@ -2905,6 +3000,8 @@ func _draw_map_overlay() -> void:
         ["G","Garage / Werkstatt",Color("#ff9b72")],
         ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
         ["H","Kaufbare Immobilie / Hausgarage",Color("#d6a8ff")],
+        ["↑","Dachzugang / Relay",Color("#9bdcff")],
+        ["↓","Sublevel / Untergrundknoten",Color("#ffb66f")],
         ["J","Nebenjob-Board",Color("#8de9aa")],
         ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
@@ -2928,6 +3025,8 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="secret": return mini(mission_secrets,int(c.goal))
     if kind=="cache": return mini(cache_count,int(c.goal))
     if kind=="glyph": return mini(glyph_count,int(c.goal))
+    if kind=="relay": return mini(relay_count,int(c.goal))
+    if kind=="sublevel": return mini(sublevel_count,int(c.goal))
     if kind=="npc": return 1 if bool(npc_flags.get(str(c.id),false)) else 0
     if kind=="visit_openai": return 1 if bool(hack_done.get("visited_openai",false)) else 0
     if kind=="hack": return 1 if bool(hack_done.get(str(c.id),false)) else 0
