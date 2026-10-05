@@ -87,6 +87,7 @@ var world_zoom: float = 1.0
 var target_world_zoom: float = 1.0
 var map_open: bool = false
 var missions_open: bool = false
+var collection_open: bool = false
 var credits: int = 520
 var energy: float = 100.0
 var inventory: Dictionary = {"scan_cell":0,"energy_drink":0,"transit_pass":0}
@@ -181,6 +182,9 @@ var mission_label: Label
 var detail_label: Label
 var status_label: Label
 var district_banner: Label
+var reward_panel: PanelContainer
+var reward_title: Label
+var reward_body: Label
 var interact_button: Button
 var scan_button: Button
 var sfx_player: AudioStreamPlayer
@@ -966,6 +970,36 @@ func _build_ui() -> void:
     district_banner.modulate = Color(1,1,1,0)
     layer.add_child(district_banner)
 
+    reward_panel = PanelContainer.new()
+    reward_panel.position = Vector2(165,350)
+    reward_panel.size = Vector2(750,220)
+    reward_panel.visible = false
+    reward_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var rsb := StyleBoxFlat.new()
+    rsb.bg_color = Color(0.025,0.06,0.075,0.96)
+    rsb.border_color = Color(0.45,0.95,0.82,0.72)
+    rsb.set_border_width_all(3)
+    rsb.corner_radius_top_left = 24
+    rsb.corner_radius_top_right = 24
+    rsb.corner_radius_bottom_left = 24
+    rsb.corner_radius_bottom_right = 24
+    reward_panel.add_theme_stylebox_override("panel",rsb)
+    var rvb := VBoxContainer.new()
+    rvb.add_theme_constant_override("separation",8)
+    reward_panel.add_child(rvb)
+    reward_title = Label.new()
+    reward_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    reward_title.add_theme_font_size_override("font_size",27)
+    reward_title.modulate = Color("#73f3ce")
+    rvb.add_child(reward_title)
+    reward_body = Label.new()
+    reward_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    reward_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    reward_body.add_theme_font_size_override("font_size",17)
+    reward_body.modulate = Color("#e4eef1")
+    rvb.add_child(reward_body)
+    layer.add_child(reward_panel)
+
     var pause_button := Button.new()
     pause_button.text = "☰"
     pause_button.position = Vector2(690,42)
@@ -989,6 +1023,14 @@ func _build_ui() -> void:
     mission_button.add_theme_font_size_override("font_size",19)
     mission_button.pressed.connect(_toggle_missions)
     layer.add_child(mission_button)
+
+    var collection_button := Button.new()
+    collection_button.text = "COLLECTION"
+    collection_button.position = Vector2(610,2060)
+    collection_button.size = Vector2(200,110)
+    collection_button.add_theme_font_size_override("font_size",18)
+    collection_button.pressed.connect(_toggle_collection)
+    layer.add_child(collection_button)
 
     game_panel = PanelContainer.new()
     game_panel.position = Vector2(105,420)
@@ -1307,7 +1349,7 @@ func _update_player(delta: float) -> void:
     if transit_riding >= 0:
         move_vec = Vector2.ZERO
         return
-    if map_open or missions_open or minigame_open or commerce_panel.visible or dialogue_panel.visible:
+    if map_open or missions_open or collection_open or minigame_open or commerce_panel.visible or dialogue_panel.visible:
         vehicle_velocity = move_toward(vehicle_velocity,0.0,delta*320.0)
         return
     if interior_active:
@@ -2031,6 +2073,8 @@ func _draw() -> void:
         _draw_map_overlay()
     elif missions_open:
         _draw_missions_overlay()
+    elif collection_open:
+        _draw_collection_overlay()
 
 func _draw_district_ground() -> void:
     for d in districts:
@@ -3384,6 +3428,19 @@ func _leave_interior() -> void:
     _play_sfx("door")
     _notify("Back outside · %s" % current_district)
 
+func _show_reward_popup(title_text: String, body_text: String, accent: Color = Color("#73f3ce")) -> void:
+    if reward_panel==null:
+        return
+    reward_title.text=title_text
+    reward_title.modulate=accent
+    reward_body.text=body_text
+    reward_panel.visible=true
+    reward_panel.modulate=Color(1,1,1,1)
+    var tw := create_tween()
+    tw.tween_interval(2.15)
+    tw.tween_property(reward_panel,"modulate:a",0.0,0.50)
+    tw.tween_callback(func(): reward_panel.visible=false)
+
 func _notify(text: String) -> void:
     district_banner.text = text
     district_banner.modulate = Color(1,1,1,1)
@@ -3742,6 +3799,7 @@ func _finish_minigame() -> void:
     game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if active_mission_replay else "%s erhalten" % str(active_mission_site.reward)),reward_credits]
     await get_tree().create_timer(0.65).timeout
     _close_minigame()
+    _show_reward_popup("HACK ERFOLGREICH",("%s\n%s · +%d CR" % [str(active_mission_site.name),("Replay" if active_mission_replay else str(active_mission_site.reward)),reward_credits]),Color("#ffdf75"))
     _notify("%s %s." % [str(active_mission_site.name),("wiederholt" if active_mission_replay else "abgeschlossen")])
     active_mission_replay=false
     _advance_native_chapter()
@@ -4159,6 +4217,7 @@ func _return_to_main_menu() -> void:
     dialogue_panel.visible=false
     map_open=false
     missions_open=false
+    collection_open=false
     main_menu_active=true
     main_menu_panel.visible=true
     move_vec=Vector2.ZERO
@@ -4748,6 +4807,7 @@ func _update_active_race(delta: float) -> void:
             race_wins+=1
             active_race={}
             _play_sfx("mission")
+            _show_reward_popup("ZEITPRÜFUNG GESCHAFFT","%s · %.1fs\n+%d CR" % [str(race.name),elapsed,int(race.reward)],Color("#ffd36b"))
             _notify("%s geschafft · %.1fs · +%d CR" % [str(race.name),elapsed,int(race.reward)])
             _save_game()
             _advance_native_chapter()
@@ -4790,6 +4850,7 @@ func _check_milestones() -> void:
             milestones_claimed[id]=true
             credits+=int(m[2])
             _play_sfx("mission")
+            _show_reward_popup("MEILENSTEIN",str(m[3])+"\n+%d CR" % int(m[2]),Color("#ffd36b"))
             _notify("MEILENSTEIN · %s · +%d CR" % [str(m[3]),int(m[2])])
             _save_game()
 
@@ -4887,7 +4948,17 @@ func _toggle_map() -> void:
         return
     map_open = not map_open
     missions_open = false
+    collection_open = false
     move_vec = Vector2.ZERO
+    queue_redraw()
+
+func _toggle_collection() -> void:
+    if minigame_open:
+        return
+    collection_open=not collection_open
+    map_open=false
+    missions_open=false
+    move_vec=Vector2.ZERO
     queue_redraw()
 
 func _toggle_missions() -> void:
@@ -4895,6 +4966,7 @@ func _toggle_missions() -> void:
         return
     missions_open = not missions_open
     map_open = false
+    collection_open = false
     move_vec = Vector2.ZERO
     queue_redraw()
 
@@ -5016,6 +5088,66 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
     return 1
 
+func _draw_collection_overlay() -> void:
+    var screen := get_viewport_rect().size
+    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
+    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#ffb3e6"),false,2.0)
+    draw_string(ThemeDB.fallback_font,Vector2(72,220),"SAMMLUNG / LANGZEITFORTSCHRITT",HORIZONTAL_ALIGNMENT_LEFT,820,28,Color.WHITE)
+
+    var y := 285.0
+    var sections := [
+        ["PMDD PHOTO HUNT",photo_count,photo_points.size(),Color("#ffb3e6")],
+        ["FAHRZEUGKLASSEN",driven_classes.size(),VEHICLE_CLASSES.size(),Color("#73f3ce")],
+        ["HACKING TERMINALS",_completed_hack_count(),mission_sites.size(),Color("#ffdf75")],
+        ["STADTTEILE",visited_districts.size(),districts.size(),Color("#9ad5ff")],
+        ["ZEITPRÜFUNGEN",race_wins,race_sites.size(),Color("#ffd36b")],
+        ["NPC-VERTRAUEN",_total_npc_trust(),named_npcs.size()*3,Color("#ff9fe8")]
+    ]
+    for sec in sections:
+        draw_string(ThemeDB.fallback_font,Vector2(80,y),str(sec[0]),HORIZONTAL_ALIGNMENT_LEFT,390,18,Color(sec[3]))
+        draw_string(ThemeDB.fallback_font,Vector2(780,y),"%d / %d" % [int(sec[1]),int(sec[2])],HORIZONTAL_ALIGNMENT_RIGHT,190,17,Color.WHITE)
+        var ratio: float = clampf(float(sec[1])/maxf(1.0,float(sec[2])),0.0,1.0)
+        draw_rect(Rect2(80,y+16,890,10),Color(1,1,1,0.08),true)
+        draw_rect(Rect2(80,y+16,890*ratio,10),Color(sec[3].r,sec[3].g,sec[3].b,0.72),true)
+        y+=72
+
+    draw_string(ThemeDB.fallback_font,Vector2(80,y+8),"FOTOPOINTS",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffb3e6"))
+    y+=45
+    for i in range(photo_points.size()):
+        var ph: Dictionary = photo_points[i]
+        var done: bool = bool(ph.taken)
+        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %02d · %s · %s" % [("✓" if done else "○"),i+1,str(ph.label),str(ph.district)],HORIZONTAL_ALIGNMENT_LEFT,820,14,Color("#8de9aa") if done else Color("#c7d6de"))
+        y+=30
+        if y>1150: break
+
+    y=1190
+    draw_string(ThemeDB.fallback_font,Vector2(80,y),"FAHRZEUGKLASSEN & TUNING",HORIZONTAL_ALIGNMENT_LEFT,420,20,Color("#73f3ce"))
+    y+=42
+    for cls in VEHICLE_CLASSES:
+        var seen: bool = bool(driven_classes.get(cls,false))
+        var up: Dictionary = _vehicle_upgrade_state(cls)
+        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %-10s · %-11s · E%d H%d B%d" % [("✓" if seen else "○"),cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(cls,"ROAD")),int(up.engine),int(up.handling),int(up.brake)],HORIZONTAL_ALIGNMENT_LEFT,850,14,Color("#8de9aa") if seen else Color("#c7d6de"))
+        y+=31
+
+    y+=12
+    draw_string(ThemeDB.fallback_font,Vector2(80,y),"MEILENSTEINE",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffd36b"))
+    y+=38
+    var milestones := [
+        ["Photo Scout","photos_5"],["Photo Master","photos_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
+        ["Urban Explorer","districts_15"],["Security Runner","hacks_8"],["Street Trialist","races_3"],["City Professional","jobs_10"]
+    ]
+    for m in milestones:
+        var done: bool = bool(milestones_claimed.get(str(m[1]),false))
+        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %s" % [("✓" if done else "○"),str(m[0])],HORIZONTAL_ALIGNMENT_LEFT,420,14,Color("#8de9aa") if done else Color("#b5c4ca"))
+        y+=29
+    draw_string(ThemeDB.fallback_font,Vector2(72,2030),"COLLECTION erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
+
+func _total_npc_trust() -> int:
+    var total := 0
+    for key in npc_trust.keys():
+        total+=int(npc_trust[key])
+    return total
+
 func _draw_missions_overlay() -> void:
     var screen := get_viewport_rect().size
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
@@ -5068,7 +5200,9 @@ func _advance_native_chapter() -> void:
             break
         native_chapter += 1
         _play_sfx("mission")
-        _notify("Neue Mission: %s" % str(native_chapters[native_chapter].title))
+        var nc: Dictionary = native_chapters[native_chapter]
+        _show_reward_popup("NEUE MISSION",str(nc.title)+"\n"+str(nc.desc),Color("#73f3ce"))
+        _notify("Neue Mission: %s" % str(nc.title))
 
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
