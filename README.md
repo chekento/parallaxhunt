@@ -37,3 +37,8 @@ Pushes to `main` run `.github/workflows/android-debug.yml` and upload `ParallaxH
 ## Status
 
 This is the first native APK foundation. The existing web prototype remains the gameplay/design reference while systems are migrated incrementally into engine-native scenes and scripts.
+
+
+## Native build
+
+The repository now includes a reproducible Android debug APK workflow for Godot 4.7.2.
