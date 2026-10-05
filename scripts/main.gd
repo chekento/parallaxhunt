@@ -973,16 +973,23 @@ func _build_ui() -> void:
 
     # Full-screen native main menu. Added last so it owns input while visible.
     main_menu_panel = PanelContainer.new()
-    main_menu_panel.position = Vector2(70,270)
-    main_menu_panel.size = Vector2(940,1780)
+    main_menu_panel.position = Vector2(0,0)
+    main_menu_panel.size = Vector2(1080,2340)
     var msb := StyleBoxFlat.new()
-    msb.bg_color = Color(0.018,0.045,0.064,0.88)
+    msb.bg_color = Color(0.018,0.045,0.064,0.66)
     msb.border_color = Color(0.45,0.95,0.82,0.32)
     msb.set_border_width_all(2)
     msb.corner_radius_top_left = 34
     msb.corner_radius_top_right = 34
     msb.corner_radius_bottom_left = 34
-    msb.corner_radius_bottom_right = 34
+    msb.corner_radius_bottom_right = 0
+    msb.corner_radius_top_left = 0
+    msb.corner_radius_top_right = 0
+    msb.corner_radius_bottom_left = 0
+    msb.content_margin_left = 95.0
+    msb.content_margin_right = 95.0
+    msb.content_margin_top = 270.0
+    msb.content_margin_bottom = 150.0
     main_menu_panel.add_theme_stylebox_override("panel",msb)
     var mvb := VBoxContainer.new()
     mvb.add_theme_constant_override("separation",14)
