@@ -1202,7 +1202,14 @@ func _build_audio() -> void:
     sounds["collect"] = _make_chime([659.0, 988.0], [0.06, 0.11], 0.12)
     sounds["secret"] = _make_chime([784.0, 1175.0, 1568.0], [0.09, 0.11, 0.16], 0.16)
     sounds["scan"] = _make_chime([310.0, 465.0, 620.0], [0.05, 0.07, 0.09], 0.09)
-    sounds["vehicle"] = _make_chime([180.0, 240.0], [0.06, 0.08], 0.07)
+    sounds["vehicle"] = _make_chime([180.0,240.0],[0.06,0.08],0.07)
+    sounds["photo"] = _make_chime([523.0,784.0,1047.0],[0.035,0.045,0.12],0.15)
+    sounds["mission"] = _make_chime([440.0,659.0,880.0],[0.06,0.08,0.13],0.13)
+    sounds["cash"] = _make_chime([740.0,988.0],[0.035,0.08],0.10)
+    sounds["door"] = _make_chime([210.0,330.0],[0.035,0.06],0.055)
+    sounds["hack_click"] = _make_chime([520.0],[0.025],0.055)
+    sounds["error"] = _make_chime([190.0,145.0],[0.055,0.09],0.08)
+    sounds["impact"] = _make_chime([95.0,72.0],[0.035,0.055],0.11)
 
 func _make_chime(freqs: Array, durations: Array, amp: float) -> AudioStreamWAV:
     var rate := 22050
@@ -1307,10 +1314,11 @@ func _update_player(delta: float) -> void:
         player_heading += steer*steer_gain*delta*reverse_sign
         var velocity := Vector2.from_angle(player_heading)*vehicle_velocity
         var np := player_pos+velocity*delta
-        if not _point_blocked(np,18.0):
+        if not _point_blocked(np,18.0) and not _vehicle_dynamic_blocked(np,current_vehicle):
             player_pos=np
         else:
-            vehicle_velocity*=-0.08
+            vehicle_velocity*=-0.06
+            _play_sfx("impact")
         car["pos"]=player_pos
         car["heading"]=player_heading
         parked_cars[current_vehicle]=car
@@ -1327,6 +1335,30 @@ func _update_player(delta: float) -> void:
     if move_vec.length() > 0.08:
         var drain: float = 0.018 if current_vehicle >= 0 else 0.055
         energy = maxf(0.0,energy-delta*drain*10.0)
+
+func _vehicle_dynamic_blocked(candidate: Vector2, ignore_parked: int = -1) -> bool:
+    for i in range(parked_cars.size()):
+        if i==ignore_parked:
+            continue
+        var pc: Dictionary = parked_cars[i]
+        if Vector2(pc.pos).distance_to(candidate)<34.0:
+            return true
+    for c in traffic:
+        var tr := _traffic_world_transform(c)
+        if Vector2(tr.pos).distance_to(candidate)<32.0:
+            return true
+    for a in smart_agents:
+        var state := str(a.state)
+        if state not in ["driving","parking","parked","entering"]:
+            continue
+        var rd = roads[int(a.road)]
+        var tan := _polyline_tangent(rd.points,float(a.t))
+        if bool(a.reverse): tan*=-1.0
+        var normal := Vector2(-tan.y,tan.x)
+        var pos := _sample_polyline(rd.points,float(a.t))+normal*(float(rd.width)*(0.18+float(int(a.lane))*0.14))
+        if pos.distance_to(candidate)<32.0:
+            return true
+    return false
 
 func _lane_is_clear(car_index: int, lane: int, radius_t: float = 0.045) -> bool:
     if car_index<0 or car_index>=traffic.size():
@@ -1408,6 +1440,14 @@ func _update_traffic(delta: float) -> void:
             c["lane_change"]=maxf(0.0,float(c.lane_change)-delta*1.65)
             if float(c.lane_change)<=0.0:
                 c["indicator"]=0
+
+        if current_vehicle>=0:
+            var tr_now := _traffic_world_transform(c)
+            var player_gap: float = Vector2(tr_now.pos).distance_to(player_pos)
+            if player_gap<58.0:
+                target_speed=0.0
+            elif player_gap<92.0:
+                target_speed*=0.45
 
         if best_gap<0.018:
             target_speed=0.0
@@ -1748,7 +1788,7 @@ func _interact() -> void:
             photo_points[pidx]["taken"]=true
             photo_count+=1
             credits+=int(photo_points[pidx].reward)
-            _play_sfx("secret")
+            _play_sfx("photo")
             _notify("PHOTO HUNT · %s · +%d CR" % [str(photo_points[pidx].label),int(photo_points[pidx].reward)])
             _save_game()
             _advance_native_chapter()
@@ -2082,9 +2122,10 @@ func _draw_parks() -> void:
             continue
         var p := _project(r.position)
         draw_rect(Rect2(p,r.size*world_zoom),Color("#173d2b"))
-        var path := PackedVector2Array([p+Vector2(30,r.size.y*.28),p+Vector2(r.size.x*.32,50),p+Vector2(r.size.x*.58,r.size.y*.73),p+Vector2(r.size.x-40,r.size.y*.52)])
+        var rs := r.size*world_zoom
+        var path := PackedVector2Array([p+Vector2(30,rs.y*.28),p+Vector2(rs.x*.32,50),p+Vector2(rs.x*.58,rs.y*.73),p+Vector2(rs.x-40,rs.y*.52)])
         draw_polyline(path,Color(0.85,0.82,0.62,0.20),12.0,true)
-        var c := p + r.size * 0.5
+        var c := p + rs * 0.5
         draw_string(ThemeDB.fallback_font,c+Vector2(-95,-70),park.name,HORIZONTAL_ALIGNMENT_CENTER,190,17,Color("#d9efe3"))
 
 
@@ -3273,7 +3314,7 @@ func _leave_interior() -> void:
         player_pos=Vector2(parked_cars[current_vehicle]["pos"])
         service_vehicle_index=-1
     camera_pos = player_pos
-    _play_sfx("vehicle")
+    _play_sfx("door")
     _notify("Back outside · %s" % current_district)
 
 func _notify(text: String) -> void:
@@ -3289,7 +3330,7 @@ func _interior_elevator_pos() -> Vector2:
 func _toggle_interior_floor() -> void:
     interior_floor=1-interior_floor
     interior_player_pos=Vector2(interior_size.x-145,interior_size.y-150)
-    _play_sfx("vehicle")
+    _play_sfx("door")
     _notify("%s · Etage %d" % [interior_name,interior_floor+1])
 
 func _interior_feature_pos() -> Vector2:
@@ -3580,6 +3621,7 @@ func _game_button(text_value: String, callback: Callable, active: bool = false) 
     b.add_theme_font_size_override("font_size",28)
     if active:
         b.modulate = Color("#73f3ce")
+    b.pressed.connect(_play_sfx.bind("hack_click"))
     b.pressed.connect(callback)
     return b
 
@@ -3701,6 +3743,7 @@ func _on_slide_cell(index: int) -> void:
     var z := game_current.find(0)
     var valid: bool = abs(index-z)==3 or (int(index/3)==int(z/3) and abs(index-z)==1)
     if not valid:
+        _play_sfx("error")
         return
     var tmp = game_current[index]
     game_current[index] = game_current[z]
@@ -3839,6 +3882,7 @@ func _on_memory_cell(index: int) -> void:
     game_memory_input.append(index)
     if int(game_memory_input[-1]) != int(game_memory_seq[game_memory_input.size()-1]):
         game_memory_input.clear()
+        _play_sfx("error")
         game_status.text = "Falsche Folge · Sequenz erneut."
         _show_memory_sequence()
         return
@@ -4700,6 +4744,13 @@ func _draw_map_marker(p: Vector2, color: Color, glyph: String) -> void:
     draw_circle(p,10,Color(color.r,color.g,color.b,0.25),false,2.0)
     draw_string(ThemeDB.fallback_font,p+Vector2(-5,-5),glyph,HORIZONTAL_ALIGNMENT_CENTER,10,9,Color("#101820"))
 
+func _completed_hack_count() -> int:
+    var count: int = 0
+    for key in hack_done.keys():
+        if str(key)!="visited_openai" and bool(hack_done[key]):
+            count+=1
+    return count
+
 func _chapter_progress(c: Dictionary) -> int:
     var kind := str(c.kind)
     if kind=="frag": return mini(mission_fragments,int(c.goal))
@@ -4718,11 +4769,7 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="photo": return mini(photo_count,int(c.goal))
     if kind=="vehicles": return mini(driven_classes.size(),int(c.goal))
     if kind=="districts": return mini(visited_districts.size(),int(c.goal))
-    if kind=="hack_count":
-        var hc: int = 0
-        for key in hack_done.keys():
-            if str(key)!="visited_openai" and bool(hack_done[key]): hc+=1
-        return mini(hc,int(c.goal))
+    if kind=="hack_count": return mini(_completed_hack_count(),int(c.goal))
     if kind=="collector": return mini(cache_count+glyph_count,int(c.goal))
     if kind=="hack_replays": return mini(hack_replays,int(c.goal))
     return 1
@@ -4732,7 +4779,8 @@ func _draw_missions_overlay() -> void:
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#9ad5ff"),false,2.0)
     draw_string(ThemeDB.fallback_font,Vector2(72,220),"MISSIONEN",HORIZONTAL_ALIGNMENT_LEFT,600,30,Color.WHITE)
-    var y := 275.0
+    draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Fahrzeuge %d/%d · Stadtteile %d/%d · Hacks %d/%d · Replays %d" % [photo_count,photo_points.size(),driven_classes.size(),VEHICLE_CLASSES.size(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),hack_replays],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
+    var y := 300.0
     for i in range(native_chapters.size()):
         var c: Dictionary = native_chapters[i]
         var progress := _chapter_progress(c)
@@ -4777,7 +4825,7 @@ func _advance_native_chapter() -> void:
         if _chapter_progress(c) < int(c.goal):
             break
         native_chapter += 1
-        _play_sfx("collect")
+        _play_sfx("mission")
         _notify("Neue Mission: %s" % str(native_chapters[native_chapter].title))
 
 func _draw_ambient_overlay() -> void:
