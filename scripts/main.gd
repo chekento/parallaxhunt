@@ -80,6 +80,7 @@ var game_memory_input: Array = []
 var game_memory_locked: bool = false
 var owned_cars: Array = []
 var current_paint: String = ""
+var service_vehicle_index: int = -1
 var jobs_done: int = 0
 var active_job: Dictionary = {}
 var side_job_sites: Array = []
@@ -149,9 +150,9 @@ func _process(delta: float) -> void:
     if interior_active:
         target_world_zoom = 1.0
     elif current_vehicle >= 0:
-        target_world_zoom = 0.72
+        target_world_zoom = 0.76
     else:
-        target_world_zoom = 1.42
+        target_world_zoom = 1.55
     world_zoom = lerpf(world_zoom,target_world_zoom,minf(1.0,delta*4.5))
     _update_player(delta)
     if not interior_active:
@@ -1033,6 +1034,8 @@ func _interact() -> void:
         return
     elif n.type == "storefront":
         var st = storefronts[int(n.index)]
+        if current_vehicle>=0 and str(st.kind) in ["garage","workshop"]:
+            service_vehicle_index=current_vehicle
         _enter_interior(str(st.name),str(st.kind),st.accent,player_pos)
         return
     elif n.type == "jobboard":
@@ -1050,6 +1053,8 @@ func _interact() -> void:
         _enter_vertical(int(n.index))
         return
     elif n.type == "property":
+        if current_vehicle>=0:
+            service_vehicle_index=current_vehicle
         _interact_property(int(n.index))
         return
     elif n.type == "mission_site":
@@ -1123,6 +1128,15 @@ func _nearest_interactable() -> Dictionary:
             return {"type":"interior_feature","action":"USE","message":_interior_feature_message()}
         return {}
     if current_vehicle >= 0:
+        for si in range(storefronts.size()):
+            var vst: Dictionary = storefronts[si]
+            if str(vst.kind) not in ["garage","workshop"]:
+                continue
+            if player_pos.distance_to(Vector2(vst.pos)) < 135.0:
+                return {"type":"storefront","index":si,"action":"WERKSTATT"}
+        for pi in range(property_sites.size()):
+            if player_pos.distance_to(Vector2(property_sites[pi].pos)) < 135.0:
+                return {"type":"property","index":pi,"action":"GARAGE"}
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
     var best := {}
     var bd := 999999.0
@@ -2121,6 +2135,8 @@ func _draw_player() -> void:
     draw_circle(pack+Vector2(0,-1),1.6,Color("#73f3ce"))
 
 func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vector2) -> void:
+    if kind not in ["garage","workshop","home"]:
+        service_vehicle_index=-1
     interior_active = true
     interior_name = name
     interior_kind = kind
@@ -2137,6 +2153,11 @@ func _leave_interior() -> void:
     interior_active = false
     current_vertical_id = ""
     player_pos = interior_return_pos + Vector2(0,42)
+    if service_vehicle_index>=0 and service_vehicle_index<parked_cars.size():
+        current_vehicle=service_vehicle_index
+        parked_cars[current_vehicle]["occupied"]=true
+        player_pos=Vector2(parked_cars[current_vehicle]["pos"])
+        service_vehicle_index=-1
     camera_pos = player_pos
     _play_sfx("vehicle")
     _notify("Back outside · %s" % current_district)
@@ -2847,14 +2868,15 @@ func _open_garage_menu() -> void:
         commerce_actions.add_child(_commerce_button("Lack %s · 45 CR" % str(entry[0]),_paint_current_vehicle.bind(str(entry[0]),Color(entry[1]))))
 
 func _paint_current_vehicle(paint_name: String, color: Color) -> void:
-    if current_vehicle<0:
+    var idx: int = service_vehicle_index if service_vehicle_index>=0 else current_vehicle
+    if idx<0 or idx>=parked_cars.size():
         _notify("Du musst mit einem Auto zur Werkstatt kommen.")
         return
     if credits<45:
         _notify("Nicht genug Credits.")
         return
     credits-=45
-    parked_cars[current_vehicle]["color"]=color
+    parked_cars[idx]["color"]=color
     current_paint=paint_name
     _play_sfx("vehicle")
     _save_game()
@@ -2869,7 +2891,8 @@ func _open_home_garage_menu() -> void:
         commerce_actions.add_child(_commerce_button("Ausparken: %s" % str(car.get("class","Auto")).capitalize(),_spawn_owned_car.bind(i)))
 
 func _store_current_vehicle() -> void:
-    if current_vehicle<0:
+    var idx: int = service_vehicle_index if service_vehicle_index>=0 else current_vehicle
+    if idx<0 or idx>=parked_cars.size():
         _notify("Kein Fahrzeug zum Einlagern.")
         return
     var cap := 5
@@ -2879,11 +2902,13 @@ func _store_current_vehicle() -> void:
     if owned_cars.size()>=cap:
         _notify("Garage voll.")
         return
-    var car: Dictionary = parked_cars[current_vehicle]
+    var car: Dictionary = parked_cars[idx]
     owned_cars.append({"class":str(car["class"]),"color":car["color"].to_html(false)})
     car["occupied"]=false
-    parked_cars[current_vehicle]=car
-    current_vehicle=-1
+    parked_cars[idx]=car
+    if current_vehicle==idx:
+        current_vehicle=-1
+    service_vehicle_index=-1
     vehicle_velocity=0.0
     _save_game()
     _advance_native_chapter()
