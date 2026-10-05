@@ -114,6 +114,8 @@ var game_tries: int = 0
 var game_memory_seq: Array = []
 var game_memory_input: Array = []
 var game_memory_locked: bool = false
+var active_mission_replay: bool = false
+var hack_replays: int = 0
 var main_menu_active: bool = true
 var selected_save_slot: int = 1
 var new_game_mode: bool = false
@@ -433,18 +435,18 @@ func _build_native_gameplay_data() -> void:
         {"id":"aurora_home","name":"Aurora Residence","pos":Vector2(18200,12650),"price":980,"garage":10}
     ]
     mission_sites = [
-        {"id":"gridRepair","name":"Solar Grid Terminal","pos":Vector2(23100,1750),"game":"wire","reward":"Grid Key"},
-        {"id":"transitMosaic","name":"Transit Routing Wall","pos":Vector2(22800,5250),"game":"slide","reward":"Route Tile"},
-        {"id":"cipherGate","name":"Neon Cipher Gate","pos":Vector2(23600,8700),"game":"mastermind","reward":"Cipher Core"},
-        {"id":"spectrum","name":"Spectrum Array","pos":Vector2(13000,8750),"game":"frequency","reward":"Spectrum Seal"},
-        {"id":"packetTrace","name":"Expo Packet Node","pos":Vector2(7550,12600),"game":"memory","reward":"Packet Token"},
-        {"id":"firewall","name":"Bio Firewall","pos":Vector2(12650,12650),"game":"lightsout","reward":"Firewall Shard"},
-        {"id":"railCipher","name":"Railworks Signal Cipher","pos":Vector2(23200,16250),"game":"mastermind","reward":"Rail Token"},
-        {"id":"windSync","name":"Windfeld Phase Sync","pos":Vector2(7600,16050),"game":"frequency","reward":"Wind Seal"},
-        {"id":"dataTrace","name":"Data Fields Trace","pos":Vector2(12850,16000),"game":"memory","reward":"Data Trace"},
-        {"id":"coastGrid","name":"Coast Relay Grid","pos":Vector2(18150,16050),"game":"wire","reward":"Coast Key"},
-        {"id":"airportRoute","name":"Aerodrome Routing","pos":Vector2(2600,16050),"game":"slide","reward":"Runway Tile"},
-        {"id":"auroraFirewall","name":"Aurora Light Lattice","pos":Vector2(18150,12600),"game":"lightsout","reward":"Aurora Shard"}
+        {"id":"gridRepair","name":"Solar Grid Terminal","pos":Vector2(23100,1750),"game":"wire","reward":"Grid Key","difficulty":1},
+        {"id":"transitMosaic","name":"Transit Routing Wall","pos":Vector2(22800,5250),"game":"slide","reward":"Route Tile","difficulty":1},
+        {"id":"cipherGate","name":"Neon Cipher Gate","pos":Vector2(23600,8700),"game":"mastermind","reward":"Cipher Core","difficulty":2},
+        {"id":"spectrum","name":"Spectrum Array","pos":Vector2(13000,8750),"game":"frequency","reward":"Spectrum Seal","difficulty":2},
+        {"id":"packetTrace","name":"Expo Packet Node","pos":Vector2(7550,12600),"game":"memory","reward":"Packet Token","difficulty":2},
+        {"id":"firewall","name":"Bio Firewall","pos":Vector2(12650,12650),"game":"lightsout","reward":"Firewall Shard","difficulty":3},
+        {"id":"railCipher","name":"Railworks Signal Cipher","pos":Vector2(23200,16250),"game":"mastermind","reward":"Rail Token","difficulty":3},
+        {"id":"windSync","name":"Windfeld Phase Sync","pos":Vector2(7600,16050),"game":"frequency","reward":"Wind Seal","difficulty":3},
+        {"id":"dataTrace","name":"Data Fields Trace","pos":Vector2(12850,16000),"game":"memory","reward":"Data Trace","difficulty":3},
+        {"id":"coastGrid","name":"Coast Relay Grid","pos":Vector2(18150,16050),"game":"wire","reward":"Coast Key","difficulty":3},
+        {"id":"airportRoute","name":"Aerodrome Routing","pos":Vector2(2600,16050),"game":"slide","reward":"Runway Tile","difficulty":2},
+        {"id":"auroraFirewall","name":"Aurora Light Lattice","pos":Vector2(18150,12600),"game":"lightsout","reward":"Aurora Shard","difficulty":3}
     ]
     side_job_sites = [
         {"id":"jobs_center","name":"Zentrum Jobboard","pos":Vector2(8050,5650)},
@@ -479,6 +481,7 @@ func _build_native_gameplay_data() -> void:
         {"title":"Photo Hunt II","desc":"Vervollständige acht Fotopunkte.","kind":"photo","goal":8},
         {"title":"Hacking Marathon","desc":"Schließe mindestens zehn unterschiedliche Hacking-Terminals ab.","kind":"hack_count","goal":10},
         {"title":"Sammler","desc":"Berge acht Caches und sechs Stadtsigils.","kind":"collector","goal":14},
+        {"title":"Hack Replay","desc":"Wiederhole fünf Hacking-Terminals für Bonus-Credits.","kind":"hack_replays","goal":5},
         {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
     ]
     if shop_stock.is_empty():
@@ -681,6 +684,38 @@ func _generate_visual_props() -> void:
         if d.style in ["heritage","canal","harbor"]:
             for i in range(10):
                 street_props.append({"type":"crate", "pos":Vector2(rng.randf_range(r.position.x+120,r.end.x-120),rng.randf_range(r.position.y+120,r.end.y-120)), "rot":0.0, "tint":d.accent.darkened(0.45)})
+    # District-specific micro-landmarks and street assets.
+    for d in districts:
+        var rr: Rect2 = d.rect
+        var center: Vector2 = rr.get_center()
+        var style: String = str(d.style)
+        if style=="wind":
+            for k in range(5):
+                street_props.append({"type":"wind_turbine","pos":rr.position+Vector2(650+k*820,650+(k%2)*900),"rot":0.0,"tint":d.accent})
+        elif style=="air":
+            for k in range(8):
+                street_props.append({"type":"runway_light","pos":rr.position+Vector2(520+k*540,1800+(k%2)*80),"rot":0.0,"tint":d.accent})
+        elif style=="data":
+            for k in range(6):
+                street_props.append({"type":"data_pylon","pos":rr.position+Vector2(600+k*720,700+(k%3)*780),"rot":0.0,"tint":d.accent})
+        elif style in ["coast","canal"]:
+            for k in range(7):
+                street_props.append({"type":"boardwalk","pos":rr.position+Vector2(420+k*620,rr.size.y-420-(k%2)*80),"rot":0.0,"tint":d.accent})
+        elif style=="heritage":
+            for k in range(6):
+                street_props.append({"type":"market_stall","pos":rr.position+Vector2(620+k*650,680+(k%2)*540),"rot":0.0,"tint":d.accent})
+        elif style=="campus":
+            for k in range(7):
+                street_props.append({"type":"bike_rack","pos":rr.position+Vector2(480+k*620,600+(k%3)*500),"rot":0.0,"tint":d.accent})
+        elif style in ["harbor","industry","rail"]:
+            for k in range(6):
+                street_props.append({"type":"gantry","pos":rr.position+Vector2(550+k*700,720+(k%2)*820),"rot":0.0,"tint":d.accent})
+        elif style=="neon":
+            for k in range(8):
+                street_props.append({"type":"neon_totem","pos":rr.position+Vector2(430+k*560,500+(k%3)*620),"rot":0.0,"tint":d.accent})
+        elif style in ["green","garden"]:
+            for k in range(8):
+                street_props.append({"type":"garden_arch","pos":rr.position+Vector2(500+k*550,620+(k%2)*700),"rot":0.0,"tint":d.accent})
     # Major intersections: traffic lights, crossings and signs.
     var ix_list := [2700.0,5000.0,7500.0,10100.0,12800.0,15400.0,18100.0,21000.0]
     var iy_list := [2600.0,4450.0,6500.0,9000.0,11600.0,14300.0]
@@ -2674,6 +2709,24 @@ func _draw_street_props() -> void:
             draw_line(sg,sg+Vector2(0,-22),Color("#68757c"),2.5,true)
             draw_circle(sg+Vector2(0,-28),8,Color("#244858"))
             draw_arc(sg+Vector2(0,-28),8,0,TAU,16,Color(p.tint.r,p.tint.g,p.tint.b,0.8),2.0,true)
+        elif p.type == "wind_turbine":
+            _draw_world_prop_wind(p)
+        elif p.type == "runway_light":
+            _draw_world_prop_runway(p)
+        elif p.type == "data_pylon":
+            _draw_world_prop_data(p)
+        elif p.type == "boardwalk":
+            _draw_world_prop_boardwalk(p)
+        elif p.type == "market_stall":
+            _draw_world_prop_market(p)
+        elif p.type == "bike_rack":
+            _draw_world_prop_bikes(p)
+        elif p.type == "gantry":
+            _draw_world_prop_gantry(p)
+        elif p.type == "neon_totem":
+            _draw_world_prop_neon(p)
+        elif p.type == "garden_arch":
+            _draw_world_prop_garden_arch(p)
         elif p.type == "attraction":
             _draw_attraction(p)
 
@@ -2707,6 +2760,76 @@ func _draw_stop_prop(p: Dictionary, tram: bool) -> void:
     if tram:
         draw_line(c+Vector2(-30,12),c+Vector2(30,12),Color("#b4bfc5"),2.0,true)
         draw_line(c+Vector2(-30,17),c+Vector2(30,17),Color("#b4bfc5"),2.0,true)
+
+func _draw_world_prop_wind(p: Dictionary) -> void:
+    var b := _project(Vector2(p.pos),0)
+    var top := _project(Vector2(p.pos),72)
+    draw_line(b,top,Color("#9aa7ad"),4.0,true)
+    var a: float = Time.get_ticks_msec()/700.0+float(p.pos.x)*0.001
+    for k in range(3):
+        var d := Vector2.from_angle(a+float(k)*TAU/3.0)
+        draw_line(top,top+d*31,Color("#d6e4e8"),3.0,true)
+    draw_circle(top,5,Color(p.tint))
+
+func _draw_world_prop_runway(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),2)
+    var pulse: float = 0.55+0.45*sin(Time.get_ticks_msec()/300.0+float(p.pos.x)*0.002)
+    draw_circle(c,5,Color(p.tint.r,p.tint.g,p.tint.b,0.55+0.35*pulse))
+    draw_circle(c,13,Color(p.tint.r,p.tint.g,p.tint.b,0.05+0.06*pulse))
+
+func _draw_world_prop_data(p: Dictionary) -> void:
+    var b := _project(Vector2(p.pos),0)
+    var t := _project(Vector2(p.pos),46)
+    draw_line(b,t,Color("#344755"),4.0,true)
+    for y in [-28,-14,0]:
+        draw_rect(Rect2(t+Vector2(-13,y),Vector2(26,8)),Color(0.14,0.28,0.38,0.95),true)
+        draw_line(t+Vector2(-10,y+4),t+Vector2(10,y+4),Color(p.tint.r,p.tint.g,p.tint.b,0.45),2.0)
+
+func _draw_world_prop_boardwalk(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),1)
+    for k in range(-3,4):
+        draw_line(c+Vector2(float(k)*12,-15),c+Vector2(float(k)*12,15),Color("#7a6753"),3.0)
+    draw_line(c+Vector2(-42,-18),c+Vector2(42,-18),Color("#a48a6c"),2.0)
+    draw_line(c+Vector2(-42,18),c+Vector2(42,18),Color("#a48a6c"),2.0)
+
+func _draw_world_prop_market(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),8)
+    draw_rect(Rect2(c-Vector2(24,8),Vector2(48,24)),Color("#5d4436"),true)
+    var awn := PackedVector2Array([c+Vector2(-30,-8),c+Vector2(30,-8),c+Vector2(22,-22),c+Vector2(-22,-22)])
+    draw_colored_polygon(awn,Color(p.tint.r,p.tint.g,p.tint.b,0.75))
+    for x in [-14,0,14]:
+        draw_circle(c+Vector2(x,8),3,Color("#ffd77a"))
+
+func _draw_world_prop_bikes(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),4)
+    for k in range(3):
+        var x := float(k)*16-16.0
+        draw_circle(c+Vector2(x-5,5),5,Color("#a9b7bd"),false,1.5)
+        draw_circle(c+Vector2(x+5,5),5,Color("#a9b7bd"),false,1.5)
+        draw_line(c+Vector2(x-5,5),c+Vector2(x,0),Color(p.tint),1.5)
+        draw_line(c+Vector2(x,0),c+Vector2(x+5,5),Color(p.tint),1.5)
+
+func _draw_world_prop_gantry(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),4)
+    draw_line(c+Vector2(-30,18),c+Vector2(-30,-26),Color("#666d70"),4.0)
+    draw_line(c+Vector2(30,18),c+Vector2(30,-26),Color("#666d70"),4.0)
+    draw_line(c+Vector2(-30,-26),c+Vector2(30,-26),Color(p.tint.r,p.tint.g,p.tint.b,0.65),4.0)
+    draw_rect(Rect2(c+Vector2(-15,-39),Vector2(30,11)),Color("#252b2e"),true)
+
+func _draw_world_prop_neon(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),12)
+    draw_line(c+Vector2(0,24),c+Vector2(0,-38),Color("#454b55"),4.0)
+    draw_arc(c+Vector2(0,-38),15,0,TAU,20,Color(p.tint.r,p.tint.g,p.tint.b,0.88),3.0,true)
+    draw_circle(c+Vector2(0,-38),28,Color(p.tint.r,p.tint.g,p.tint.b,0.06))
+
+func _draw_world_prop_garden_arch(p: Dictionary) -> void:
+    var c := _project(Vector2(p.pos),8)
+    draw_arc(c,30,PI,TAU,24,Color("#6d8870"),4.0,true)
+    draw_line(c+Vector2(-30,0),c+Vector2(-30,28),Color("#6d8870"),4.0)
+    draw_line(c+Vector2(30,0),c+Vector2(30,28),Color("#6d8870"),4.0)
+    for ang in [3.45,4.15,5.0,5.65]:
+        var q := c+Vector2.from_angle(float(ang))*30
+        draw_circle(q,6,Color(p.tint.r,p.tint.g,p.tint.b,0.75))
 
 func _draw_attraction(p: Dictionary) -> void:
     var c := _project(p.pos,14)
@@ -3384,9 +3507,7 @@ func _game_button(text_value: String, callback: Callable, active: bool = false) 
 
 func _start_minigame(site: Dictionary) -> void:
     var sid := str(site.id)
-    if bool(hack_done.get(sid,false)):
-        _notify("%s bereits abgeschlossen." % str(site.name))
-        return
+    active_mission_replay = bool(hack_done.get(sid,false))
     active_mission_site = site
     game_type = str(site.game)
     minigame_open = true
@@ -3395,7 +3516,8 @@ func _start_minigame(site: Dictionary) -> void:
     move_vec = Vector2.ZERO
     game_panel.visible = true
     game_title.text = str(site.name)
-    game_info.text = "Hacking-Minispiel · Belohnung: %s" % str(site.reward)
+    var diff: int = int(site.get("difficulty",1))
+    game_info.text = "%s · Sicherheitsstufe %d · %s" % [("REPLAY" if active_mission_replay else "HACKING-SUBMISSION"),diff,("12 CR Replay-Bonus" if active_mission_replay else "Belohnung: %s" % str(site.reward))]
     game_status.text = ""
     _clear_game_ui()
     if game_type=="wire":
@@ -3422,20 +3544,28 @@ func _finish_minigame() -> void:
     if active_mission_site.is_empty():
         return
     var sid := str(active_mission_site.id)
-    hack_done[sid] = true
-    credits += 35
+    var reward_credits: int = 12 if active_mission_replay else 35
+    if active_mission_replay:
+        hack_replays += 1
+    else:
+        hack_done[sid] = true
+    credits += reward_credits
     _save_game()
     _play_sfx("secret")
-    game_status.text = "ERFOLG · %s erhalten · +35 Credits" % str(active_mission_site.reward)
+    game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if active_mission_replay else "%s erhalten" % str(active_mission_site.reward)),reward_credits]
     await get_tree().create_timer(0.65).timeout
     _close_minigame()
-    _notify("%s abgeschlossen." % str(active_mission_site.name))
+    _notify("%s %s." % [str(active_mission_site.name),("wiederholt" if active_mission_replay else "abgeschlossen")])
+    active_mission_replay=false
     _advance_native_chapter()
     _check_npc_contract()
 
 func _init_wire() -> void:
     game_grid.columns = 4
+    var diff: int = int(active_mission_site.get("difficulty",1))
     game_target = [0,1,1,2,3,0,1,2,0,3,2,2,0,1,1,0]
+    if diff>=3:
+        game_target = [0,2,1,3,3,1,2,0,1,3,0,2,2,0,3,1]
     game_current = []
     for i in range(game_target.size()):
         game_current.append((int(game_target[i])+1+rng.randi_range(0,2))%4)
@@ -3465,7 +3595,8 @@ func _on_wire_cell(index: int) -> void:
 func _init_slide() -> void:
     game_grid.columns = 3
     game_current = [1,2,3,4,5,6,7,8,0]
-    for k in range(80):
+    var diff: int = int(active_mission_site.get("difficulty",1))
+    for k in range(55+diff*35):
         var z := game_current.find(0)
         var opts: Array = []
         if z-3>=0: opts.append(z-3)
@@ -3510,8 +3641,10 @@ func _init_mastermind() -> void:
     game_secret = []
     game_guess = [1,1,1,1]
     game_tries = 0
+    var diff: int = int(active_mission_site.get("difficulty",1))
+    var max_digit: int = mini(8,5+diff)
     for i in range(4):
-        game_secret.append(rng.randi_range(1,6))
+        game_secret.append(rng.randi_range(1,max_digit))
     game_status.text = "Tippe jede Stelle zum Hochzählen. Dann TEST."
     _render_mastermind()
 
@@ -3597,7 +3730,8 @@ func _init_memory() -> void:
     game_memory_seq = []
     game_memory_input = []
     game_memory_locked = true
-    for i in range(6):
+    var diff: int = int(active_mission_site.get("difficulty",1))
+    for i in range(4+diff*2):
         game_memory_seq.append(rng.randi_range(0,8))
     _render_memory()
     _show_memory_sequence()
@@ -3638,7 +3772,8 @@ func _init_lightsout() -> void:
     game_current = []
     for i in range(16):
         game_current.append(false)
-    for k in range(12):
+    var diff: int = int(active_mission_site.get("difficulty",1))
+    for k in range(7+diff*5):
         _toggle_light(rng.randi_range(0,15))
     game_status.text = "Schalte das Firewall-Raster vollständig dunkel."
     _render_lightsout()
@@ -3803,6 +3938,7 @@ func _reset_game_state() -> void:
     photo_count=0
     visited_districts.clear()
     driven_classes.clear()
+    hack_replays=0
     for i in range(photo_points.size()):
         photo_points[i]["taken"]=false
     inventory={"scan_cell":0,"energy_drink":0,"transit_pass":0}
@@ -3960,6 +4096,7 @@ func _save_game() -> void:
         "photos":photo_points.map(func(x): return bool(x.taken)),
         "visited_districts":visited_districts,
         "driven_classes":driven_classes,
+        "hack_replays":hack_replays,
         "npc_flags":npc_flags,
         "npc_trust":npc_trust,
         "npc_contracts_done":npc_contracts_done,
@@ -4012,6 +4149,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
             photo_points[i]["taken"]=bool(photo_taken[i])
     visited_districts = Dictionary(d.get("visited_districts",{}))
     driven_classes = Dictionary(d.get("driven_classes",{}))
+    hack_replays = int(d.get("hack_replays",0))
     npc_flags = Dictionary(d.get("npc_flags",{}))
     npc_trust = Dictionary(d.get("npc_trust",{}))
     npc_contracts_done = Dictionary(d.get("npc_contracts_done",{}))
@@ -4422,6 +4560,7 @@ func _chapter_progress(c: Dictionary) -> int:
             if str(key)!="visited_openai" and bool(hack_done[key]): hc+=1
         return mini(hc,int(c.goal))
     if kind=="collector": return mini(cache_count+glyph_count,int(c.goal))
+    if kind=="hack_replays": return mini(hack_replays,int(c.goal))
     return 1
 
 func _draw_missions_overlay() -> void:
