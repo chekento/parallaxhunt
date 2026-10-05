@@ -572,7 +572,9 @@ func _generate_smart_agents() -> void:
             "skin":[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655"),Color("#7b4f3d")][rng.randi_range(0,3)],
             "clothes":[Color("#8dcfff"),Color("#ff9fc1"),Color("#90dfb8"),Color("#ffd477")][rng.randi_range(0,3)],
             "phase":rng.randf_range(0,TAU),
-            "parking_progress":0.0
+            "parking_progress":0.0,
+            "car_parked":false,
+            "parked_t":0.0
         })
 
 func _generate_visual_props() -> void:
@@ -1270,12 +1272,15 @@ func _update_smart_agents(delta: float) -> void:
                 a["state"]="entering"
                 a["timer"]=1.1
                 a["parking_progress"]=0.0
+                if bool(a.get("car_parked",false)):
+                    a["t"]=float(a.get("parked_t",a.t))
         elif state=="entering":
             a["parking_progress"]=minf(1.0,float(a.parking_progress)+delta/1.1)
             if float(a.timer)<=0.0:
                 a["state"]="driving"
                 a["timer"]=rng.randf_range(18.0,42.0)
                 a["parking_progress"]=0.0
+                a["car_parked"]=false
         elif state=="driving":
             var dir2: float = -1.0 if bool(a.reverse) else 1.0
             a["t"]=fposmod(float(a.t)+float(a.speed)*delta*dir2,1.0)
@@ -1283,6 +1288,7 @@ func _update_smart_agents(delta: float) -> void:
                 a["state"]="parking"
                 a["timer"]=1.8
                 a["parking_progress"]=0.0
+                a["parked_t"]=float(a.t)
         elif state=="parking":
             a["parking_progress"]=minf(1.0,float(a.parking_progress)+delta/1.8)
             if float(a.timer)<=0.0:
@@ -1294,6 +1300,7 @@ func _update_smart_agents(delta: float) -> void:
                 a["state"]="walking"
                 a["timer"]=rng.randf_range(10.0,24.0)
                 a["parking_progress"]=0.0
+                a["car_parked"]=true
         smart_agents[i]=a
 
 func _update_pedestrians(delta: float) -> void:
@@ -2434,6 +2441,15 @@ func _draw_smart_agents() -> void:
         var lane_pos := _sample_polyline(road.points,t)+normal*lane_offset
         var sidewalk_pos := _sample_polyline(road.points,t)+normal*(float(road.width)*0.5+24.0)
         var state := str(a.state)
+        if state=="walking" and bool(a.get("car_parked",false)):
+            var parked_t: float = float(a.get("parked_t",t))
+            var ptan := _polyline_tangent(road.points,parked_t)
+            if bool(a.reverse):
+                ptan*=-1.0
+            var pnorm := Vector2(-ptan.y,ptan.x)
+            var ppos := _sample_polyline(road.points,parked_t)+pnorm*(float(road.width)*0.5+50.0)
+            if player_pos.distance_to(ppos)<1850.0:
+                _draw_car(ppos,ptan.angle(),str(a["class"]),Color(a.color),true)
         if state in ["driving","parking","parked","entering"]:
             var park_extra: float = 0.0
             if state=="parking" or state=="parked":
