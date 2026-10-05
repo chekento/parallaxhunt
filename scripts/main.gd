@@ -45,6 +45,17 @@ var interior_accent := Color("#73f3ce")
 var interior_return_pos := Vector2.ZERO
 var interior_player_pos := Vector2(450,560)
 var interior_size := Vector2(900,700)
+var world_zoom: float = 1.0
+var target_world_zoom: float = 1.0
+var map_open: bool = false
+var missions_open: bool = false
+var credits: int = 520
+var owned_property: String = ""
+var property_sites: Array = []
+var mission_sites: Array = []
+var hack_done: Dictionary = {}
+var native_chapter: int = 0
+var native_chapters: Array = []
 
 # True multi-touch state: left and right touches can coexist.
 var move_touch := -1
@@ -72,6 +83,7 @@ func _ready() -> void:
     _build_parks()
     _build_water()
     _build_landmarks()
+    _build_native_gameplay_data()
     _generate_city()
     _generate_traffic()
     _generate_visual_props()
@@ -88,6 +100,13 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
     _update_sensor(delta)
+    if interior_active:
+        target_world_zoom = 1.0
+    elif current_vehicle >= 0:
+        target_world_zoom = 0.72
+    else:
+        target_world_zoom = 1.42
+    world_zoom = lerpf(world_zoom,target_world_zoom,minf(1.0,delta*4.5))
     _update_player(delta)
     if not interior_active:
         _update_traffic(delta)
@@ -144,18 +163,31 @@ func _input(event: InputEvent) -> void:
 
 func _build_districts() -> void:
     districts = [
-        {"name":"Altstadt", "rect":Rect2(0,0,5200,4200), "ground":Color("#1d252d"), "wall":Color("#76584b"), "roof":Color("#9b7560"), "accent":Color("#ffcd8a"), "style":"heritage"},
-        {"name":"Glass Quarter", "rect":Rect2(5200,0,5200,4200), "ground":Color("#102532"), "wall":Color("#285166"), "roof":Color("#39758d"), "accent":Color("#67d9ff"), "style":"glass"},
-        {"name":"Nordpark", "rect":Rect2(10400,0,5200,4200), "ground":Color("#182a22"), "wall":Color("#395744"), "roof":Color("#55745b"), "accent":Color("#8ff0b4"), "style":"green"},
-        {"name":"Solar Heights", "rect":Rect2(15600,0,10400,4200), "ground":Color("#222a2d"), "wall":Color("#596140"), "roof":Color("#7f8953"), "accent":Color("#f1e36f"), "style":"solar"},
-        {"name":"Kanäle", "rect":Rect2(0,4200,5200,5000), "ground":Color("#10242b"), "wall":Color("#354e59"), "roof":Color("#4b6570"), "accent":Color("#64e7e4"), "style":"canal"},
-        {"name":"Zentrum", "rect":Rect2(5200,4200,5200,5000), "ground":Color("#17222b"), "wall":Color("#485966"), "roof":Color("#657786"), "accent":Color("#9ad5ff"), "style":"center"},
-        {"name":"Hafen", "rect":Rect2(10400,4200,5200,5000), "ground":Color("#20252a"), "wall":Color("#55473e"), "roof":Color("#736155"), "accent":Color("#ffb66f"), "style":"harbor"},
-        {"name":"Neon Mile", "rect":Rect2(15600,4200,10400,5000), "ground":Color("#1d1930"), "wall":Color("#53375e"), "roof":Color("#764b82"), "accent":Color("#ff80ef"), "style":"neon"},
-        {"name":"Gärten", "rect":Rect2(0,9200,6500,8800), "ground":Color("#17271d"), "wall":Color("#425c41"), "roof":Color("#5d7658"), "accent":Color("#9be993"), "style":"garden"},
-        {"name":"Universität", "rect":Rect2(6500,9200,6500,8800), "ground":Color("#182131"), "wall":Color("#45516b"), "roof":Color("#65718c"), "accent":Color("#b0c8ff"), "style":"campus"},
-        {"name":"Observatorium", "rect":Rect2(13000,9200,6000,8800), "ground":Color("#18182a"), "wall":Color("#413b61"), "roof":Color("#625a88"), "accent":Color("#c3a6ff"), "style":"astro"},
-        {"name":"Terminal East", "rect":Rect2(19000,9200,7000,8800), "ground":Color("#20262a"), "wall":Color("#535a60"), "roof":Color("#747c83"), "accent":Color("#d9e5ef"), "style":"terminal"}
+        {"name":"Altstadt","rect":Rect2(0,0,5200,3600),"ground":Color("#1d252d"),"wall":Color("#76584b"),"roof":Color("#9b7560"),"accent":Color("#ffcd8a"),"style":"heritage"},
+        {"name":"Kulturviertel","rect":Rect2(5200,0,5200,3600),"ground":Color("#17242d"),"wall":Color("#4c5d67"),"roof":Color("#687b87"),"accent":Color("#9bdcff"),"style":"culture"},
+        {"name":"Glasdistrikt","rect":Rect2(10400,0,5200,3600),"ground":Color("#102532"),"wall":Color("#285166"),"roof":Color("#39758d"),"accent":Color("#67d9ff"),"style":"glass"},
+        {"name":"Nordpark","rect":Rect2(15600,0,5200,3600),"ground":Color("#182a22"),"wall":Color("#395744"),"roof":Color("#55745b"),"accent":Color("#8ff0b4"),"style":"green"},
+        {"name":"Solar Heights","rect":Rect2(20800,0,5200,3600),"ground":Color("#222a2d"),"wall":Color("#596140"),"roof":Color("#7f8953"),"accent":Color("#f1e36f"),"style":"solar"},
+        {"name":"Kanäle","rect":Rect2(0,3600,5200,3600),"ground":Color("#10242b"),"wall":Color("#354e59"),"roof":Color("#4b6570"),"accent":Color("#64e7e4"),"style":"canal"},
+        {"name":"Zentrum","rect":Rect2(5200,3600,5200,3600),"ground":Color("#17222b"),"wall":Color("#485966"),"roof":Color("#657786"),"accent":Color("#9ad5ff"),"style":"center"},
+        {"name":"Hafen","rect":Rect2(10400,3600,5200,3600),"ground":Color("#20252a"),"wall":Color("#55473e"),"roof":Color("#736155"),"accent":Color("#ffb66f"),"style":"harbor"},
+        {"name":"Industrie","rect":Rect2(15600,3600,5200,3600),"ground":Color("#252525"),"wall":Color("#575554"),"roof":Color("#75716d"),"accent":Color("#ff986e"),"style":"industry"},
+        {"name":"Transit Yard","rect":Rect2(20800,3600,5200,3600),"ground":Color("#20272b"),"wall":Color("#505f66"),"roof":Color("#6e7a80"),"accent":Color("#9adbe5"),"style":"terminal"},
+        {"name":"Gärten","rect":Rect2(0,7200,5200,3600),"ground":Color("#17271d"),"wall":Color("#425c41"),"roof":Color("#5d7658"),"accent":Color("#9be993"),"style":"garden"},
+        {"name":"Universität","rect":Rect2(5200,7200,5200,3600),"ground":Color("#182131"),"wall":Color("#45516b"),"roof":Color("#65718c"),"accent":Color("#b0c8ff"),"style":"campus"},
+        {"name":"Observatorium","rect":Rect2(10400,7200,5200,3600),"ground":Color("#18182a"),"wall":Color("#413b61"),"roof":Color("#625a88"),"accent":Color("#c3a6ff"),"style":"astro"},
+        {"name":"Außenring","rect":Rect2(15600,7200,5200,3600),"ground":Color("#242b2d"),"wall":Color("#4d5d5c"),"roof":Color("#6b7976"),"accent":Color("#a8d7c9"),"style":"ring"},
+        {"name":"Neon Mile","rect":Rect2(20800,7200,5200,3600),"ground":Color("#1d1930"),"wall":Color("#53375e"),"roof":Color("#764b82"),"accent":Color("#ff80ef"),"style":"neon"},
+        {"name":"Moorhafen","rect":Rect2(0,10800,5200,3600),"ground":Color("#172329"),"wall":Color("#3e5555"),"roof":Color("#58706d"),"accent":Color("#79d7c5"),"style":"canal"},
+        {"name":"Messe","rect":Rect2(5200,10800,5200,3600),"ground":Color("#21242c"),"wall":Color("#545b70"),"roof":Color("#707993"),"accent":Color("#a9bcff"),"style":"expo"},
+        {"name":"Bioquartier","rect":Rect2(10400,10800,5200,3600),"ground":Color("#182820"),"wall":Color("#3c6249"),"roof":Color("#568362"),"accent":Color("#82e59b"),"style":"green"},
+        {"name":"Aurora Hills","rect":Rect2(15600,10800,5200,3600),"ground":Color("#201e31"),"wall":Color("#554d77"),"roof":Color("#71669a"),"accent":Color("#c0a7ff"),"style":"astro"},
+        {"name":"Terminal East","rect":Rect2(20800,10800,5200,3600),"ground":Color("#20262a"),"wall":Color("#535a60"),"roof":Color("#747c83"),"accent":Color("#d9e5ef"),"style":"terminal"},
+        {"name":"Aerodrome","rect":Rect2(0,14400,5200,3600),"ground":Color("#252a2e"),"wall":Color("#59636a"),"roof":Color("#78848b"),"accent":Color("#c9e7f3"),"style":"air"},
+        {"name":"Windfeld","rect":Rect2(5200,14400,5200,3600),"ground":Color("#1d2928"),"wall":Color("#4b6661"),"roof":Color("#67847d"),"accent":Color("#8be8d7"),"style":"wind"},
+        {"name":"Data Fields","rect":Rect2(10400,14400,5200,3600),"ground":Color("#171f2c"),"wall":Color("#3c4d68"),"roof":Color("#566a8b"),"accent":Color("#77aaff"),"style":"data"},
+        {"name":"Küstenband","rect":Rect2(15600,14400,5200,3600),"ground":Color("#15272c"),"wall":Color("#3f6066"),"roof":Color("#5c7e83"),"accent":Color("#72d7e6"),"style":"coast"},
+        {"name":"Railworks","rect":Rect2(20800,14400,5200,3600),"ground":Color("#282626"),"wall":Color("#665b55"),"roof":Color("#84746a"),"accent":Color("#e8a977"),"style":"rail"}
     ]
 
 func _build_roads() -> void:
@@ -190,8 +222,8 @@ func _build_water() -> void:
 func _build_landmarks() -> void:
     landmarks = [
         {"name":"Old Clock Tower","district":"Altstadt","pos":Vector2(1850,1650),"size":Vector2(360,300),"h":220.0,"kind":"clock","accent":Color("#ffcd8a")},
-        {"name":"Crystal Forum","district":"Glass Quarter","pos":Vector2(8050,1700),"size":Vector2(520,380),"h":310.0,"kind":"crystal","accent":Color("#67d9ff")},
-        {"name":"OpenAI HQ","district":"Glass Quarter","pos":Vector2(9000,3150),"size":Vector2(820,520),"h":295.0,"kind":"openai_hq","accent":Color("#f2f7f7")},
+        {"name":"Crystal Forum","district":"Glasdistrikt","pos":Vector2(8050,1700),"size":Vector2(520,380),"h":310.0,"kind":"crystal","accent":Color("#67d9ff")},
+        {"name":"OpenAI HQ","district":"Glasdistrikt","pos":Vector2(9000,3150),"size":Vector2(820,520),"h":295.0,"kind":"openai_hq","accent":Color("#f2f7f7")},
         {"name":"Nordpark Glasshouse","district":"Nordpark","pos":Vector2(12800,1480),"size":Vector2(600,420),"h":120.0,"kind":"greenhouse","accent":Color("#8ff0b4")},
         {"name":"Solar Beacon","district":"Solar Heights","pos":Vector2(20600,1550),"size":Vector2(460,360),"h":255.0,"kind":"solar_beacon","accent":Color("#f1e36f")},
         {"name":"Canal Rotunda","district":"Kanäle","pos":Vector2(2700,6500),"size":Vector2(480,420),"h":145.0,"kind":"rotunda","accent":Color("#64e7e4")},
@@ -212,6 +244,34 @@ func _rect_hits_landmark(r: Rect2) -> bool:
         if _landmark_rect(l).grow(70).intersects(r):
             return true
     return false
+
+func _build_native_gameplay_data() -> void:
+    property_sites = [
+        {"id":"canal_loft","name":"Canal Loft","pos":Vector2(4420,5480),"price":460,"garage":5},
+        {"id":"garden_house","name":"Garden House","pos":Vector2(2480,9080),"price":720,"garage":8},
+        {"id":"aurora_home","name":"Aurora Residence","pos":Vector2(18200,12650),"price":980,"garage":10}
+    ]
+    mission_sites = [
+        {"id":"gridRepair","name":"Solar Grid Terminal","pos":Vector2(23100,1750),"game":"wire","reward":"Grid Key"},
+        {"id":"transitMosaic","name":"Transit Routing Wall","pos":Vector2(22800,5250),"game":"slide","reward":"Route Tile"},
+        {"id":"cipherGate","name":"Neon Cipher Gate","pos":Vector2(23600,8700),"game":"mastermind","reward":"Cipher Core"},
+        {"id":"spectrum","name":"Spectrum Array","pos":Vector2(13000,8750),"game":"frequency","reward":"Spectrum Seal"},
+        {"id":"packetTrace","name":"Expo Packet Node","pos":Vector2(7550,12600),"game":"memory","reward":"Packet Token"},
+        {"id":"firewall","name":"Bio Firewall","pos":Vector2(12650,12650),"game":"lightsout","reward":"Firewall Shard"}
+    ]
+    native_chapters = [
+        {"title":"Echo-Signale bergen","desc":"Sammle fünf Echo-Signale in der Stadt.","kind":"frag","goal":5},
+        {"title":"Verdeckte Wege","desc":"Entdecke drei Perspektiv-Geheimnisse.","kind":"secret","goal":3},
+        {"title":"OpenAI HQ","desc":"Besuche das OpenAI HQ im Glasdistrikt.","kind":"visit_openai","goal":1},
+        {"title":"Solar Grid Repair","desc":"Löse das Leitungs-Puzzle am Solar Grid Terminal.","kind":"hack","id":"gridRepair","goal":1},
+        {"title":"Transit Mosaic","desc":"Setze das Transit-Routing als Schiebepuzzle zusammen.","kind":"hack","id":"transitMosaic","goal":1},
+        {"title":"Cipher Gate","desc":"Knacke den Mastermind-Code in Neon Mile.","kind":"hack","id":"cipherGate","goal":1},
+        {"title":"Spectrum Alignment","desc":"Stimme die Frequenzkanäle am Observatorium ab.","kind":"hack","id":"spectrum","goal":1},
+        {"title":"Packet Trace","desc":"Rekonstruiere die Paketfolge am Expo-Knoten.","kind":"hack","id":"packetTrace","goal":1},
+        {"title":"Firewall Lattice","desc":"Schalte das Firewall-Raster vollständig dunkel.","kind":"hack","id":"firewall","goal":1},
+        {"title":"Eigenheim","desc":"Kaufe ein Gebäude mit Garage.","kind":"property","goal":1},
+        {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
+    ]
 
 func _generate_city() -> void:
     buildings.clear()
@@ -487,6 +547,22 @@ func _build_ui() -> void:
     district_banner.modulate = Color(1,1,1,0)
     layer.add_child(district_banner)
 
+    var map_button := Button.new()
+    map_button.text = "MAP"
+    map_button.position = Vector2(770,42)
+    map_button.size = Vector2(125,72)
+    map_button.add_theme_font_size_override("font_size",22)
+    map_button.pressed.connect(_toggle_map)
+    layer.add_child(map_button)
+
+    var mission_button := Button.new()
+    mission_button.text = "MISSIONS"
+    mission_button.position = Vector2(905,42)
+    mission_button.size = Vector2(150,72)
+    mission_button.add_theme_font_size_override("font_size",19)
+    mission_button.pressed.connect(_toggle_missions)
+    layer.add_child(mission_button)
+
     scan_button = Button.new()
     scan_button.text = "SCAN"
     scan_button.position = Vector2(820, 2060)
@@ -573,6 +649,9 @@ func _update_sensor(delta: float) -> void:
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
 func _update_player(delta: float) -> void:
+    if map_open or missions_open:
+        vehicle_velocity = move_toward(vehicle_velocity,0.0,delta*320.0)
+        return
     if interior_active:
         if move_vec.length() < 0.04:
             return
@@ -660,7 +739,8 @@ func _update_district() -> void:
         tw.tween_property(district_banner, "modulate:a", 0.0, 0.65)
 
 func _update_ui() -> void:
-    mission_label.text = "Echoes · %d/10   Secrets · %d/4" % [mission_fragments, mission_secrets]
+    var chapter := native_chapters[mini(native_chapter,native_chapters.size()-1)] if native_chapters.size()>0 else {"title":"Explore","desc":""}
+    mission_label.text = str(chapter.title)
     if interior_active:
         detail_label.text = "%s · Interior. Explore the rooms and return through the lobby exit." % interior_name
     else:
@@ -693,7 +773,15 @@ func _interact() -> void:
         _enter_interior(str(st.name),str(st.kind),st.accent,player_pos)
         return
     elif n.type == "openai_hq":
+        hack_done["visited_openai"] = true
         _enter_interior("OpenAI HQ","openai_hq",Color("#f2f7f7"),player_pos)
+        _advance_native_chapter()
+        return
+    elif n.type == "property":
+        _interact_property(int(n.index))
+        return
+    elif n.type == "mission_site":
+        _start_minigame(mission_sites[int(n.index)])
         return
     elif n.type == "fragment":
         var idx: int = n.index
@@ -701,12 +789,14 @@ func _interact() -> void:
             fragments[idx].taken = true
             mission_fragments += 1
             _play_sfx("collect")
+            _advance_native_chapter()
     elif n.type == "secret":
         var si: int = n.index
         if secrets[si].revealed and not secrets[si].found:
             secrets[si].found = true
             mission_secrets += 1
             _play_sfx("secret")
+            _advance_native_chapter()
     elif n.type == "car":
         var ci: int = n.index
         if current_vehicle == ci:
@@ -747,6 +837,16 @@ func _nearest_interactable() -> Dictionary:
         if d2 < 88.0 and d2 < bd:
             best = {"type":"secret","index":j,"action":"OPEN SECRET"}
             bd = d2
+    for pi in range(property_sites.size()):
+        var dp := player_pos.distance_to(Vector2(property_sites[pi].pos))
+        if dp < 105.0 and dp < bd:
+            best = {"type":"property","index":pi,"action":"PROPERTY"}
+            bd = dp
+    for mi in range(mission_sites.size()):
+        var dm := player_pos.distance_to(Vector2(mission_sites[mi].pos))
+        if dm < 95.0 and dm < bd:
+            best = {"type":"mission_site","index":mi,"action":"HACK"}
+            bd = dm
     for k in range(parked_cars.size()):
         if parked_cars[k].occupied:
             continue
@@ -796,6 +896,10 @@ func _draw() -> void:
     _draw_ambient_overlay()
     _draw_touch_controls()
     _draw_peek_meter()
+    if map_open:
+        _draw_map_overlay()
+    elif missions_open:
+        _draw_missions_overlay()
 
 func _draw_district_ground() -> void:
     for d in districts:
@@ -1758,6 +1862,138 @@ func _draw_interior_player() -> void:
     draw_line(chest-side*6,chest-side*6+Vector2(-swing,7),Color("#cfdde4"),2.2)
     draw_line(chest+side*6,chest+side*6+Vector2(swing,7),Color("#cfdde4"),2.2)
 
+func _toggle_map() -> void:
+    map_open = not map_open
+    missions_open = false
+    move_vec = Vector2.ZERO
+    queue_redraw()
+
+func _toggle_missions() -> void:
+    missions_open = not missions_open
+    map_open = false
+    move_vec = Vector2.ZERO
+    queue_redraw()
+
+func _map_point(world_pos: Vector2, rect: Rect2) -> Vector2:
+    return rect.position + Vector2(world_pos.x/WORLD_SIZE.x*rect.size.x,world_pos.y/WORLD_SIZE.y*rect.size.y)
+
+func _draw_map_overlay() -> void:
+    var screen := get_viewport_rect().size
+    draw_rect(Rect2(Vector2(28,170),Vector2(screen.x-56,1900)),Color(0.025,0.055,0.075,0.97),true)
+    draw_rect(Rect2(Vector2(28,170),Vector2(screen.x-56,1900)),Color("#73f3ce"),false,2.0)
+    draw_string(ThemeDB.fallback_font,Vector2(62,225),"GESAMTKARTE · PARALLAX MEGACITY",HORIZONTAL_ALIGNMENT_LEFT,760,28,Color.WHITE)
+    var map_rect := Rect2(65,270,950,660)
+    draw_rect(map_rect,Color("#0d1820"),true)
+    for d in districts:
+        var dr: Rect2 = d.rect
+        var p := _map_point(dr.position,map_rect)
+        var sz := Vector2(dr.size.x/WORLD_SIZE.x*map_rect.size.x,dr.size.y/WORLD_SIZE.y*map_rect.size.y)
+        draw_rect(Rect2(p,sz),Color(d.ground.r,d.ground.g,d.ground.b,0.92),true)
+        draw_rect(Rect2(p,sz),Color(d.accent.r,d.accent.g,d.accent.b,0.35),false,1.0)
+        draw_string(ThemeDB.fallback_font,p+Vector2(4,15),str(d.name),HORIZONTAL_ALIGNMENT_LEFT,maxf(50.0,sz.x-8),10,Color(0.92,0.96,0.97,0.76))
+    for road in roads:
+        var pts := PackedVector2Array()
+        for wp in road.points:
+            pts.append(_map_point(wp,map_rect))
+        draw_polyline(pts,Color(0.75,0.80,0.78,0.16),2.0,true)
+    for l in landmarks:
+        _draw_map_marker(_map_point(Vector2(l.pos),map_rect),Color(l.accent),"★")
+    for i in range(storefronts.size()):
+        var st = storefronts[i]
+        var col := Color("#ffd27a") if st.kind in ["restaurant","cafe"] else (Color("#73f3ce") if st.kind=="shop" else Color("#ff9b72"))
+        _draw_map_marker(_map_point(Vector2(st.pos),map_rect),col,"R" if st.kind in ["restaurant","cafe"] else ("G" if st.kind in ["garage","workshop"] else "S"))
+    for p in property_sites:
+        _draw_map_marker(_map_point(Vector2(p.pos),map_rect),Color("#d6a8ff"),"H")
+    for m in mission_sites:
+        var done := bool(hack_done.get(str(m.id),false))
+        _draw_map_marker(_map_point(Vector2(m.pos),map_rect),Color("#66717a") if done else Color("#ffdf75"),"!")
+    var pp := _map_point(player_pos,map_rect)
+    draw_circle(pp,7,Color.WHITE)
+    draw_circle(pp,12,Color("#73f3ce"),false,2.0)
+    var y := 980.0
+    draw_string(ThemeDB.fallback_font,Vector2(70,y),"LEGENDE / POIs",HORIZONTAL_ALIGNMENT_LEFT,300,22,Color("#73f3ce"))
+    y += 44
+    var legend := [
+        ["★","Sehenswürdigkeit / Landmark",Color("#9ad5ff")],
+        ["R","Restaurant / Café",Color("#ffd27a")],
+        ["G","Garage / Werkstatt",Color("#ff9b72")],
+        ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
+        ["H","Kaufbare Immobilie / Hausgarage",Color("#d6a8ff")],
+        ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
+    ]
+    for row in legend:
+        draw_circle(Vector2(82,y-5),11,row[2])
+        draw_string(ThemeDB.fallback_font,Vector2(76,y-10),str(row[0]),HORIZONTAL_ALIGNMENT_CENTER,12,11,Color("#101820"))
+        draw_string(ThemeDB.fallback_font,Vector2(112,y),str(row[1]),HORIZONTAL_ALIGNMENT_LEFT,700,17,Color.WHITE)
+        y += 38
+    draw_string(ThemeDB.fallback_font,Vector2(70,1275),"Stadtteile: %d · Landmarken: %d · betretbare POIs: %d" % [districts.size(),landmarks.size(),storefronts.size()],HORIZONTAL_ALIGNMENT_LEFT,900,17,Color("#c7d6de"))
+    draw_string(ThemeDB.fallback_font,Vector2(70,1320),"MAP erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
+
+func _draw_map_marker(p: Vector2, color: Color, glyph: String) -> void:
+    draw_circle(p,7,color)
+    draw_circle(p,10,Color(color.r,color.g,color.b,0.25),false,2.0)
+    draw_string(ThemeDB.fallback_font,p+Vector2(-5,-5),glyph,HORIZONTAL_ALIGNMENT_CENTER,10,9,Color("#101820"))
+
+func _chapter_progress(c: Dictionary) -> int:
+    var kind := str(c.kind)
+    if kind=="frag": return mini(mission_fragments,int(c.goal))
+    if kind=="secret": return mini(mission_secrets,int(c.goal))
+    if kind=="visit_openai": return 1 if bool(hack_done.get("visited_openai",false)) else 0
+    if kind=="hack": return 1 if bool(hack_done.get(str(c.id),false)) else 0
+    if kind=="property": return 1 if owned_property!="" else 0
+    return 1
+
+func _draw_missions_overlay() -> void:
+    var screen := get_viewport_rect().size
+    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
+    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#9ad5ff"),false,2.0)
+    draw_string(ThemeDB.fallback_font,Vector2(72,220),"MISSIONEN",HORIZONTAL_ALIGNMENT_LEFT,600,30,Color.WHITE)
+    var y := 275.0
+    for i in range(native_chapters.size()):
+        var c: Dictionary = native_chapters[i]
+        var progress := _chapter_progress(c)
+        var goal := int(c.goal)
+        var active := i==native_chapter
+        var done := progress>=goal
+        var bg := Color(0.14,0.29,0.34,0.58) if active else Color(0.08,0.13,0.16,0.62)
+        draw_rect(Rect2(70,y-24,930,72),bg,true)
+        draw_rect(Rect2(70,y-24,930,72),Color("#73f3ce") if active else Color(1,1,1,0.08),false,1.5)
+        draw_string(ThemeDB.fallback_font,Vector2(86,y),"%02d  %s" % [i+1,str(c.title)],HORIZONTAL_ALIGNMENT_LEFT,620,17,Color("#73f3ce") if active else Color.WHITE)
+        draw_string(ThemeDB.fallback_font,Vector2(710,y),("✓" if done else "%d/%d" % [progress,goal]),HORIZONTAL_ALIGNMENT_RIGHT,250,16,Color("#8de9aa") if done else Color("#c7d6de"))
+        draw_string(ThemeDB.fallback_font,Vector2(86,y+25),str(c.desc),HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#aebfc9"))
+        y += 82
+        if y > 1960:
+            break
+    draw_string(ThemeDB.fallback_font,Vector2(72,2030),"MISSIONS erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
+
+func _interact_property(index: int) -> void:
+    if index<0 or index>=property_sites.size():
+        return
+    var p: Dictionary = property_sites[index]
+    if owned_property == str(p.id):
+        _enter_interior(str(p.name),"home",Color("#d6a8ff"),player_pos)
+        return
+    if owned_property != "":
+        _notify("Du besitzt bereits %s." % owned_property)
+        return
+    if credits < int(p.price):
+        _notify("%s kostet %d Credits." % [str(p.name),int(p.price)])
+        return
+    credits -= int(p.price)
+    owned_property = str(p.id)
+    _play_sfx("collect")
+    _notify("%s gekauft · Garage %d Plätze" % [str(p.name),int(p.garage)])
+    _advance_native_chapter()
+
+func _advance_native_chapter() -> void:
+    while native_chapter < native_chapters.size()-1:
+        var c: Dictionary = native_chapters[native_chapter]
+        if _chapter_progress(c) < int(c.goal):
+            break
+        native_chapter += 1
+        _play_sfx("collect")
+        _notify("Neue Mission: %s" % str(native_chapters[native_chapter].title))
+
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
     var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
@@ -1789,7 +2025,7 @@ func _draw_peek_meter() -> void:
 func _project(world: Vector2, z: float = 0.0) -> Vector2:
     var screen_center := get_viewport_rect().size * 0.5
     var par := view_amount * z * parallax_strength * 0.72
-    return world - camera_pos + screen_center + par
+    return (world - camera_pos + par) * world_zoom + screen_center
 
 func _district_at(p: Vector2) -> Dictionary:
     for d in districts:
@@ -1798,7 +2034,7 @@ func _district_at(p: Vector2) -> Dictionary:
     return districts[0]
 
 func _world_rect_visible(r: Rect2) -> bool:
-    var screen := Rect2(_project(r.position),r.size).grow(300)
+    var screen := Rect2(_project(r.position),r.size*world_zoom).grow(380)
     return screen.intersects(Rect2(Vector2.ZERO,get_viewport_rect().size))
 
 func _point_in_building(p: Vector2) -> bool:
