@@ -1,80 +1,100 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.6.0 Native Alpha** continues the Godot 4.7.2 Android migration of the original HTML game.
+**Parallax Hunt 1.7.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
 
-## 1.6.0 highlights
+## 1.7.0 — Gameplay, Collection & Variety
 
-### Traffic AI 2.0
-- right-hand traffic with separate lane offsets
-- two-lane car-following
-- adaptive slowing behind traffic
-- autonomous lane changes when an adjacent lane is clear
-- turn indicators for lane changes and junction turns
-- smoother visual interpolation through turns
-- normal intersections and bridge/underpass nodes are visually distinct
-- synchronized signal logic
-- roadside parking bays
-- smart drivers can drive, park, leave the car, walk to destinations and return later
-- parked NPC cars remain visible while drivers are on foot
+### Driving and vehicles
+- 10 vehicle classes: Micro, Hatch, Sedan, Executive, SUV, Pickup, Van, Delivery, Sport and Hyper
+- four performance groups: CITY, ROAD, UTILITY, PERFORMANCE plus HYPER
+- class-specific top speed, acceleration, braking and handling
+- progressive mobile steering, throttle/brake/reverse joystick semantics and configurable driving assist
+- dynamic collisions with parked and moving traffic
+- weighted vehicle rarity: common city cars, uncommon utility/executive vehicles, rare sports cars and ultra-rare hypercars
+- class-specific visual silhouettes and details
+- persistent class tuning in workshops:
+  - engine
+  - handling
+  - brakes
+  - three upgrade levels each
+- six repeatable time trials with class requirements, checkpoints, best times, rewards and 3-2-1 countdown
+- unique trial completion tracking plus repeat wins for best-time chasing
+- Android haptics for impacts, race starts and reward moments
 
-### Smarter pedestrians and civilian routines
-- pedestrians use routine targets instead of endlessly looping one corridor
-- roles include work, shopping, park, home and transit behavior
-- pedestrians pause at destinations
-- some pedestrians change sidewalk corridors at intersections
-- civilian driver agents choose real activity targets such as cafés, shops, parks, homes and workshops
+### Long-term gameplay
+- 35 main/native mission chapters
+- repeatable city-job board with multiple job types
+- NPC trust contracts
+- milestone rewards
+- Collection dashboard with completion bars and detailed progress
+- persistent three-slot save system
+- active mission compass and world/map objectives
 
-### Mission / NPC gameplay
-- mission compass with active objective and distance
-- named NPC dialogue system
-- NPC trust values
-- personal optional contracts for Mira, Nova, Luna, Iris, Vio and Bram
-- separate NPC contract rewards and map markers
-- optional contracts cover caches, deliveries, hacking and public transit
-- main story progression remains independent from personal NPC contracts
+### Hacking overhaul
+- 12 hacking terminals across the city
+- security difficulty levels
+- replayable terminals with smaller replay rewards
+- six hacking families:
+  - true-connectivity Wire network (4×4 / 5×5)
+  - Sliding routing puzzle
+  - variable-range Mastermind
+  - Frequency alignment
+  - Packet-memory sequence
+  - Lights Out firewall
+- rich completion popups and rewards
+- Hacking Marathon + replay progression
 
-### Better interiors
-- multi-floor native interiors
-- lifts between floors
-- unique upper-floor layouts for OpenAI HQ, shops, restaurants/cafés and owned homes
-- animated sliding doors
-- room labels and clearer room functions
-- ambient guests, workers, mechanics and researchers
-- OpenAI HQ now has a lobby / visitor lab floor plus a denser research / collaboration floor
+### Exploration and collection
+- 25 PMDD Photo Hunt viewpoints across the city
+- viewpoint alignment uses PMDD perspective, not just proximity
+- camera-flash feedback and photo rewards
+- 25 hidden Street Signals found through active SCAN gameplay
+- Echo fragments
+- perspective secrets
+- data caches
+- city sigils
+- rooftop relays
+- sublevel utility nodes
+- collection milestones such as Photo Scout, District Lens, Photo Master, Signal Hunter and Spectrum Archivist
 
-### Main menu / saves
-- animated native PMDD city title art
-- Continue
-- New Game
-- three independent save slots
-- progress / credits shown per slot
-- fullscreen input-safe menu overlay
-- Options:
-  - sound
-  - graphics quality
-  - PMDD depth
-  - sensor sensitivity
-- in-game menu button and autosave
+### World and visual variety
+- 25 city districts
+- organic secondary road routes mixed with the main street grid
+- 12 parks / pocket parks with unique attractions
+- district-specific micro-assets:
+  - wind turbines
+  - runway lights
+  - data pylons
+  - coastal boardwalk details
+  - market stalls
+  - bike racks
+  - industrial gantries
+  - neon totems
+  - garden arches
+- unique district ground motifs for Aerodrome, Windfeld, Data Fields, coast, Railworks, industry/harbor, campus and observatory zones
+- unique park attractions including Art Wall, Pond, Skate Bowl, Drone Pad, Rose Garden and Playground
+- improved water, façades, vegetation, road furniture and night ambience
 
-## Existing native systems
+### Missions / UI
+- World map with POI categories for missions, shops, restaurants, garages, homes, NPCs, transit, vertical access, Photo Hunt and time trials
+- Missions overlay with long-term statistics
+- Collection overlay for photos, cars, hacking, districts, trials, NPC trust and milestones
+- rich reward popups for hacks, races, photos, milestones and new missions
+- main menu with Continue, New Game, three save slots and options
+- options for sound, graphics quality, PMDD depth, sensor sensitivity and driving assist
 
-- 25 city districts in a 26,000 × 18,000 world
-- dynamic on-foot / driving zoom
-- PMDD motion-sensor perspective plus touch peek
-- mobile multitouch controls
-- world map with POIs
-- mission menu
-- OpenAI HQ landmark
-- restaurants, cafés, shops, garages, workshops and homes
-- property purchase and persistent garage storage
-- energy / credits / shop stock / restaurants
-- side jobs
-- buses and trams with stops
-- rooftop relays and sublevels
-- six hacking minigames
-- echo fragments, perspective secrets, caches and sigils
-- synthesized sound effects
-- save/load and autosave
+### Existing city systems
+- smart right-hand traffic
+- lane changes, traffic lights and turn behavior
+- bridges / underpasses visually distinguished from normal intersections
+- NPC drivers who park, exit vehicles, walk to destinations and return later
+- pedestrian routines
+- enterable multi-floor interiors
+- OpenAI HQ
+- purchasable homes and private garages
+- restaurants, shops, workshops, economy and energy
+- functional buses / trams
+- native synthesized sound effects
 
 ## Android build safeguards
 
@@ -85,8 +105,8 @@ Every push to `main` runs:
 3. APK verification
 4. artifact upload
 
-The build fails if the main Godot scene cannot load.
+The workflow now uses a concurrency group so new commits cancel stale in-progress builds and prioritize the newest `main` state.
 
 ## Tracking status
 
-Native PMDD currently uses Android motion sensors plus touch peek. Front-camera permission/feed detection is prepared, but full native MediaPipe face/iris tracking remains a separate Android-plugin milestone.
+PMDD perspective currently uses Android motion sensors plus multi-touch Touch Peek. Front-camera permission/feed detection is prepared, but full native MediaPipe face/iris tracking remains a separate Android-plugin milestone.
