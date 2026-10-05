@@ -193,14 +193,14 @@ func _generate_city() -> void:
         var p := _sample_polyline(rd.points, t_sample)
         var tangent := _polyline_tangent(rd.points, t_sample)
         var normal := Vector2(-tangent.y, tangent.x)
-        var cls := ["micro","sedan","van","sport"][rng.randi_range(0,3)]
+        var cls: String = ["micro","sedan","van","sport"][rng.randi_range(0,3)]
         parked_cars.append({"pos":p + normal * rng.randf_range(45,70), "class":cls, "heading":tangent.angle(), "color":_car_color(cls), "occupied":false})
 
 func _generate_traffic() -> void:
     traffic.clear()
     for _i in range(155):
         var road_index := rng.randi_range(0, roads.size()-1)
-        var cls := ["micro","sedan","van","sport"][rng.randi_range(0,3)]
+        var cls: String = ["micro","sedan","van","sport"][rng.randi_range(0,3)]
         traffic.append({"road":road_index, "t":rng.randf(), "speed":rng.randf_range(0.018,0.052), "class":cls, "color":_car_color(cls), "reverse":rng.randf()<0.5})
 
 func _generate_collectibles() -> void:
@@ -561,7 +561,7 @@ func _draw_buildings() -> void:
                 var t := float(k)/5.0
                 draw_line(top[0].lerp(top[3],t),top[1].lerp(top[2],t),Color(0.7,0.9,1.0,0.12),1.0)
         elif b.style == "heritage":
-            var roof_center := (top[0]+top[1]+top[2]+top[3])/4.0
+            var roof_center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
             draw_circle(roof_center,8,Color(1.0,0.83,0.58,0.20))
 
 func _draw_trees() -> void:
