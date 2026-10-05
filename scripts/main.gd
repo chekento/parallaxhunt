@@ -145,9 +145,9 @@ func _ready() -> void:
     rng.seed = 420042
     _build_districts()
     _build_roads()
+    _build_water()
     _build_junctions()
     _build_parks()
-    _build_water()
     _build_landmarks()
     _build_native_gameplay_data()
     _build_story_content()
@@ -1017,12 +1017,12 @@ func _build_ui() -> void:
     mvb.add_child(slot_title)
     menu_slot_buttons.clear()
     for slot in range(1,4):
-        var sb := Button.new()
-        sb.custom_minimum_size = Vector2(0,92)
-        sb.add_theme_font_size_override("font_size",18)
-        sb.pressed.connect(_select_save_slot.bind(slot))
-        mvb.add_child(sb)
-        menu_slot_buttons.append(sb)
+        var slot_btn := Button.new()
+        slot_btn.custom_minimum_size = Vector2(0,92)
+        slot_btn.add_theme_font_size_override("font_size",18)
+        slot_btn.pressed.connect(_select_save_slot.bind(slot))
+        mvb.add_child(slot_btn)
+        menu_slot_buttons.append(slot_btn)
 
     var options_button := Button.new()
     options_button.text = "OPTIONEN"
