@@ -8,12 +8,14 @@ const VEHICLE_SIZES := {"micro": Vector2(36, 19), "sedan": Vector2(44, 22), "van
 var rng := RandomNumberGenerator.new()
 var districts: Array = []
 var roads: Array = []
+var junctions: Array = []
 var parks: Array = []
 var waters: Array = []
 var buildings: Array = []
 var trees: Array = []
 var parked_cars: Array = []
 var traffic: Array = []
+var smart_agents: Array = []
 var street_lights: Array = []
 var street_props: Array = []
 var landmarks: Array = []
@@ -124,6 +126,7 @@ func _ready() -> void:
     rng.seed = 420042
     _build_districts()
     _build_roads()
+    _build_junctions()
     _build_parks()
     _build_water()
     _build_landmarks()
@@ -250,6 +253,68 @@ func _build_roads() -> void:
     roads.append({"points":PackedVector2Array([Vector2(1200,10500),Vector2(3700,9800),Vector2(6200,10300),Vector2(9000,12100),Vector2(12400,12600),Vector2(16000,11800)]), "width":150.0})
     roads.append({"points":PackedVector2Array([Vector2(16800,1200),Vector2(18000,2600),Vector2(19200,5000),Vector2(21000,6800),Vector2(24800,7600)]), "width":140.0})
     roads.append({"points":PackedVector2Array([Vector2(500,15500),Vector2(3300,14600),Vector2(5400,15000),Vector2(7800,16500),Vector2(11200,17000)]), "width":130.0})
+
+func _build_junctions() -> void:
+    junctions.clear()
+    # The first 10 roads are vertical and the next 8 horizontal.
+    for vi in range(10):
+        for hi in range(10,18):
+            var vx: float = float(roads[vi].points[0].x)
+            var hy: float = float(roads[hi].points[0].y)
+            var pos := Vector2(vx,hy)
+            var bridge := ((vi*7 + hi*3) % 17 == 0) or _point_over_water(pos)
+            # Bridges are exceptional. Normal nodes are true same-level intersections.
+            junctions.append({
+                "pos":pos,
+                "a":vi,
+                "b":hi,
+                "ta":hy/WORLD_SIZE.y,
+                "tb":vx/WORLD_SIZE.x,
+                "bridge":bridge,
+                "over":vi if (vi+hi)%2==0 else hi,
+                "phase":(vi+hi)%2
+            })
+
+func _point_over_water(p: Vector2) -> bool:
+    for w in waters:
+        if (w.rect as Rect2).grow(120).has_point(p):
+            return true
+    return false
+
+func _junction_green(j: Dictionary, road_index: int) -> bool:
+    if bool(j.bridge):
+        return true
+    var phase: int = int(floor(Time.get_ticks_msec()/6500.0)) % 2
+    var green_road: int = int(j.a) if phase==int(j.phase) else int(j.b)
+    return road_index==green_road
+
+func _junction_for_car(road_index: int, t: float, lookahead: float = 0.035) -> Dictionary:
+    for j in junctions:
+        if bool(j.bridge):
+            continue
+        var jt: float = -1.0
+        if int(j.a)==road_index:
+            jt=float(j.ta)
+        elif int(j.b)==road_index:
+            jt=float(j.tb)
+        if jt<0.0:
+            continue
+        if abs(jt-t)<=lookahead:
+            return j
+    return {}
+
+func _traffic_world_transform(c: Dictionary) -> Dictionary:
+    var road = roads[int(c.road)]
+    var t: float = float(c.t)
+    var tangent := _polyline_tangent(road.points,t)
+    if bool(c.reverse):
+        tangent *= -1.0
+    var normal := Vector2(-tangent.y,tangent.x)
+    var lane: int = int(c.get("lane",0))
+    var lane_offset: float = float(road.width)*(0.18 + float(lane)*0.14)
+    # Right-hand traffic: +normal is the right side relative to travel direction.
+    var pos := _sample_polyline(road.points,t) + normal*lane_offset
+    return {"pos":pos,"tangent":tangent,"normal":normal}
 
 func _build_parks() -> void:
     parks = [
@@ -443,11 +508,46 @@ func _generate_city() -> void:
 
 func _generate_traffic() -> void:
     traffic.clear()
-    for _i in range(155):
+    for i in range(155):
         var road_index := rng.randi_range(0, roads.size()-1)
         var cls: String = ["micro","sedan","van","sport"][rng.randi_range(0,3)]
-        traffic.append({"road":road_index, "t":rng.randf(), "speed":rng.randf_range(0.018,0.052), "class":cls, "color":_car_color(cls), "reverse":rng.randf()<0.5})
+        var reverse := rng.randf()<0.5
+        traffic.append({
+            "road":road_index,
+            "t":rng.randf(),
+            "speed":rng.randf_range(0.020,0.044),
+            "cruise":rng.randf_range(0.024,0.050),
+            "class":cls,
+            "color":_car_color(cls),
+            "reverse":reverse,
+            "lane":rng.randi_range(0,1),
+            "wait":0.0,
+            "turn_cooldown":rng.randf_range(0.0,2.0),
+            "parking":false,
+            "park_timer":0.0,
+            "lateral":0.0
+        })
+    _generate_smart_agents()
 
+func _generate_smart_agents() -> void:
+    smart_agents.clear()
+    for i in range(28):
+        var road_index := rng.randi_range(0,17)
+        smart_agents.append({
+            "state":"walking" if i%3==0 else "driving",
+            "road":road_index,
+            "t":rng.randf_range(0.05,0.95),
+            "reverse":rng.randf()<0.5,
+            "lane":rng.randi_range(0,1),
+            "timer":rng.randf_range(8.0,26.0),
+            "speed":rng.randf_range(0.018,0.032),
+            "class":["micro","sedan","van"][rng.randi_range(0,2)],
+            "color":_car_color(["micro","sedan","van"][rng.randi_range(0,2)]),
+            "skin":[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655"),Color("#7b4f3d")][rng.randi_range(0,3)],
+            "clothes":[Color("#8dcfff"),Color("#ff9fc1"),Color("#90dfb8"),Color("#ffd477")][rng.randi_range(0,3)],
+            "phase":rng.randf_range(0,TAU),
+            "parking_progress":0.0
+        })
 
 func _generate_visual_props() -> void:
     street_lights.clear()
@@ -915,11 +1015,102 @@ func _update_player(delta: float) -> void:
 
 func _update_traffic(delta: float) -> void:
     for i in range(traffic.size()):
-        var c = traffic[i]
-        var direction := -1.0 if c.reverse else 1.0
-        c.t = fposmod(float(c.t) + float(c.speed) * delta * direction, 1.0)
-        traffic[i] = c
+        var c: Dictionary = traffic[i]
+        c["turn_cooldown"]=maxf(0.0,float(c.get("turn_cooldown",0.0))-delta)
+        var direction: float = -1.0 if bool(c.reverse) else 1.0
+        var target_speed: float = float(c.cruise)
 
+        # Car-following: keep a usable distance in the same lane and direction.
+        var best_gap := 999.0
+        for k in range(traffic.size()):
+            if k==i:
+                continue
+            var other: Dictionary = traffic[k]
+            if int(other.road)!=int(c.road) or int(other.lane)!=int(c.lane) or bool(other.reverse)!=bool(c.reverse):
+                continue
+            var gap: float = (float(other.t)-float(c.t))*direction
+            if gap<0.0:
+                gap += 1.0
+            if gap>0.0 and gap<best_gap:
+                best_gap=gap
+        if best_gap<0.018:
+            target_speed=0.0
+        elif best_gap<0.035:
+            target_speed*=0.35
+        elif best_gap<0.055:
+            target_speed*=0.68
+
+        # Signal logic at same-level crossings.
+        var j := _junction_for_car(int(c.road),float(c.t),0.028)
+        if not j.is_empty():
+            var jt: float = float(j.ta) if int(j.a)==int(c.road) else float(j.tb)
+            var signed_gap: float = (jt-float(c.t))*direction
+            if signed_gap<0.0:
+                signed_gap+=1.0
+            if signed_gap<0.020 and not _junction_green(j,int(c.road)):
+                target_speed=0.0
+
+        var speed_now: float = float(c.speed)
+        speed_now=move_toward(speed_now,target_speed,delta*0.08)
+        c["speed"]=speed_now
+        var old_t: float = float(c.t)
+        var new_t: float = fposmod(old_t+speed_now*delta*direction,1.0)
+
+        # At flat intersections some cars turn onto the crossing road.
+        if not j.is_empty() and float(c.turn_cooldown)<=0.0 and _junction_green(j,int(c.road)):
+            var jt2: float = float(j.ta) if int(j.a)==int(c.road) else float(j.tb)
+            var crossed: bool = (direction>0.0 and old_t<=jt2 and new_t>=jt2) or (direction<0.0 and old_t>=jt2 and new_t<=jt2)
+            if crossed and rng.randf()<0.27:
+                var new_road: int = int(j.b) if int(j.a)==int(c.road) else int(j.a)
+                c["road"]=new_road
+                c["t"]=float(j.tb) if new_road==int(j.b) else float(j.ta)
+                c["reverse"]=rng.randf()<0.5
+                c["lane"]=rng.randi_range(0,1)
+                c["turn_cooldown"]=2.5
+                traffic[i]=c
+                continue
+        c["t"]=new_t
+        traffic[i]=c
+    _update_smart_agents(delta)
+
+func _update_smart_agents(delta: float) -> void:
+    for i in range(smart_agents.size()):
+        var a: Dictionary = smart_agents[i]
+        a["timer"]=float(a.timer)-delta
+        a["phase"]=fposmod(float(a.phase)+delta*5.0,TAU)
+        var state: String = str(a.state)
+        if state=="walking":
+            var dir: float = -1.0 if bool(a.reverse) else 1.0
+            a["t"]=fposmod(float(a.t)+float(a.speed)*0.42*delta*dir,1.0)
+            if float(a.timer)<=0.0:
+                a["state"]="entering"
+                a["timer"]=1.1
+                a["parking_progress"]=0.0
+        elif state=="entering":
+            a["parking_progress"]=minf(1.0,float(a.parking_progress)+delta/1.1)
+            if float(a.timer)<=0.0:
+                a["state"]="driving"
+                a["timer"]=rng.randf_range(18.0,42.0)
+                a["parking_progress"]=0.0
+        elif state=="driving":
+            var dir2: float = -1.0 if bool(a.reverse) else 1.0
+            a["t"]=fposmod(float(a.t)+float(a.speed)*delta*dir2,1.0)
+            if float(a.timer)<=0.0:
+                a["state"]="parking"
+                a["timer"]=1.8
+                a["parking_progress"]=0.0
+        elif state=="parking":
+            a["parking_progress"]=minf(1.0,float(a.parking_progress)+delta/1.8)
+            if float(a.timer)<=0.0:
+                a["state"]="parked"
+                a["timer"]=rng.randf_range(4.0,10.0)
+                a["parking_progress"]=1.0
+        elif state=="parked":
+            if float(a.timer)<=0.0:
+                a["state"]="walking"
+                a["timer"]=rng.randf_range(10.0,24.0)
+                a["parking_progress"]=0.0
+        smart_agents[i]=a
 
 func _update_pedestrians(delta: float) -> void:
     for i in range(pedestrians.size()):
@@ -1320,6 +1511,51 @@ func _draw_roads() -> void:
             var tan := _polyline_tangent(pts,t)
             var c := _project(wp,1.0)
             draw_line(c-tan*14.0,c+tan*14.0,Color(0.92,0.89,0.72,0.48),3.0,true)
+    _draw_junction_overlays()
+
+func _draw_junction_overlays() -> void:
+    for j in junctions:
+        var wp: Vector2 = Vector2(j.pos)
+        if player_pos.distance_to(wp)>1900.0:
+            continue
+        var p := _project(wp,1.0)
+        var wa: float = float(roads[int(j.a)].width)
+        var wb: float = float(roads[int(j.b)].width)
+        if not bool(j.bridge):
+            # True same-level intersection: one unified asphalt plate with lane/crosswalk logic.
+            draw_rect(Rect2(p-Vector2(wb*0.52,wa*0.52),Vector2(wb*1.04,wa*1.04)),Color("#2b363d"),true)
+            draw_rect(Rect2(p-Vector2(wb*0.52,wa*0.52),Vector2(wb*1.04,wa*1.04)),Color(1,1,1,0.035),false,1.0)
+            for k in [-1,1]:
+                for n in range(-3,4):
+                    draw_rect(Rect2(p+Vector2(float(n)*13-4,float(k)*wa*0.43-3),Vector2(8,6)),Color(0.92,0.92,0.86,0.34),true)
+                    draw_rect(Rect2(p+Vector2(float(k)*wb*0.43-3,float(n)*13-4),Vector2(6,8)),Color(0.92,0.92,0.86,0.34),true)
+        else:
+            var over: int = int(j.over)
+            var over_vertical: bool = over<10
+            var nearest_road := _nearest_road_index(player_pos)
+            var under: int = int(j.b) if over==int(j.a) else int(j.a)
+            var on_under: bool = nearest_road==under and player_pos.distance_to(wp)<380.0
+            # Underpass is deliberately darker. The upper deck fades when player passes underneath.
+            if over_vertical:
+                draw_rect(Rect2(p-Vector2(wb*0.60,wa*0.55),Vector2(wb*1.20,wa*1.10)),Color(0.08,0.11,0.13,0.62),true)
+                draw_rect(Rect2(p-Vector2(wa*0.52,wb*0.70),Vector2(wa*1.04,wb*1.40)),Color(0.34,0.39,0.42,0.42 if on_under else 0.96),true)
+                draw_line(p+Vector2(-wa*0.52,-wb*0.70),p+Vector2(-wa*0.52,wb*0.70),Color(0,0,0,0.28),5.0)
+                draw_line(p+Vector2(wa*0.52,-wb*0.70),p+Vector2(wa*0.52,wb*0.70),Color(0,0,0,0.28),5.0)
+            else:
+                draw_rect(Rect2(p-Vector2(wb*0.55,wa*0.60),Vector2(wb*1.10,wa*1.20)),Color(0.08,0.11,0.13,0.62),true)
+                draw_rect(Rect2(p-Vector2(wb*0.70,wa*0.52),Vector2(wb*1.40,wa*1.04)),Color(0.34,0.39,0.42,0.42 if on_under else 0.96),true)
+                draw_line(p+Vector2(-wb*0.70,-wa*0.52),p+Vector2(wb*0.70,-wa*0.52),Color(0,0,0,0.28),5.0)
+                draw_line(p+Vector2(-wb*0.70,wa*0.52),p+Vector2(wb*0.70,wa*0.52),Color(0,0,0,0.28),5.0)
+
+func _nearest_road_index(p: Vector2) -> int:
+    var best := INF
+    var best_i := -1
+    for i in range(roads.size()):
+        var d := _distance_to_polyline(p,roads[i].points)
+        if d<best:
+            best=d
+            best_i=i
+    return best_i
 
 func _draw_parks() -> void:
     for park in parks:
@@ -1939,15 +2175,48 @@ func _draw_pedestrians() -> void:
 
 func _draw_traffic() -> void:
     for c in traffic:
-        var rd = roads[c.road]
-        var tt: float = c.t
-        var pos := _sample_polyline(rd.points,tt)
+        var tr := _traffic_world_transform(c)
+        var pos: Vector2 = Vector2(tr.pos)
         if player_pos.distance_to(pos)>1800:
             continue
-        var tangent := _polyline_tangent(rd.points,tt)
-        if c.reverse:
-            tangent *= -1
-        _draw_car(pos,tangent.angle(),c["class"],c.color,false)
+        var tangent: Vector2 = Vector2(tr.tangent)
+        _draw_car(pos,tangent.angle(),str(c["class"]),Color(c.color),false)
+    _draw_smart_agents()
+
+func _draw_smart_agents() -> void:
+    for a in smart_agents:
+        var road = roads[int(a.road)]
+        var t: float = float(a.t)
+        var tangent := _polyline_tangent(road.points,t)
+        if bool(a.reverse):
+            tangent*=-1.0
+        var normal := Vector2(-tangent.y,tangent.x)
+        var lane_offset: float = float(road.width)*(0.18+float(int(a.lane))*0.14)
+        var lane_pos := _sample_polyline(road.points,t)+normal*lane_offset
+        var sidewalk_pos := _sample_polyline(road.points,t)+normal*(float(road.width)*0.5+24.0)
+        var state := str(a.state)
+        if state in ["driving","parking","parked","entering"]:
+            var park_extra: float = 0.0
+            if state=="parking" or state=="parked":
+                park_extra = lerpf(0.0,float(road.width)*0.34+20.0,float(a.parking_progress))
+            elif state=="entering":
+                park_extra = lerpf(float(road.width)*0.34+20.0,0.0,float(a.parking_progress))
+            var car_pos := lane_pos+normal*park_extra
+            if player_pos.distance_to(car_pos)<1850.0:
+                _draw_car(car_pos,tangent.angle(),str(a["class"]),Color(a.color),state=="parked")
+        if state=="walking" or state=="entering":
+            if player_pos.distance_to(sidewalk_pos)<1750.0:
+                _draw_agent_person(sidewalk_pos,tangent,a)
+
+func _draw_agent_person(pos: Vector2, tangent: Vector2, a: Dictionary) -> void:
+    var base := _project(pos,0)
+    var head := _project(pos,18)
+    var swing := sin(float(a.phase))*3.5
+    draw_circle(base+Vector2(2,5),5,Color(0,0,0,0.18))
+    draw_line(head+Vector2(0,5),head+Vector2(0,13),Color(a.clothes),4.0,true)
+    draw_line(head+Vector2(0,11),head+Vector2(swing,18),Color("#6e7a82"),2.0,true)
+    draw_line(head+Vector2(0,11),head+Vector2(-swing,18),Color("#7c8890"),2.0,true)
+    draw_circle(head,4.5,Color(a.skin))
 
 func _draw_transit() -> void:
     for tv in transit_vehicles:
