@@ -643,6 +643,17 @@ func _generate_visual_props() -> void:
         var tg2 := _polyline_tangent(rd4.points,tt4)
         var nn2 := Vector2(-tg2.y,tg2.x)
         street_props.append({"type":"sign","pos":pp2-nn2*(float(rd4.width)*0.5+30.0),"rot":tg2.angle(),"tint":Color("#a8d8ec")})
+    # Marked roadside parking bays on selected urban roads.
+    for ri in range(mini(18,roads.size())):
+        if ri%3==2:
+            continue
+        var rd5 = roads[ri]
+        for pk in [0.18,0.36,0.64,0.82]:
+            var ppk := _sample_polyline(rd5.points,float(pk))
+            var ttk := _polyline_tangent(rd5.points,float(pk))
+            var nnk := Vector2(-ttk.y,ttk.x)
+            var side_sign := 1.0 if int(float(pk)*100.0+float(ri))%2==0 else -1.0
+            street_props.append({"type":"parking_bay","pos":ppk+nnk*side_sign*(float(rd5.width)*0.5+34.0),"rot":ttk.angle(),"tint":Color("#b9c6cc")})
     for i in range(220):
         var road_index := rng.randi_range(0, roads.size()-1)
         pedestrians.append({
@@ -1698,6 +1709,12 @@ func _draw_junction_overlays() -> void:
                 for n in range(-3,4):
                     draw_rect(Rect2(p+Vector2(float(n)*13-4,float(k)*wa*0.43-3),Vector2(8,6)),Color(0.92,0.92,0.86,0.34),true)
                     draw_rect(Rect2(p+Vector2(float(k)*wb*0.43-3,float(n)*13-4),Vector2(6,8)),Color(0.92,0.92,0.86,0.34),true)
+            var a_green: bool = _junction_green(j,int(j.a))
+            var b_green: bool = _junction_green(j,int(j.b))
+            for corner in [Vector2(-wb*0.43,-wa*0.43),Vector2(wb*0.43,wa*0.43)]:
+                draw_circle(p+corner,4,Color("#63e28b") if a_green else Color("#ff665d"))
+            for corner in [Vector2(wb*0.43,-wa*0.43),Vector2(-wb*0.43,wa*0.43)]:
+                draw_circle(p+corner,4,Color("#63e28b") if b_green else Color("#ff665d"))
         else:
             var over: int = int(j.over)
             var over_vertical: bool = over<10
@@ -2265,6 +2282,13 @@ func _draw_street_props() -> void:
             _draw_stop_prop(p,false)
         elif p.type == "tram_stop":
             _draw_stop_prop(p,true)
+        elif p.type == "parking_bay":
+            var pc := _project(p.pos,1)
+            var pf := Vector2.from_angle(float(p.rot))
+            var ps := Vector2(-pf.y,pf.x)
+            var bay := PackedVector2Array([pc-pf*26-ps*13,pc+pf*26-ps*13,pc+pf*26+ps*13,pc-pf*26+ps*13])
+            draw_polyline(PackedVector2Array([bay[0],bay[1],bay[2],bay[3],bay[0]]),Color(0.82,0.86,0.86,0.18),1.3,true)
+            draw_string(ThemeDB.fallback_font,pc+Vector2(-5,-5),"P",HORIZONTAL_ALIGNMENT_CENTER,10,8,Color(0.84,0.90,0.92,0.28))
         elif p.type == "bollard":
             var bp := _project(p.pos,5)
             draw_line(bp,bp+Vector2(0,-9),Color("#69767d"),3.0,true)
@@ -2406,9 +2430,11 @@ func _draw_smart_agents() -> void:
         if state in ["driving","parking","parked","entering"]:
             var park_extra: float = 0.0
             if state=="parking" or state=="parked":
-                park_extra = lerpf(0.0,float(road.width)*0.34+20.0,float(a.parking_progress))
+                var park_depth: float = float(road.width)*0.34 + (34.0 if int(a.road)%3==0 else 20.0)
+                park_extra = lerpf(0.0,park_depth,float(a.parking_progress))
             elif state=="entering":
-                park_extra = lerpf(float(road.width)*0.34+20.0,0.0,float(a.parking_progress))
+                var enter_depth: float = float(road.width)*0.34 + (34.0 if int(a.road)%3==0 else 20.0)
+                park_extra = lerpf(enter_depth,0.0,float(a.parking_progress))
             var car_pos := lane_pos+normal*park_extra
             if player_pos.distance_to(car_pos)<1850.0:
                 _draw_car(car_pos,tangent.angle(),str(a["class"]),Color(a.color),state=="parked")
