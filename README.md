@@ -1,79 +1,92 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.5.0 Native Alpha** is the Godot 4.7.2 Android migration of the original HTML prototype.
+**Parallax Hunt 1.6.0 Native Alpha** continues the Godot 4.7.2 Android migration of the original HTML game.
 
-## 1.5.0 highlights
+## 1.6.0 highlights
 
-### Smarter living traffic
+### Traffic AI 2.0
 - right-hand traffic with separate lane offsets
-- two traffic lanes per direction where road width permits
-- car-following / spacing logic
-- signal-aware stopping at same-level intersections
-- vehicles can turn onto crossing roads
-- dedicated normal-intersection rendering instead of every crossing looking like a bridge
-- explicit bridge/underpass nodes; upper deck fades when the player passes underneath
-- synchronized junction signal indicators
-- marked roadside parking bays
-- smart civilian agents switch between walking, entering cars, driving, parking, leaving cars and walking again
-- parked NPC cars can remain visible while their drivers are on foot
+- two-lane car-following
+- adaptive slowing behind traffic
+- autonomous lane changes when an adjacent lane is clear
+- turn indicators for lane changes and junction turns
+- smoother visual interpolation through turns
+- normal intersections and bridge/underpass nodes are visually distinct
+- synchronized signal logic
+- roadside parking bays
+- smart drivers can drive, park, leave the car, walk to destinations and return later
+- parked NPC cars remain visible while drivers are on foot
 
-### Main menu / save system
-- animated native PMDD-city title art
+### Smarter pedestrians and civilian routines
+- pedestrians use routine targets instead of endlessly looping one corridor
+- roles include work, shopping, park, home and transit behavior
+- pedestrians pause at destinations
+- some pedestrians change sidewalk corridors at intersections
+- civilian driver agents choose real activity targets such as cafés, shops, parks, homes and workshops
+
+### Mission / NPC gameplay
+- mission compass with active objective and distance
+- named NPC dialogue system
+- NPC trust values
+- personal optional contracts for Mira, Nova, Luna, Iris, Vio and Bram
+- separate NPC contract rewards and map markers
+- optional contracts cover caches, deliveries, hacking and public transit
+- main story progression remains independent from personal NPC contracts
+
+### Better interiors
+- multi-floor native interiors
+- lifts between floors
+- unique upper-floor layouts for OpenAI HQ, shops, restaurants/cafés and owned homes
+- animated sliding doors
+- room labels and clearer room functions
+- ambient guests, workers, mechanics and researchers
+- OpenAI HQ now has a lobby / visitor lab floor plus a denser research / collaboration floor
+
+### Main menu / saves
+- animated native PMDD city title art
 - Continue
 - New Game
-- three independent save slots with progress / credit summaries
+- three independent save slots
+- progress / credits shown per slot
 - fullscreen input-safe menu overlay
-- Options menu:
+- Options:
   - sound
   - graphics quality
   - PMDD depth
   - sensor sensitivity
-- in-game menu button
-- autosave + manual save when returning to the main menu
-
-### Deeper NPC / interior gameplay
-- dialogue panel for named NPCs
-- mission-specific dialogue / hints
-- optional city-context dialogue
-- animated sliding interior exit doors
-- ambient restaurant guests, shop staff, mechanics and OpenAI HQ lab personnel
-- room labels and clearer room functions
-- expanded rooftop / sublevel / commerce / property interiors
+- in-game menu button and autosave
 
 ## Existing native systems
 
-- 25 visually distinct city districts in a 26,000 × 18,000 open world
-- dynamic camera zoom: closer on foot, wider while driving
-- PMDD-style parallax with Android motion-sensor input and simultaneous touch peek
-- mobile multi-touch movement + perspective control
-- procedural buildings, landmark architecture, vegetation, pedestrians, cars, buses and trams
-- OpenAI HQ landmark with a stylized visitor-lab interior
-- world map with POI legend and player position
-- mission menu with chapter progression and completion state
-- named NPCs including Mira, Nova, Luna, Iris, Vio and Bram
-- echo fragments, perspective secrets, data caches and city sigils
-- rooftop relays and sublevel utility nodes
-- six native hacking minigames
-- enterable restaurants, cafés, shops, garages, workshops, homes and special interiors
-- energy, credits, shop inventory and restaurant recovery
-- side jobs / city deliveries with distance-scaled rewards
-- vehicle classes, driving, paint workshop and persistent home-garage storage
-- purchasable homes with garage capacity
-- functional buses/trams with stops, dwell time, boarding and exiting
-- save/load and periodic autosave
-- native synthesized sound effects and perspective-secret reveal chime
+- 25 city districts in a 26,000 × 18,000 world
+- dynamic on-foot / driving zoom
+- PMDD motion-sensor perspective plus touch peek
+- mobile multitouch controls
+- world map with POIs
+- mission menu
+- OpenAI HQ landmark
+- restaurants, cafés, shops, garages, workshops and homes
+- property purchase and persistent garage storage
+- energy / credits / shop stock / restaurants
+- side jobs
+- buses and trams with stops
+- rooftop relays and sublevels
+- six hacking minigames
+- echo fragments, perspective secrets, caches and sigils
+- synthesized sound effects
+- save/load and autosave
 
 ## Android build safeguards
 
 Every push to `main` runs:
 
 1. Godot 4.7.2 Android debug export
-2. headless runtime startup smoke test
+2. headless main-scene runtime smoke test
 3. APK verification
-4. GitHub Actions artifact upload
+4. artifact upload
 
-The CI build fails if the main Godot scene cannot actually load.
+The build fails if the main Godot scene cannot load.
 
 ## Tracking status
 
-The game currently uses Android motion sensors plus touch peek for PMDD perspective. Front-camera permission/feed detection is prepared, but full native MediaPipe face/iris tracking remains a separate Android-plugin milestone.
+Native PMDD currently uses Android motion sensors plus touch peek. Front-camera permission/feed detection is prepared, but full native MediaPipe face/iris tracking remains a separate Android-plugin milestone.
