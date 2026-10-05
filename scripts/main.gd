@@ -94,6 +94,11 @@ var sound_option_button: Button
 var graphics_option_button: Button
 var pmdd_option_button: Button
 var sensor_option_button: Button
+var dialogue_panel: PanelContainer
+var dialogue_title: Label
+var dialogue_body: Label
+var dialogue_actions: VBoxContainer
+var active_dialogue_npc: int = -1
 var owned_cars: Array = []
 var current_paint: String = ""
 var service_vehicle_index: int = -1
@@ -925,6 +930,36 @@ func _build_ui() -> void:
     interact_button.pressed.connect(_interact)
     layer.add_child(interact_button)
 
+    dialogue_panel = PanelContainer.new()
+    dialogue_panel.position = Vector2(120,1340)
+    dialogue_panel.size = Vector2(840,650)
+    dialogue_panel.visible = false
+    var dsb := StyleBoxFlat.new()
+    dsb.bg_color = Color(0.025,0.055,0.075,0.97)
+    dsb.border_color = Color(0.60,0.92,0.86,0.38)
+    dsb.set_border_width_all(2)
+    dsb.corner_radius_top_left = 24
+    dsb.corner_radius_top_right = 24
+    dsb.corner_radius_bottom_left = 24
+    dsb.corner_radius_bottom_right = 24
+    dialogue_panel.add_theme_stylebox_override("panel",dsb)
+    var dvb := VBoxContainer.new()
+    dvb.add_theme_constant_override("separation",10)
+    dialogue_panel.add_child(dvb)
+    dialogue_title = Label.new()
+    dialogue_title.add_theme_font_size_override("font_size",26)
+    dialogue_title.modulate = Color("#73f3ce")
+    dvb.add_child(dialogue_title)
+    dialogue_body = Label.new()
+    dialogue_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    dialogue_body.add_theme_font_size_override("font_size",18)
+    dialogue_body.custom_minimum_size = Vector2(0,210)
+    dvb.add_child(dialogue_body)
+    dialogue_actions = VBoxContainer.new()
+    dialogue_actions.add_theme_constant_override("separation",8)
+    dvb.add_child(dialogue_actions)
+    layer.add_child(dialogue_panel)
+
     # Full-screen native main menu. Added last so it owns input while visible.
     main_menu_panel = PanelContainer.new()
     main_menu_panel.position = Vector2(70,270)
@@ -1101,7 +1136,7 @@ func _update_player(delta: float) -> void:
     if transit_riding >= 0:
         move_vec = Vector2.ZERO
         return
-    if map_open or missions_open or minigame_open or commerce_panel.visible:
+    if map_open or missions_open or minigame_open or commerce_panel.visible or dialogue_panel.visible:
         vehicle_velocity = move_toward(vehicle_velocity,0.0,delta*320.0)
         return
     if interior_active:
@@ -1340,7 +1375,7 @@ func _scan() -> void:
     _play_sfx("scan")
 
 func _interact() -> void:
-    if map_open or missions_open or minigame_open:
+    if map_open or missions_open or minigame_open or dialogue_panel.visible:
         return
     var n := _nearest_interactable()
     if n.is_empty():
@@ -2125,14 +2160,51 @@ func _draw_story_collectibles() -> void:
 func _talk_named_npc(index: int) -> void:
     if index<0 or index>=named_npcs.size():
         return
+    active_dialogue_npc=index
     var npc: Dictionary = named_npcs[index]
-    npc_flags[str(npc.id)] = true
-    _play_sfx("collect")
-    _notify("%s · %s" % [str(npc.name),str(npc.role)])
-    detail_label.text = str(npc.text)
-    credits += 12
-    _save_game()
-    _advance_native_chapter()
+    dialogue_title.text="%s · %s" % [str(npc.name),str(npc.role)]
+    dialogue_body.text=str(npc.text)
+    for child in dialogue_actions.get_children():
+        child.queue_free()
+    var mission_btn := _commerce_button("MISSION BESPRECHEN",_dialogue_mission)
+    var city_btn := _commerce_button("ÜBER DIE STADT",_dialogue_city)
+    var close_btn := _commerce_button("GESPRÄCH BEENDEN",_close_dialogue)
+    dialogue_actions.add_child(mission_btn)
+    dialogue_actions.add_child(city_btn)
+    dialogue_actions.add_child(close_btn)
+    dialogue_panel.visible=true
+    move_vec=Vector2.ZERO
+
+func _dialogue_mission() -> void:
+    if active_dialogue_npc<0 or active_dialogue_npc>=named_npcs.size():
+        return
+    var npc: Dictionary = named_npcs[active_dialogue_npc]
+    var id := str(npc.id)
+    var hint := {
+        "mira":"Caches reagieren auf die Perspektive. Nutze Karte, Scan und Seitenblick gemeinsam.",
+        "nova":"Die Hafenrouten verbinden Caches, Jobboards und Sublevel-Knoten.",
+        "luna":"Am Solar Grid brauchst du saubere Leitungsorientierung und Geduld an den Kreuzungen.",
+        "iris":"Nach dem Firewall-Hack lohnt sich ein Blick in die Bio-Sublevels.",
+        "vio":"Der Cipher Gate Code gibt nur Positionsfeedback. Jede Vermutung sollte Information gewinnen.",
+        "bram":"Busse und Trams halten nur kurz. Steig am markierten Halt ein und erst am nächsten wieder aus."
+    }.get(id,"Erkunde die markierten POIs und verknüpfe ihre Hinweise.")
+    dialogue_body.text=str(hint)
+    if not bool(npc_flags.get(id,false)):
+        npc_flags[id]=true
+        credits+=12
+        _play_sfx("collect")
+        _save_game()
+        _advance_native_chapter()
+
+func _dialogue_city() -> void:
+    if active_dialogue_npc<0 or active_dialogue_npc>=named_npcs.size():
+        return
+    var npc: Dictionary = named_npcs[active_dialogue_npc]
+    dialogue_body.text="%s: In %s ändern Höhe, Verkehr, Gebäude und POIs den Rhythmus. Die Karte zeigt dir die wichtigsten Ebenen." % [str(npc.name),current_district]
+
+func _close_dialogue() -> void:
+    dialogue_panel.visible=false
+    active_dialogue_npc=-1
 
 func _draw_transit_stops() -> void:
     for st in transit_stops:
@@ -2618,10 +2690,14 @@ func _draw_interior_scene() -> void:
     draw_line(origin+Vector2(250,90),origin+Vector2(250,470),Color(0.45,0.56,0.62,0.30),4.0)
     draw_line(origin+Vector2(650,90),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
     draw_line(origin+Vector2(250,470),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
-    # exit door
+    # proximity-sliding exit door
     var exitp := origin+Vector2(interior_size.x*0.5,interior_size.y-48)
-    draw_rect(Rect2(exitp-Vector2(42,18),Vector2(84,36)),Color(0.08,0.12,0.14,0.92),true)
-    draw_rect(Rect2(exitp-Vector2(42,18),Vector2(84,36)),Color(accent.r,accent.g,accent.b,0.50),false,2.0)
+    var door_near: float = clampf(1.0-interior_player_pos.distance_to(Vector2(interior_size.x*0.5,interior_size.y-48))/135.0,0.0,1.0)
+    draw_rect(Rect2(exitp-Vector2(48,20),Vector2(96,40)),Color(0.04,0.08,0.10,0.94),true)
+    var leaf_offset: float = door_near*32.0
+    draw_rect(Rect2(exitp+Vector2(-46-leaf_offset,-17),Vector2(44,34)),Color(0.16,0.23,0.27,0.95),true)
+    draw_rect(Rect2(exitp+Vector2(2+leaf_offset,-17),Vector2(44,34)),Color(0.16,0.23,0.27,0.95),true)
+    draw_rect(Rect2(exitp-Vector2(48,20),Vector2(96,40)),Color(accent.r,accent.g,accent.b,0.46),false,2.0)
     draw_string(ThemeDB.fallback_font,exitp+Vector2(-32,-6),"EXIT",HORIZONTAL_ALIGNMENT_CENTER,64,12,Color.WHITE)
     if interior_kind == "openai_hq":
         _draw_openai_interior(origin,accent)
@@ -2637,6 +2713,8 @@ func _draw_interior_scene() -> void:
         _draw_home_interior(origin,accent)
     else:
         _draw_shop_interior(origin,accent)
+    _draw_interior_people(origin)
+    _draw_interior_room_labels(origin)
     draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),interior_name,HORIZONTAL_ALIGNMENT_LEFT,420,22,Color(0.94,0.98,0.99,0.92))
 
 func _enter_vertical(index: int) -> void:
@@ -2689,6 +2767,45 @@ func _draw_sublevel_interior(origin: Vector2, accent: Color) -> void:
     draw_rect(Rect2(node-Vector2(42,28),Vector2(84,56)),Color(accent.r,accent.g,accent.b,0.62),false,2.0)
     draw_circle(node,8,accent)
     draw_string(ThemeDB.fallback_font,node+Vector2(-45,50),"UTILITY NODE",HORIZONTAL_ALIGNMENT_CENTER,90,11,Color.WHITE)
+
+func _draw_interior_people(origin: Vector2) -> void:
+    var positions: Array = []
+    if interior_kind in ["restaurant","cafe"]:
+        positions=[Vector2(360,190),Vector2(520,190),Vector2(360,330),Vector2(520,330),Vector2(730,235)]
+    elif interior_kind in ["garage","workshop"]:
+        positions=[Vector2(335,250),Vector2(520,300),Vector2(700,220)]
+    elif interior_kind=="openai_hq":
+        positions=[Vector2(145,205),Vector2(330,330),Vector2(450,330),Vector2(570,330),Vector2(700,350)]
+    elif interior_kind=="shop":
+        positions=[Vector2(680,230),Vector2(340,355)]
+    elif interior_kind=="home":
+        positions=[]
+    else:
+        positions=[Vector2(720,250)]
+    var t := Time.get_ticks_msec()/350.0
+    for i in range(positions.size()):
+        var p: Vector2 = origin+Vector2(positions[i])
+        var bob := sin(t+float(i))*1.2
+        draw_circle(p+Vector2(2,7),6,Color(0,0,0,0.18))
+        draw_line(p+Vector2(0,-5+bob),p+Vector2(0,9+bob),[Color("#8dcfff"),Color("#ff9fc1"),Color("#90dfb8"),Color("#ffd477")][i%4],4.0,true)
+        draw_circle(p+Vector2(0,-10+bob),4.5,[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655")][i%3])
+        var arm := sin(t*1.4+float(i))*3.0
+        draw_line(p+Vector2(0,-1+bob),p+Vector2(arm,5+bob),Color("#c7d3d8"),2.0,true)
+
+func _draw_interior_room_labels(origin: Vector2) -> void:
+    var labels: Array = []
+    if interior_kind=="openai_hq":
+        labels=[["LOBBY",Vector2(70,105)],["VISITOR LAB",Vector2(350,105)],["RESEARCH PODS",Vector2(330,455)]]
+    elif interior_kind in ["garage","workshop"]:
+        labels=[["SERVICE BAY",Vector2(300,105)],["TOOLS",Vector2(665,105)],["DIAGNOSTICS",Vector2(635,430)]]
+    elif interior_kind in ["restaurant","cafe"]:
+        labels=[["DINING",Vector2(320,105)],["KITCHEN",Vector2(675,105)],["LOUNGE",Vector2(330,445)]]
+    elif interior_kind=="shop":
+        labels=[["RETAIL",Vector2(310,105)],["STOCK",Vector2(675,105)],["CHECKOUT",Vector2(620,445)]]
+    elif interior_kind=="home":
+        labels=[["LIVING",Vector2(300,105)],["GARAGE",Vector2(665,105)],["PRIVATE",Vector2(320,445)]]
+    for item in labels:
+        draw_string(ThemeDB.fallback_font,origin+Vector2(item[1]),str(item[0]),HORIZONTAL_ALIGNMENT_LEFT,160,11,Color(0.72,0.84,0.88,0.62))
 
 func _draw_openai_interior(origin: Vector2, accent: Color) -> void:
     # glass lobby + visitor lab pods + bridge gallery
@@ -3223,6 +3340,7 @@ func _return_to_main_menu() -> void:
     minigame_open=false
     game_panel.visible=false
     commerce_panel.visible=false
+    dialogue_panel.visible=false
     map_open=false
     missions_open=false
     main_menu_active=true
