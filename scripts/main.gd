@@ -122,6 +122,7 @@ var selected_save_slot: int = 1
 var new_game_mode: bool = false
 var sound_enabled: bool = true
 var sensor_gain: float = 1.0
+var driving_assist: bool = true
 var graphics_quality: int = 2
 var main_menu_panel: PanelContainer
 var menu_status: Label
@@ -131,6 +132,7 @@ var sound_option_button: Button
 var graphics_option_button: Button
 var pmdd_option_button: Button
 var sensor_option_button: Button
+var drive_option_button: Button
 var dialogue_panel: PanelContainer
 var dialogue_title: Label
 var dialogue_body: Label
@@ -284,11 +286,17 @@ func _input(event: InputEvent) -> void:
         if d.index == move_touch:
             move_now = d.position
             var delta_move := move_now - move_origin
-            move_vec = delta_move.limit_length(72.0) / 72.0
+            var raw_move := delta_move.limit_length(82.0)/82.0
+            if raw_move.length()<0.11:
+                move_vec=Vector2.ZERO
+            else:
+                var mag := pow((raw_move.length()-0.11)/0.89,1.18)
+                move_vec=raw_move.normalized()*clampf(mag,0.0,1.0)
         elif d.index == look_touch:
             look_now = d.position
             var delta_look := look_now - look_origin
-            view_touch = Vector2(delta_look.x, delta_look.y).limit_length(150.0) / 150.0
+            var raw_look := Vector2(delta_look.x,delta_look.y).limit_length(165.0)/165.0
+            view_touch = Vector2.ZERO if raw_look.length()<0.075 else raw_look
     elif event is InputEventKey and event.pressed:
         if event.is_action_pressed("interact"):
             _interact()
@@ -1257,6 +1265,10 @@ func _build_ui() -> void:
     sensor_option_button.custom_minimum_size = Vector2(0,62)
     sensor_option_button.pressed.connect(_cycle_sensor_option)
     options_box.add_child(sensor_option_button)
+    drive_option_button = Button.new()
+    drive_option_button.custom_minimum_size = Vector2(0,62)
+    drive_option_button.pressed.connect(_cycle_drive_assist)
+    options_box.add_child(drive_option_button)
 
     var hint := Label.new()
     hint.text = "3 getrennte Spielstände · Autosave · Karte · Missionen · Optionen"
@@ -1372,7 +1384,8 @@ func _update_player(delta: float) -> void:
         var brake: float = float(VEHICLE_BRAKE.get(cls,350.0)) * _vehicle_tune_multiplier(cls,"brake")
         var handling: float = float(VEHICLE_HANDLING.get(cls,2.2)) * _vehicle_tune_multiplier(cls,"handling")
         var throttle: float = clampf(-move_vec.y,-1.0,1.0)
-        var steer: float = clampf(move_vec.x,-1.0,1.0)
+        var steer_raw: float = clampf(move_vec.x,-1.0,1.0)
+        var steer: float = sign(steer_raw)*pow(abs(steer_raw),1.32)
         var desired_speed: float = max_speed*throttle if throttle>=0.0 else max_speed*0.30*throttle
         var rate: float = accel if abs(desired_speed)>abs(vehicle_velocity) and sign(desired_speed)==sign(vehicle_velocity) else brake
         if abs(throttle)<0.08:
@@ -1380,16 +1393,27 @@ func _update_player(delta: float) -> void:
             rate=105.0
         vehicle_velocity=move_toward(vehicle_velocity,desired_speed,rate*delta)
         var speed_ratio: float = clampf(abs(vehicle_velocity)/maxf(1.0,max_speed),0.0,1.0)
-        var steer_gain: float = handling*(0.28+0.95*speed_ratio)
+        var steer_gain: float = handling*(0.24+0.92*speed_ratio)
         var reverse_sign: float = -1.0 if vehicle_velocity<0.0 else 1.0
         player_heading += steer*steer_gain*delta*reverse_sign
+        if driving_assist and abs(steer)<0.16 and abs(vehicle_velocity)>55.0:
+            var nearest_road: int = _nearest_road_index(player_pos)
+            if nearest_road>=0:
+                var road_tangent := _closest_road_tangent(nearest_road,player_pos)
+                var desired: float = road_tangent.angle()
+                if abs(wrapf(desired-player_heading,-PI,PI))>PI*0.5:
+                    desired=wrapf(desired+PI,-PI,PI)
+                player_heading=lerp_angle(player_heading,desired,minf(1.0,delta*(0.45+speed_ratio*0.75)))
         var velocity := Vector2.from_angle(player_heading)*vehicle_velocity
         var np := player_pos+velocity*delta
         if not _point_blocked(np,18.0) and not _vehicle_dynamic_blocked(np,current_vehicle):
             player_pos=np
         else:
+            var impact_speed: float = abs(vehicle_velocity)
             vehicle_velocity*=-0.06
             _play_sfx("impact")
+            if impact_speed>170.0:
+                _notify("Kollision · Geschwindigkeit reduzieren")
         car["pos"]=player_pos
         car["heading"]=player_heading
         parked_cars[current_vehicle]=car
@@ -1406,6 +1430,20 @@ func _update_player(delta: float) -> void:
     if move_vec.length() > 0.08:
         var drain: float = 0.018 if current_vehicle >= 0 else 0.055
         energy = maxf(0.0,energy-delta*drain*10.0)
+
+func _closest_road_tangent(road_index: int, p: Vector2) -> Vector2:
+    if road_index<0 or road_index>=roads.size():
+        return Vector2.RIGHT
+    var best_t: float = 0.0
+    var best_d: float = INF
+    for n in range(31):
+        var t: float = float(n)/30.0
+        var sample := _sample_polyline(roads[road_index].points,t)
+        var d := sample.distance_to(p)
+        if d<best_d:
+            best_d=d
+            best_t=t
+    return _polyline_tangent(roads[road_index].points,best_t)
 
 func _vehicle_dynamic_blocked(candidate: Vector2, ignore_parked: int = -1) -> bool:
     for i in range(parked_cars.size()):
@@ -4246,6 +4284,11 @@ func _cycle_pmdd_option() -> void:
     _save_options()
     _refresh_option_labels()
 
+func _cycle_drive_assist() -> void:
+    driving_assist=not driving_assist
+    _save_options()
+    _refresh_option_labels()
+
 func _cycle_sensor_option() -> void:
     if sensor_gain<0.8:
         sensor_gain=1.0
@@ -4264,11 +4307,13 @@ func _refresh_option_labels() -> void:
     graphics_option_button.text="Grafik · %s" % qualities[graphics_quality]
     pmdd_option_button.text="PMDD Tiefe · %.2fx" % parallax_strength
     sensor_option_button.text="Sensor-Empfindlichkeit · %.1fx" % sensor_gain
+    if drive_option_button!=null:
+        drive_option_button.text="Fahrhilfe · %s" % ("AN" if driving_assist else "AUS")
 
 func _save_options() -> void:
     var f := FileAccess.open("user://parallaxhunt_options.json",FileAccess.WRITE)
     if f:
-        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain}))
+        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain,"drive_assist":driving_assist}))
 
 func _load_options() -> void:
     if not FileAccess.file_exists("user://parallaxhunt_options.json"):
@@ -4282,6 +4327,7 @@ func _load_options() -> void:
         graphics_quality=clampi(int(d.get("graphics",graphics_quality)),0,2)
         parallax_strength=float(d.get("pmdd",parallax_strength))
         sensor_gain=float(d.get("sensor",sensor_gain))
+        driving_assist=bool(d.get("drive_assist",driving_assist))
 
 func _draw_title_art() -> void:
     var size := get_viewport_rect().size
@@ -4771,6 +4817,7 @@ func _start_race(index: int) -> void:
     var allowed := required==actual or required=="ROAD" and actual in ["ROAD","PERFORMANCE","HYPER"] or required=="PERFORMANCE" and actual in ["PERFORMANCE","HYPER"]
     if not allowed:
         _play_sfx("error")
+        _show_reward_popup("FALSCHE FAHRZEUGKLASSE","%s benötigt %s\nAktuell: %s · %s" % [str(race.name),required,cls.capitalize(),actual],Color("#ff8f7a"))
         _notify("%s benötigt Klasse %s · aktuelles Fahrzeug: %s" % [str(race.name),required,actual])
         return
     active_race={"index":index,"checkpoint":0,"remaining":float(race.limit),"elapsed":0.0}
