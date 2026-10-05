@@ -2184,35 +2184,83 @@ func _draw_district_ground() -> void:
         if not _world_rect_visible(r):
             continue
         var p := _project(r.position)
-        draw_rect(Rect2(p,r.size*world_zoom),d.ground)
+        draw_rect(Rect2(p, r.size), d.ground)
         var accent: Color = d.accent
         accent.a = 0.06
-        var style := str(d.style)
+        var style: String = str(d.style)
+
         if style in ["glass","center","neon"]:
-            for x in range(int(r.position.x)+100,int(r.end.x),280):
-                draw_line(_project(Vector2(x,r.position.y)),_project(Vector2(x,r.end.y)),accent,2.0)
+            for x in range(int(r.position.x)+100, int(r.end.x), 280):
+                var a := _project(Vector2(x,r.position.y))
+                var b := _project(Vector2(x,r.end.y))
+                draw_line(a,b,accent,2.0)
+            for y in range(int(r.position.y)+180,int(r.end.y),420):
+                draw_line(_project(Vector2(r.position.x,y)),_project(Vector2(r.end.x,y)),Color(accent.r,accent.g,accent.b,0.035),1.0)
+
         elif style in ["green","garden"]:
-            for i in range(12):
-                draw_circle(_project(r.position+Vector2(180+i*310,240+(i%3)*220)),36+(i%4)*8,accent)
+            for i in range(14):
+                var cp := _project(r.position + Vector2(180+(i%7)*620, 240+(i/7)*760))
+                draw_circle(cp, 32+(i%4)*9, Color(accent.r,accent.g,accent.b,0.05))
+
         elif style=="air":
-            for y in range(int(r.position.y)+400,int(r.end.y),420):
-                draw_line(_project(Vector2(r.position.x+180,y)),_project(Vector2(r.end.x-180,y)),Color(accent.r,accent.g,accent.b,0.045),3.0)
+            var center_y: float = r.get_center().y
+            for x in range(int(r.position.x)+180,int(r.end.x)-180,260):
+                var c := _project(Vector2(x,center_y))
+                draw_rect(Rect2(c-Vector2(34,4),Vector2(68,8)),Color(0.86,0.90,0.93,0.13),true)
+            draw_line(_project(Vector2(r.position.x+100,center_y-120)),_project(Vector2(r.end.x-100,center_y-120)),Color(1,1,1,0.045),4.0)
+            draw_line(_project(Vector2(r.position.x+100,center_y+120)),_project(Vector2(r.end.x-100,center_y+120)),Color(1,1,1,0.045),4.0)
+
         elif style=="wind":
-            for i in range(10):
-                var q := _project(r.position+Vector2(280+i*470,420+(i%3)*620))
-                draw_arc(q,30,0,TAU,18,Color(accent.r,accent.g,accent.b,0.035),1.5)
+            for i in range(8):
+                var base := _project(r.position+Vector2(420+(i%4)*1100,550+(i/4)*1500))
+                draw_arc(base,55,0,TAU,28,Color(accent.r,accent.g,accent.b,0.055),2.0,true)
+                draw_line(base+Vector2(-40,0),base+Vector2(40,0),Color(accent.r,accent.g,accent.b,0.035),1.0)
+                draw_line(base+Vector2(0,-40),base+Vector2(0,40),Color(accent.r,accent.g,accent.b,0.035),1.0)
+
         elif style=="data":
-            for x in range(int(r.position.x)+180,int(r.end.x),360):
-                for y in range(int(r.position.y)+180,int(r.end.y),360):
-                    draw_circle(_project(Vector2(x,y)),3,Color(accent.r,accent.g,accent.b,0.12))
-        elif style in ["harbor","industry","rail"]:
-            for y in range(int(r.position.y)+220,int(r.end.y),340):
-                draw_line(_project(Vector2(r.position.x+120,y)),_project(Vector2(r.end.x-120,y)),Color(accent.r,accent.g,accent.b,0.035),5.0)
-        elif style in ["coast","canal"]:
-            for y in range(int(r.position.y)+260,int(r.end.y),460):
-                var a := _project(Vector2(r.position.x+140,y))
-                var b := _project(Vector2(r.end.x-140,y+70))
-                draw_line(a,b,Color(accent.r,accent.g,accent.b,0.045),2.0)
+            for gx in range(0,7):
+                for gy in range(0,5):
+                    var q := _project(r.position+Vector2(260+gx*720,260+gy*650))
+                    draw_rect(Rect2(q-Vector2(18,18),Vector2(36,36)),Color(accent.r,accent.g,accent.b,0.045),false,1.0)
+                    if (gx+gy)%3==0:
+                        draw_circle(q,3,Color(accent.r,accent.g,accent.b,0.16))
+
+        elif style=="coast":
+            for y in range(int(r.position.y)+260,int(r.end.y),360):
+                var a := _project(Vector2(r.position.x+80,y))
+                var b := _project(Vector2(r.end.x-80,y))
+                draw_line(a,b,Color(accent.r,accent.g,accent.b,0.04),2.0)
+            for i in range(10):
+                var q := _project(r.position+Vector2(240+i*490,520+(i%2)*1200))
+                draw_arc(q,26,0,PI,18,Color(0.72,0.88,0.93,0.06),1.5,true)
+
+        elif style=="rail":
+            for yoff in [620.0,1180.0,2360.0,2920.0]:
+                var a := _project(Vector2(r.position.x+120,r.position.y+yoff))
+                var b := _project(Vector2(r.end.x-120,r.position.y+yoff))
+                draw_line(a,b,Color(0.60,0.58,0.55,0.10),4.0)
+                draw_line(a+Vector2(0,8),b+Vector2(0,8),Color(0.60,0.58,0.55,0.10),4.0)
+                for x in range(0,18):
+                    var t := float(x)/17.0
+                    var c := a.lerp(b,t)
+                    draw_line(c+Vector2(0,-5),c+Vector2(0,13),Color(0.43,0.40,0.38,0.08),2.0)
+
+        elif style in ["industry","harbor"]:
+            for gx in range(6):
+                var q := _project(r.position+Vector2(350+gx*820,420+(gx%2)*1450))
+                draw_rect(Rect2(q-Vector2(48,26),Vector2(96,52)),Color(accent.r,accent.g,accent.b,0.025),false,2.0)
+                draw_line(q+Vector2(-42,0),q+Vector2(42,0),Color(accent.r,accent.g,accent.b,0.035),1.0)
+
+        elif style=="campus":
+            for i in range(10):
+                var q := _project(r.position+Vector2(300+(i%5)*920,480+(i/5)*1750))
+                draw_circle(q,58,Color(accent.r,accent.g,accent.b,0.035))
+                draw_circle(q,20,Color(accent.r,accent.g,accent.b,0.045),false,2.0)
+
+        elif style=="astro":
+            for i in range(24):
+                var q := _project(r.position+Vector2(160+(i*733)%4700,180+(i*947)%3200))
+                draw_circle(q,1.5+(i%3),Color(accent.r,accent.g,accent.b,0.08))
 
 func _draw_water() -> void:
     for w in waters:
@@ -3445,6 +3493,13 @@ func _draw_car_wheels(center: Vector2, f: Vector2, side: Vector2, sz: Vector2) -
         var w2 := axle - side*sz.y*.52
         draw_line(w1-f*4,w1+f*4,Color(0.05,0.05,0.06,0.92),2.4)
         draw_line(w2-f*4,w2+f*4,Color(0.05,0.05,0.06,0.92),2.4)
+
+func draw_ellipse(center: Vector2, radii: Vector2, color: Color) -> void:
+    var pts := PackedVector2Array()
+    for i in range(24):
+        var a := TAU*float(i)/24.0
+        pts.append(center+Vector2(cos(a)*radii.x,sin(a)*radii.y))
+    draw_colored_polygon(pts,color)
 
 func _draw_poly_ellipse(center: Vector2, radii: Vector2, rotation: float, color: Color) -> void:
     var pts := PackedVector2Array()
