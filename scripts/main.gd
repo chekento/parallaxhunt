@@ -2062,7 +2062,7 @@ func _render_slide() -> void:
 
 func _on_slide_cell(index: int) -> void:
     var z := game_current.find(0)
-    var valid := abs(index-z)==3 or (index/3==z/3 and abs(index-z)==1)
+    var valid: bool = abs(index-z)==3 or (int(index/3)==int(z/3) and abs(index-z)==1)
     if not valid:
         return
     var tmp = game_current[index]
@@ -2216,13 +2216,13 @@ func _init_lightsout() -> void:
     _render_lightsout()
 
 func _toggle_light(index: int) -> void:
-    var r := index/4
-    var c := index%4
+    var r: int = int(index/4)
+    var c: int = index%4
     for delta in [Vector2i(0,0),Vector2i(1,0),Vector2i(-1,0),Vector2i(0,1),Vector2i(0,-1)]:
-        var rr := r+delta.x
-        var cc := c+delta.y
+        var rr: int = r+int(delta.x)
+        var cc: int = c+int(delta.y)
         if rr>=0 and rr<4 and cc>=0 and cc<4:
-            var j := rr*4+cc
+            var j: int = rr*4+cc
             game_current[j] = not bool(game_current[j])
 
 func _render_lightsout() -> void:
