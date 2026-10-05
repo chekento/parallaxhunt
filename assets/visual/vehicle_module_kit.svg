@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<rect width="1600" height="900" fill="#0b141c"/><text x="60" y="70" font-family="sans-serif" font-size="38" font-weight="700" fill="#dcecf4">Parallax Hunt — Vehicle Module Kit</text>
+<defs><g id="car"><rect x="-80" y="-36" width="160" height="72" rx="22"/><rect x="-38" y="-27" width="74" height="54" rx="14" fill="#9cdcf2"/><circle cx="65" cy="-18" r="6" fill="#ffe2a5"/><circle cx="65" cy="18" r="6" fill="#ffe2a5"/><circle cx="-65" cy="-18" r="5" fill="#ff726f"/><circle cx="-65" cy="18" r="5" fill="#ff726f"/></g></defs>
+<g font-family="sans-serif" fill="#fff" text-anchor="middle">
+<g transform="translate(230 230)"><g fill="#71b7e1"><use href="#car"/></g><text y="95">Micro</text></g>
+<g transform="translate(590 230) scale(1.18 1)"><g fill="#8e82d8"><use href="#car"/></g><path d="M-72-35h144" stroke="#fff" opacity=".15" stroke-width="4"/></g><text x="590" y="325">Sedan</text>
+<g transform="translate(970 230) scale(1.28 1.12)"><g fill="#a8e9c7"><use href="#car"/></g><path d="M0-34v68" stroke="#fff" opacity=".2" stroke-width="4"/></g><text x="970" y="325">Van</text>
+<g transform="translate(1350 230) scale(1.25 .86)"><g fill="#ff7aa2"><use href="#car"/></g><path d="M-55 33h110" stroke="#13171a" stroke-width="7"/></g><text x="1350" y="325">Sport</text>
+<g transform="translate(220 610)"><rect x="-120" y="-35" width="240" height="70" rx="18" fill="#64d7c1"/><g fill="#aeeafa"><rect x="-90" y="-22" width="34" height="44"/><rect x="-45" y="-22" width="34" height="44"/><rect x="0" y="-22" width="34" height="44"/><rect x="45" y="-22" width="34" height="44"/></g><text y="90">Bus</text></g>
+<g transform="translate(650 610)"><rect x="-150" y="-30" width="300" height="60" rx="12" fill="#e66a84"/><g fill="#aeeafa"><rect x="-120" y="-20" width="30" height="40"/><rect x="-75" y="-20" width="30" height="40"/><rect x="-30" y="-20" width="30" height="40"/><rect x="15" y="-20" width="30" height="40"/><rect x="60" y="-20" width="30" height="40"/></g><path d="M0-30v-45l30-20" stroke="#8b969e" stroke-width="6" fill="none"/><text y="90">Tram</text></g>
+<g transform="translate(1150 570)" stroke="#dcecf4" fill="none"><circle r="120" opacity=".15"/><path d="M0-120v240M-120 0h240M-85-85 85 85M85-85-85 85" opacity=".25"/><g fill="#73f3ce" stroke="none"><path d="M0-90 30-40 20 40 0 90-20 40-30-40z"/></g><text x="0" y="160" fill="#fff" stroke="none" font-family="sans-serif">8-direction silhouette target</text></g>
+</g></svg>
