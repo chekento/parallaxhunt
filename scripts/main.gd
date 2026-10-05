@@ -17,6 +17,7 @@ var traffic: Array = []
 var street_lights: Array = []
 var street_props: Array = []
 var pedestrians: Array = []
+var transit_vehicles: Array = []
 var fragments: Array = []
 var secrets: Array = []
 var camera_pos := Vector2.ZERO
@@ -63,6 +64,7 @@ func _ready() -> void:
     _generate_city()
     _generate_traffic()
     _generate_visual_props()
+    _generate_transit()
     _generate_collectibles()
     _build_ui()
     _build_audio()
@@ -77,6 +79,7 @@ func _process(delta: float) -> void:
     _update_player(delta)
     _update_traffic(delta)
     _update_pedestrians(delta)
+    _update_transit(delta)
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
     view_amount = view_amount.lerp((sensor_view * 0.72 + view_touch * 0.95).limit_length(1.0), minf(1.0, delta * 8.0))
@@ -195,7 +198,10 @@ func _generate_city() -> void:
             var h := rng.randf_range(45, 125)
             if district.style in ["glass", "center", "neon"]:
                 h += rng.randf_range(45, 165)
-            buildings.append({"rect":rect, "height":h, "wall":district.wall, "roof":district.roof, "accent":district.accent, "style":district.style, "seed":rng.randi(), "floors":maxi(2, int(h / 28.0))})
+            var massing: String = ["slab","tower","terrace","courtyard"][rng.randi_range(0,3)]
+            var facade_mode: String = ["windows","striped","balconies","mixed"][rng.randi_range(0,3)]
+            var roof_mode: String = ["flat","utility","garden","pitched","solar"][rng.randi_range(0,4)]
+            buildings.append({"rect":rect, "height":h, "wall":district.wall, "roof":district.roof, "accent":district.accent, "style":district.style, "seed":rng.randi(), "floors":maxi(2, int(h / 28.0)), "massing":massing, "facade":facade_mode, "roof_mode":roof_mode})
         var tree_count := 80 if district.style in ["green", "garden"] else 26
         for _j in range(tree_count):
             var tp := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
@@ -259,7 +265,37 @@ func _generate_visual_props() -> void:
             "reverse":rng.randf()<0.5,
             "side":-1.0 if rng.randf()<0.5 else 1.0,
             "color":[Color("#eef4f7"),Color("#ffbf9a"),Color("#a8c7ff"),Color("#ff9fc1"),Color("#90dfb8")][rng.randi_range(0,4)],
+            "skin":[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655"),Color("#7b4f3d")][rng.randi_range(0,3)],
+            "hair":[Color("#30251f"),Color("#6a4b30"),Color("#d8b77d"),Color("#22252c"),Color("#8d4a38")][rng.randi_range(0,4)],
+            "role":["commuter","student","worker","shopper","runner"][rng.randi_range(0,4)],
+            "bag":rng.randf() < 0.36,
             "phase":rng.randf_range(0,TAU)
+        })
+
+
+func _generate_transit() -> void:
+    transit_vehicles.clear()
+    var bus_routes := [0, 5, 8, 12]
+    for i in range(bus_routes.size()):
+        transit_vehicles.append({
+            "kind":"bus",
+            "road":bus_routes[i] % roads.size(),
+            "t":float(i) * 0.23,
+            "speed":0.010 + float(i) * 0.0015,
+            "reverse":i % 2 == 1,
+            "color":[Color("#64d7c1"),Color("#f0b45f"),Color("#7ab8ff"),Color("#c79bff")][i % 4],
+            "line":"B%d" % (12 + i * 4)
+        })
+    var tram_routes := [1, 7, 10]
+    for i in range(tram_routes.size()):
+        transit_vehicles.append({
+            "kind":"tram",
+            "road":tram_routes[i] % roads.size(),
+            "t":0.15 + float(i) * 0.29,
+            "speed":0.008 + float(i) * 0.0012,
+            "reverse":i % 2 == 0,
+            "color":[Color("#e66a84"),Color("#67cde8"),Color("#f0d36d")][i % 3],
+            "line":"T%d" % (2 + i)
         })
 
 func _generate_collectibles() -> void:
@@ -452,6 +488,14 @@ func _update_pedestrians(delta: float) -> void:
         p.phase = fposmod(float(p.phase) + delta * 5.0, TAU)
         pedestrians[i] = p
 
+
+func _update_transit(delta: float) -> void:
+    for i in range(transit_vehicles.size()):
+        var tveh = transit_vehicles[i]
+        var direction := -1.0 if tveh.reverse else 1.0
+        tveh.t = fposmod(float(tveh.t) + float(tveh.speed) * delta * direction, 1.0)
+        transit_vehicles[i] = tveh
+
 func _update_secrets() -> void:
     for i in range(secrets.size()):
         var s = secrets[i]
@@ -561,6 +605,7 @@ func _draw() -> void:
     _draw_street_props()
     _draw_pedestrians()
     _draw_traffic()
+    _draw_transit()
     _draw_parked_cars()
     _draw_collectibles()
     _draw_player()
@@ -665,66 +710,79 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
     if height_vec.length() < 5.0:
         return
     var floors: int = int(b.get("floors",4))
-    var cols := 5
+    var face_len := a.distance_to(bb)
+    var cols := 4
+    if face_len > 220.0:
+        cols = 6
+    elif face_len < 110.0:
+        cols = 3
     var face_alpha := clampf(height_vec.length()/70.0,0.0,1.0)
-    var window_color := Color("#ffdca0") if b.style in ["heritage","harbor"] else Color("#9cddff")
+    var facade := str(b.get("facade","windows"))
+    var window_color := Color("#ffdca0") if b.style in ["heritage","harbor","terminal"] else Color("#9cddff")
     if b.style == "neon":
-        window_color = b.accent
-    window_color.a = 0.20 + face_alpha*0.28
-    for fy in range(1, mini(floors,8)):
-        var v := float(fy)/float(mini(floors,8))
-        var l := a.lerp(d,v)
-        var rr := bb.lerp(c,v)
-        draw_line(l,rr,Color(1,1,1,0.045),1.0)
-    for row in range(1, mini(floors,7)):
+        window_color = b.accent.lightened(0.12)
+    window_color.a = 0.18 + face_alpha*0.25
+    var max_rows := mini(floors,8)
+    for fy in range(1,max_rows):
+        var v := float(fy)/float(max_rows)
+        draw_line(a.lerp(d,v),bb.lerp(c,v),Color(1,1,1,0.045),1.0)
+    for row in range(1,mini(floors,7)):
         var v0 := float(row)/float(mini(floors,7)+1)
         for col in range(cols):
-            if (int(b.seed) + row*7 + col*13 + edge*17) % 5 == 0:
+            if (int(b.seed) + row*7 + col*13 + edge*17) % 6 == 0:
                 continue
             var u := (float(col)+0.5)/float(cols)
             var center := _quad_bilerp(a,bb,c,d,u,v0)
-            var along := (bb-a).normalized() * 5.0
+            var along := (bb-a).normalized() * clampf(face_len / float(cols) * 0.18,5.0,10.0)
             var up := (d-a).normalized() * 3.5
-            var wpoly := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
-            draw_colored_polygon(wpoly,window_color)
+            if facade == "striped":
+                draw_line(center-along,center+along,window_color,2.8)
+            elif facade == "balconies":
+                var balcony_color := Color(window_color.r,window_color.g,window_color.b,0.10)
+                var bp := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
+                draw_colored_polygon(bp,balcony_color)
+                draw_line(center-along*1.15+up,center+along*1.15+up,Color(1,1,1,0.12),1.1)
+            else:
+                var wpoly := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
+                draw_colored_polygon(wpoly,window_color)
+                if facade == "mixed" and (row+col+edge+int(b.seed)) % 3 == 0:
+                    draw_line(center-along*0.8,center+along*0.8,Color(1,1,1,0.12),1.0)
     if b.style == "heritage":
         var sill := a.lerp(d,0.18)
         draw_line(sill,bb.lerp(c,0.18),Color("#e5b889"),2.0)
+        draw_line(a.lerp(d,0.72),bb.lerp(c,0.72),Color(0.95,0.76,0.58,0.11),2.0)
     elif b.style in ["glass","center"]:
         for u_i in range(1,4):
-            var u := float(u_i)/4.0
-            draw_line(a.lerp(bb,u),d.lerp(c,u),Color(0.65,0.90,1.0,0.10+face_alpha*0.08),1.5)
+            var uu := float(u_i)/4.0
+            draw_line(a.lerp(bb,uu),d.lerp(c,uu),Color(0.65,0.90,1.0,0.10+face_alpha*0.08),1.5)
     elif b.style == "neon":
-        var mid1 := a.lerp(d,0.55)
-        var mid2 := bb.lerp(c,0.55)
-        draw_line(mid1,mid2,Color(b.accent.r,b.accent.g,b.accent.b,0.55),2.5)
+        draw_line(a.lerp(d,0.55),bb.lerp(c,0.55),Color(b.accent.r,b.accent.g,b.accent.b,0.55),2.5)
     elif b.style in ["green","garden"]:
-        var ledge1 := a.lerp(d,0.32)
-        var ledge2 := bb.lerp(c,0.32)
-        draw_line(ledge1,ledge2,Color(0.48,0.83,0.55,0.34),3.0)
+        draw_line(a.lerp(d,0.32),bb.lerp(c,0.32),Color(0.48,0.83,0.55,0.34),3.0)
 
 func _draw_roof_detail(b: Dictionary, top: Array) -> void:
     var center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
     var style: String = b.style
-    if style == "heritage":
+    var roof_mode := str(b.get("roof_mode","flat"))
+    if style == "heritage" or roof_mode == "pitched":
         var ridge_a := top[0].lerp(top[3],0.5)
         var ridge_b := top[1].lerp(top[2],0.5)
         draw_line(ridge_a,ridge_b,Color(1.0,0.82,0.61,0.24),3.0,true)
         draw_circle(center,6,Color("#b78d70"))
-    elif style in ["glass","center"]:
+    if style in ["glass","center"] or roof_mode == "utility":
         draw_rect(Rect2(center-Vector2(15,8),Vector2(30,16)),Color(0.48,0.77,0.88,0.22),true)
         draw_line(center,center+Vector2(0,-22),Color(b.accent.r,b.accent.g,b.accent.b,0.45),2.0,true)
         draw_circle(center+Vector2(0,-24),3.5,Color(b.accent.r,b.accent.g,b.accent.b,0.7))
-    elif style == "solar":
+    if style == "solar" or roof_mode == "solar":
         for ix in [-1,0,1]:
             var q := center + Vector2(ix*18,-3)
             draw_rect(Rect2(q-Vector2(7,5),Vector2(14,10)),Color(0.16,0.30,0.38,0.9),true)
             draw_rect(Rect2(q-Vector2(7,5),Vector2(14,10)),Color("#f1e36f"),false,1.0)
-    elif style in ["green","garden"]:
+    if style in ["green","garden"] or roof_mode == "garden":
         draw_circle(center+Vector2(-12,0),9,Color(0.28,0.58,0.34,0.75))
         draw_circle(center+Vector2(11,2),8,Color(0.35,0.68,0.40,0.72))
         draw_rect(Rect2(center+Vector2(-4,-12),Vector2(8,24)),Color(0.58,0.44,0.29,0.55),true)
-    elif style == "harbor":
+    if style == "harbor":
         draw_rect(Rect2(center-Vector2(18,7),Vector2(36,14)),Color(0.16,0.20,0.22,0.85),true)
         draw_line(center+Vector2(15,-3),center+Vector2(15,-22),Color("#ffb66f"),2.0)
     elif style == "neon":
@@ -835,15 +893,30 @@ func _draw_pedestrians() -> void:
         var normal := Vector2(-tan.y,tan.x)
         pos += normal * (float(rd.width)*0.5 + 18.0) * float(ped.side)
         var base := _project(pos,0)
-        var head := _project(pos,17)
-        var bob := sin(float(ped.phase))*1.8
+        var pelvis := _project(pos,10)
+        var head := _project(pos,19)
+        var phase := float(ped.phase)
+        var bob := sin(phase)*1.4
         head.y += bob
+        pelvis.y += bob*0.5
         draw_circle(base+Vector2(2,5),5.5,Color(0,0,0,0.18))
-        draw_line(head+Vector2(0,5),head+Vector2(0,13),ped.color,4.0,true)
-        draw_circle(head,4.4,Color("#f1c7a8"))
-        var swing := sin(float(ped.phase))*4.0
-        draw_line(head+Vector2(0,7),head+Vector2(swing,12),ped.color.darkened(0.15),2.0)
-        draw_line(head+Vector2(0,12),head+Vector2(-swing,18),Color("#83919b"),2.0)
+        var swing := sin(phase)*4.0
+        var side_dir := normal.normalized()
+        draw_line(pelvis+Vector2(0,1),pelvis+Vector2(swing*0.35,9),ped.color,4.0,true)
+        draw_line(pelvis+Vector2(-2,7),pelvis+Vector2(-swing,15),Color("#7b8790"),2.3,true)
+        draw_line(pelvis+Vector2(2,7),pelvis+Vector2(swing,15),Color("#697783"),2.3,true)
+        draw_line(pelvis+Vector2(0,2),pelvis+Vector2(swing*0.8,-3),ped.color.darkened(0.12),2.2,true)
+        draw_circle(head,4.8,ped.skin)
+        draw_arc(head+Vector2(0,-1),4.7,PI,TAU,12,ped.hair,2.4,true)
+        if ped.role == "runner":
+            draw_line(pelvis+Vector2(-4,2),pelvis+Vector2(4,2),Color("#73f3ce"),1.4)
+        elif ped.role == "worker":
+            draw_rect(Rect2(pelvis+Vector2(-4,-1),Vector2(8,3)),Color("#ffd46d"),true)
+        elif ped.role == "student":
+            draw_circle(pelvis+side_dir*5.0,3.0,Color("#88a9d9"))
+        if ped.bag:
+            var bag_pos := pelvis + side_dir*5.5 + Vector2(0,2)
+            draw_rect(Rect2(bag_pos-Vector2(2.5,2.5),Vector2(5,6)),Color("#5f4f47"),true)
 
 func _draw_traffic() -> void:
     for c in traffic:
@@ -856,6 +929,52 @@ func _draw_traffic() -> void:
         if c.reverse:
             tangent *= -1
         _draw_car(pos,tangent.angle(),c["class"],c.color,false)
+
+func _draw_transit() -> void:
+    for tv in transit_vehicles:
+        var rd = roads[tv.road]
+        var tt: float = tv.t
+        var pos := _sample_polyline(rd.points,tt)
+        if player_pos.distance_to(pos) > 1900.0:
+            continue
+        var tangent := _polyline_tangent(rd.points,tt)
+        if tv.reverse:
+            tangent *= -1.0
+        _draw_transit_vehicle(pos,tangent.angle(),tv)
+
+func _draw_transit_vehicle(pos: Vector2, heading: float, tv: Dictionary) -> void:
+    var center := _project(pos,10)
+    var f := Vector2.from_angle(heading)
+    var side := Vector2(-f.y,f.x)
+    var is_tram := tv.kind == "tram"
+    var length := 88.0 if is_tram else 74.0
+    var width := 24.0 if is_tram else 27.0
+    draw_ellipse(center+Vector2(5,8),Vector2(length*0.50,width*0.48),heading,Color(0,0,0,0.19))
+    var pts := PackedVector2Array([
+        center+f*length*0.5+side*width*0.48,
+        center+f*length*0.5-side*width*0.48,
+        center-f*length*0.5-side*width*0.48,
+        center-f*length*0.5+side*width*0.48
+    ])
+    draw_colored_polygon(pts,tv.color)
+    draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.20),1.3,true)
+    var glass_col := Color(0.55,0.84,0.94,0.72)
+    for k in range(-3,4):
+        var q := center + f*float(k)*9.0
+        draw_line(q-side*width*0.31,q+side*width*0.31,glass_col,5.0,true)
+    var nose := center+f*length*0.45
+    draw_circle(nose+side*width*0.23,2.8,Color("#ffe6a8"))
+    draw_circle(nose-side*width*0.23,2.8,Color("#ffe6a8"))
+    if is_tram:
+        draw_line(center-f*18,center+f*18,Color(1,1,1,0.12),1.0)
+        var mast := center+Vector2(0,-4)
+        draw_line(mast,mast+Vector2(0,-17),Color("#4f5960"),2.0)
+        draw_line(mast+Vector2(0,-17),mast+Vector2(10,-24),Color("#6d777e"),2.0)
+        draw_line(center-side*width*0.48,center+side*width*0.48,Color(0.10,0.12,0.14,0.48),2.0)
+    else:
+        draw_line(center+f*9-side*width*0.48,center+f*9+side*width*0.48,Color(1,1,1,0.16),2.0)
+        draw_rect(Rect2(center+f*22-side*width*0.47-Vector2(4,6),Vector2(8,12)),Color(0.12,0.15,0.18,0.55),true)
+    draw_string(ThemeDB.fallback_font,center-f*2+Vector2(-18,-21),str(tv.line),HORIZONTAL_ALIGNMENT_CENTER,36,11,Color.WHITE)
 
 func _draw_parked_cars() -> void:
     for i in range(parked_cars.size()):
@@ -871,18 +990,23 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
     var side := Vector2(-f.y,f.x)
-    var shadow := center + Vector2(4,7)
-    draw_ellipse(shadow,Vector2(sz.x*.50,sz.y*.42),heading,Color(0,0,0,0.18))
-    var nose := 0.56 if cls=="sport" else 0.50
-    var pts := PackedVector2Array([center+f*sz.x*nose+side*sz.y*.42,center+f*sz.x*nose-side*sz.y*.42,center-f*sz.x*.48-side*sz.y*.5,center-f*sz.x*.48+side*sz.y*.5])
+    draw_ellipse(center+Vector2(4,7),Vector2(sz.x*.52,sz.y*.42),heading,Color(0,0,0,0.18))
+    var nose := 0.58 if cls=="sport" else (0.50 if cls!="micro" else 0.52)
+    var rear := 0.46 if cls=="micro" else 0.50
+    var pts := PackedVector2Array([
+        center+f*sz.x*nose+side*sz.y*.43,
+        center+f*sz.x*nose-side*sz.y*.43,
+        center-f*sz.x*rear-side*sz.y*.50,
+        center-f*sz.x*rear+side*sz.y*.50
+    ])
     draw_colored_polygon(pts,color)
     draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.20),1.2,true)
-    var cabin_center := center - f*(2.0 if cls=="sport" else 0.0)
-    var cabin_len := sz.x*.22 if cls=="micro" else sz.x*.28
-    var wind_a := cabin_center+f*cabin_len+side*sz.y*.30
-    var wind_b := cabin_center+f*cabin_len-side*sz.y*.30
-    var wind_c := cabin_center-f*cabin_len-side*sz.y*.30
-    var wind_d := cabin_center-f*cabin_len+side*sz.y*.30
+    var cabin_center := center - f*(3.0 if cls=="sport" else 0.0)
+    var cabin_len := sz.x*(0.20 if cls=="micro" else (0.30 if cls=="van" else 0.26))
+    var wind_a := cabin_center+f*cabin_len+side*sz.y*.29
+    var wind_b := cabin_center+f*cabin_len-side*sz.y*.29
+    var wind_c := cabin_center-f*cabin_len-side*sz.y*.29
+    var wind_d := cabin_center-f*cabin_len+side*sz.y*.29
     draw_colored_polygon(PackedVector2Array([wind_a,wind_b,wind_c,wind_d]),Color(0.58,0.82,0.92,0.72))
     draw_line(wind_a,wind_b,Color(1,1,1,0.24),1.0)
     var front_l := center+f*sz.x*.49+side*sz.y*.25
@@ -893,13 +1017,34 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     var rear_r := center-f*sz.x*.45-side*sz.y*.25
     draw_circle(rear_l,2.2,Color("#ff726f"))
     draw_circle(rear_r,2.2,Color("#ff726f"))
+    _draw_car_wheels(center,f,side,sz)
     if cls == "van":
-        draw_line(center-f*6-side*sz.y*.45,center-f*6+side*sz.y*.45,Color(1,1,1,0.16),1.5)
+        draw_line(center-f*7-side*sz.y*.44,center-f*7+side*sz.y*.44,Color(1,1,1,0.16),1.5)
+        draw_line(center+side*sz.y*.49-f*6,center+side*sz.y*.49+f*10,Color(0.16,0.18,0.20,0.62),2.0)
+        draw_line(center-side*sz.y*.49-f*6,center-side*sz.y*.49+f*10,Color(0.16,0.18,0.20,0.62),2.0)
     elif cls == "sport":
-        draw_line(center-f*sz.x*.35-side*sz.y*.48,center-f*sz.x*.35+side*sz.y*.48,Color(0.06,0.08,0.10,0.6),2.0)
+        draw_line(center-f*sz.x*.35-side*sz.y*.49,center-f*sz.x*.35+side*sz.y*.49,Color(0.05,0.07,0.09,0.64),2.2)
+        draw_line(center+f*sz.x*.20-side*sz.y*.28,center+f*sz.x*.29-side*sz.y*.12,Color(1,1,1,0.15),1.0)
+    elif cls == "micro":
+        draw_line(center-f*2-side*sz.y*.37,center-f*2+side*sz.y*.37,Color(1,1,1,0.16),1.2)
+    else:
+        draw_line(center+side*sz.y*.44,center-side*sz.y*.44,Color(1,1,1,0.10),1.0)
+    var livery := int(abs(pos.x+pos.y)) % 13
+    if livery == 0:
+        draw_line(center-f*sz.x*.10-side*sz.y*.45,center-f*sz.x*.10+side*sz.y*.45,Color(0.98,0.88,0.34,0.58),2.0)
+    elif livery == 1:
+        draw_line(center-f*sz.x*.28,center+f*sz.x*.30,Color(1,1,1,0.16),1.2)
     if not parked:
-        var tail := center - f * sz.x*.62
+        var tail := center - f*sz.x*.62
         draw_line(tail,tail-f*24,Color(0.35,0.85,1.0,0.10),4.0,true)
+
+func _draw_car_wheels(center: Vector2, f: Vector2, side: Vector2, sz: Vector2) -> void:
+    for ax in [0.28,-0.28]:
+        var axle := center + f*sz.x*float(ax)
+        var w1 := axle + side*sz.y*.52
+        var w2 := axle - side*sz.y*.52
+        draw_line(w1-f*4,w1+f*4,Color(0.05,0.05,0.06,0.92),2.4)
+        draw_line(w2-f*4,w2+f*4,Color(0.05,0.05,0.06,0.92),2.4)
 
 func draw_ellipse(center: Vector2, radii: Vector2, rotation: float, color: Color) -> void:
     var pts := PackedVector2Array()
