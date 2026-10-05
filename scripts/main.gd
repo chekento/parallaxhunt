@@ -238,6 +238,7 @@ func _process(delta: float) -> void:
         _update_secrets()
         _update_district()
         _check_npc_contract()
+        _check_active_job_progress()
     _update_ui()
     queue_redraw()
 
@@ -1648,7 +1649,7 @@ func _update_ui() -> void:
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
     elif not active_job.is_empty():
-        detail_label.text = "Nebenjob: %s · Ziel auf der Karte markiert." % str(active_job.get("title","Auftrag"))
+        detail_label.text = "Stadtauftrag: %s · %d CR · Ziel auf Karte/Kompass." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0))]
     else:
         detail_label.text = "Links bewegen · rechts Perspektive · MAP/MISSIONS für Übersicht."
     var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
@@ -1864,7 +1865,7 @@ func _nearest_interactable() -> Dictionary:
         if dt < 115.0 and dt < bd:
             best = {"type":"transit","index":ti,"action":"EINSTEIGEN %s" % str(tv.line)}
             bd = dt
-    if not active_job.is_empty():
+    if not active_job.is_empty() and str(active_job.get("kind","delivery"))=="delivery":
         var target_pos: Vector2 = Vector2(active_job.get("target",Vector2.ZERO))
         var djob: float = player_pos.distance_to(target_pos)
         if djob < 105.0 and djob < bd:
@@ -1959,19 +1960,35 @@ func _draw_district_ground() -> void:
         if not _world_rect_visible(r):
             continue
         var p := _project(r.position)
-        draw_rect(Rect2(p, r.size), d.ground)
+        draw_rect(Rect2(p,r.size*world_zoom),d.ground)
         var accent: Color = d.accent
         accent.a = 0.06
-        if d.style in ["glass","center","neon"]:
-            for x in range(int(r.position.x)+100, int(r.end.x), 280):
-                var a := _project(Vector2(x,r.position.y))
-                var b := _project(Vector2(x,r.end.y))
-                draw_line(a,b,accent,2.0)
-        elif d.style in ["green","garden"]:
+        var style := str(d.style)
+        if style in ["glass","center","neon"]:
+            for x in range(int(r.position.x)+100,int(r.end.x),280):
+                draw_line(_project(Vector2(x,r.position.y)),_project(Vector2(x,r.end.y)),accent,2.0)
+        elif style in ["green","garden"]:
             for i in range(12):
-                var cp := _project(r.position + Vector2(180+i*310, 240+(i%3)*220))
-                draw_circle(cp, 36+(i%4)*8, accent)
-
+                draw_circle(_project(r.position+Vector2(180+i*310,240+(i%3)*220)),36+(i%4)*8,accent)
+        elif style=="air":
+            for y in range(int(r.position.y)+400,int(r.end.y),420):
+                draw_line(_project(Vector2(r.position.x+180,y)),_project(Vector2(r.end.x-180,y)),Color(accent.r,accent.g,accent.b,0.045),3.0)
+        elif style=="wind":
+            for i in range(10):
+                var q := _project(r.position+Vector2(280+i*470,420+(i%3)*620))
+                draw_arc(q,30,0,TAU,18,Color(accent.r,accent.g,accent.b,0.035),1.5)
+        elif style=="data":
+            for x in range(int(r.position.x)+180,int(r.end.x),360):
+                for y in range(int(r.position.y)+180,int(r.end.y),360):
+                    draw_circle(_project(Vector2(x,y)),3,Color(accent.r,accent.g,accent.b,0.12))
+        elif style in ["harbor","industry","rail"]:
+            for y in range(int(r.position.y)+220,int(r.end.y),340):
+                draw_line(_project(Vector2(r.position.x+120,y)),_project(Vector2(r.end.x-120,y)),Color(accent.r,accent.g,accent.b,0.035),5.0)
+        elif style in ["coast","canal"]:
+            for y in range(int(r.position.y)+260,int(r.end.y),460):
+                var a := _project(Vector2(r.position.x+140,y))
+                var b := _project(Vector2(r.end.x-140,y+70))
+                draw_line(a,b,Color(accent.r,accent.g,accent.b,0.045),2.0)
 
 func _draw_water() -> void:
     for w in waters:
@@ -1980,14 +1997,14 @@ func _draw_water() -> void:
             continue
         var p := _project(r.position)
         var tint: Color = w.tint
-        draw_rect(Rect2(p,r.size),tint.darkened(0.18))
+        draw_rect(Rect2(p,r.size*world_zoom),tint.darkened(0.18))
         var shimmer := Time.get_ticks_msec() / 900.0
-        for yy in range(26, int(r.size.y)-20, 54):
+        for yy in range(26,int(r.size.y*world_zoom)-20,54):
             var y := p.y + yy
             var phase := shimmer + float(yy) * 0.025
             var start := p.x + 18 + sin(phase) * 12
-            draw_line(Vector2(start,y),Vector2(p.x+r.size.x-20,y+sin(phase*1.7)*4),Color(tint.r+0.12,tint.g+0.18,tint.b+0.22,0.24),2.0,true)
-        draw_rect(Rect2(p+Vector2(3,3),r.size-Vector2(6,6)),Color(0.55,0.85,1.0,0.10),false,3.0)
+            draw_line(Vector2(start,y),Vector2(p.x+r.size.x*world_zoom-20,y+sin(phase*1.7)*4),Color(tint.r+0.12,tint.g+0.18,tint.b+0.22,0.24),2.0,true)
+        draw_rect(Rect2(p+Vector2(3,3),r.size*world_zoom-Vector2(6,6)),Color(0.55,0.85,1.0,0.10),false,3.0)
 
 func _draw_roads() -> void:
     for road in roads:
@@ -2064,7 +2081,7 @@ func _draw_parks() -> void:
         if not _world_rect_visible(r):
             continue
         var p := _project(r.position)
-        draw_rect(Rect2(p,r.size),Color("#173d2b"))
+        draw_rect(Rect2(p,r.size*world_zoom),Color("#173d2b"))
         var path := PackedVector2Array([p+Vector2(30,r.size.y*.28),p+Vector2(r.size.x*.32,50),p+Vector2(r.size.x*.58,r.size.y*.73),p+Vector2(r.size.x-40,r.size.y*.52)])
         draw_polyline(path,Color(0.85,0.82,0.62,0.20),12.0,true)
         var c := p + r.size * 0.5
@@ -4249,16 +4266,20 @@ func _deserialize_contract(c: Dictionary) -> Dictionary:
 func _serialize_job(job: Dictionary) -> Dictionary:
     if job.is_empty():
         return {}
-    var t: Vector2 = Vector2(job.get("target",Vector2.ZERO))
-    return {"title":str(job.get("title","Auftrag")),"target":[t.x,t.y],"pay":int(job.get("pay",0))}
+    var out := job.duplicate(true)
+    if out.has("target") and out.target is Vector2:
+        var t: Vector2 = Vector2(out.target)
+        out["target"]=[t.x,t.y]
+    return out
 
 func _deserialize_job(job: Dictionary) -> Dictionary:
     if job.is_empty():
         return {}
-    var target = job.get("target",[])
+    var out := job.duplicate(true)
+    var target = out.get("target",[])
     if target is Array and target.size()>=2:
-        return {"title":str(job.get("title","Auftrag")),"target":Vector2(float(target[0]),float(target[1])),"pay":int(job.get("pay",0))}
-    return {}
+        out["target"]=Vector2(float(target[0]),float(target[1]))
+    return out
 
 func _commerce_button(label_text: String, callback: Callable) -> Button:
     var b := Button.new()
@@ -4409,18 +4430,81 @@ func _spawn_owned_car(index: int) -> void:
 
 func _open_jobboard(index: int) -> void:
     if not active_job.is_empty():
-        _notify("Aktiver Auftrag läuft bereits.")
+        _notify("Aktiver Stadtauftrag läuft bereits.")
         return
     if index<0 or index>=side_job_sites.size():
         return
     var source: Vector2 = Vector2(side_job_sites[index].pos)
-    var targets := [Vector2(23800,1600),Vector2(13200,6150),Vector2(7900,12600),Vector2(18400,9100),Vector2(4200,15100),Vector2(23200,15100)]
-    var target: Vector2 = targets[rng.randi_range(0,targets.size()-1)]
-    var km_factor: float = source.distance_to(target)/1000.0
-    var pay: int = clampi(int(55.0+km_factor*13.0),60,190)
-    active_job={"title":"Stadtlieferung","target":target,"pay":pay}
-    _notify("Nebenjob angenommen · %d CR" % pay)
+    var type_roll: int = (jobs_done+index+rng.randi_range(0,4))%5
+    if type_roll==0:
+        var targets := [Vector2(23800,1600),Vector2(13200,6150),Vector2(7900,12600),Vector2(18400,9100),Vector2(4200,15100),Vector2(23200,15100)]
+        var target: Vector2 = targets[rng.randi_range(0,targets.size()-1)]
+        var km_factor: float = source.distance_to(target)/1000.0
+        var pay: int = clampi(int(55.0+km_factor*13.0),60,190)
+        active_job={"kind":func _complete_side_job() -> void:
+    if active_job.is_empty():
+        return
+    var pay: int = int(active_job.get("pay",60))
+    credits += pay
+    jobs_done += 1
+    var title: String = str(active_job.get("title","Auftrag"))
+    active_job={}
+    _play_sfx("secret")
+    _notify("%s erledigt · +%d Credits" % [title,pay])
     _save_game()
+    _advance_native_chapter()
+
+func _next_photo_target() -> Vector2:
+    for ph in photo_points:
+        if not bool(ph.taken):
+            return Vector2(ph.pos)
+    return Vector2.ZERO
+
+func _next_hack_replay_target() -> Vector2:
+    for m in mission_sites:
+        if bool(hack_done.get(str(m.id),false)):
+            return Vector2(m.pos)
+    for m in mission_sites:
+        if not bool(hack_done.get(str(m.id),false)):
+            return Vector2(m.pos)
+    return Vector2.ZERO
+
+func _nearest_transit_stop_pos(from: Vector2) -> Vector2:
+    var best := INF
+    var out := Vector2.ZERO
+    for st in transit_stops:
+        var p := Vector2(st.pos)
+        var d := from.distance_to(p)
+        if d<best:
+            best=d
+            out=p
+    return out
+
+func _next_unvisited_district_center() -> Vector2:
+    for d in districts:
+        var name := str(d.name)
+        if not bool(visited_districts.get(name,false)):
+            return Vector2((d.rect as Rect2).get_center())
+    return Vector2.ZERO
+
+func _check_active_job_progress() -> void:
+    if active_job.is_empty():
+        return
+    var kind := str(active_job.get("kind","delivery"))
+    var done := false
+    if kind=="photo":
+        done=(photo_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
+        active_job["target"]=_next_photo_target()
+    elif kind=="hack_replay":
+        done=(hack_replays-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
+        active_job["target"]=_next_hack_replay_target()
+    elif kind=="transit":
+        done=(transit_trip_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
+    elif kind=="district":
+        done=player_pos.distance_to(Vector2(active_job.get("target",Vector2.ZERO)))<260.0
+    if done:
+        _complete_side_job()
+
 
 func _complete_side_job() -> void:
     if active_job.is_empty():
@@ -4472,6 +4556,24 @@ func _current_objective_pos() -> Vector2:
     elif kind=="jobs":
         if not active_job.is_empty(): return Vector2(active_job.get("target",Vector2.ZERO))
         if not side_job_sites.is_empty(): return Vector2(side_job_sites[0].pos)
+    elif kind=="photo":
+        return _next_photo_target()
+    elif kind=="vehicles":
+        for car in parked_cars:
+            if not bool(driven_classes.get(str(car["class"]),false)):
+                return Vector2(car["pos"])
+    elif kind=="districts":
+        return _next_unvisited_district_center()
+    elif kind=="hack_count":
+        for m in mission_sites:
+            if not bool(hack_done.get(str(m.id),false)): return Vector2(m.pos)
+    elif kind=="collector":
+        for ca in caches:
+            if not bool(ca.taken): return Vector2(ca.pos)
+        for g in glyphs:
+            if not bool(g.taken): return Vector2(g.pos)
+    elif kind=="hack_replays":
+        return _next_hack_replay_target()
     elif kind=="paint":
         for st in storefronts:
             if str(st.kind) in ["garage","workshop"]: return Vector2(st.pos)
