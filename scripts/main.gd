@@ -519,6 +519,8 @@ func _build_native_gameplay_data() -> void:
         {"title":"Fahrzeugkunde","desc":"Fahre mindestens vier unterschiedliche Fahrzeugklassen.","kind":"vehicles","goal":4},
         {"title":"Stadtentdecker","desc":"Besuche zwölf unterschiedliche Stadtteile.","kind":"districts","goal":12},
         {"title":"Photo Hunt II","desc":"Vervollständige acht Fotopunkte.","kind":"photo","goal":8},
+        {"title":"District Lens","desc":"Sammle fünfzehn PMDD-Fotopunkte aus verschiedenen Stadtzonen.","kind":"photo","goal":15},
+        {"title":"Stadtarchiv","desc":"Sichere insgesamt 25 Sammlerstücke aus Caches, Sigils und Photo Hunt.","kind":"archive","goal":25},
         {"title":"Hacking Marathon","desc":"Schließe mindestens zehn unterschiedliche Hacking-Terminals ab.","kind":"hack_count","goal":10},
         {"title":"Sammler","desc":"Berge acht Caches und sechs Stadtsigils.","kind":"collector","goal":14},
         {"title":"Hack Replay","desc":"Wiederhole fünf Hacking-Terminals für Bonus-Credits.","kind":"hack_replays","goal":5},
@@ -577,7 +579,20 @@ func _build_story_content() -> void:
         {"id":"photo_neon","label":"Neon Theatre","pos":Vector2(19800,6550),"dir":Vector2(-0.72,-0.10),"taken":false,"district":"Neon Mile","reward":40},
         {"id":"photo_garden","label":"Conservatory Depth","pos":Vector2(3300,14050),"dir":Vector2(0.55,-0.55),"taken":false,"district":"Gärten","reward":34},
         {"id":"photo_library","label":"Axis Library","pos":Vector2(9300,13800),"dir":Vector2(-0.58,-0.48),"taken":false,"district":"Universität","reward":34},
-        {"id":"photo_astra","label":"Astra Dome","pos":Vector2(15600,14250),"dir":Vector2(0.64,-0.30),"taken":false,"district":"Observatorium","reward":42}
+        {"id":"photo_astra","label":"Astra Dome","pos":Vector2(15600,14250),"dir":Vector2(0.64,-0.30),"taken":false,"district":"Observatorium","reward":42},
+        {"id":"photo_foundry","label":"Foundry Geometry","pos":Vector2(17300,5200),"dir":Vector2(-0.70,0.24),"taken":false,"district":"Industrie","reward":34},
+        {"id":"photo_transit","label":"Transit Crown Lines","pos":Vector2(22800,5200),"dir":Vector2(0.52,-0.60),"taken":false,"district":"Transit Yard","reward":36},
+        {"id":"photo_moor","label":"Moorhafen Reflection","pos":Vector2(2300,12200),"dir":Vector2(0.78,0.18),"taken":false,"district":"Moorhafen","reward":34},
+        {"id":"photo_expo","label":"Expo Axis","pos":Vector2(7700,12300),"dir":Vector2(-0.54,-0.50),"taken":false,"district":"Messe","reward":36},
+        {"id":"photo_bio","label":"Bio Garden Layers","pos":Vector2(11800,12500),"dir":Vector2(0.62,-0.42),"taken":false,"district":"Bioquartier","reward":38},
+        {"id":"photo_aurora","label":"Aurora Ridge Light","pos":Vector2(18200,12500),"dir":Vector2(-0.66,-0.32),"taken":false,"district":"Aurora Hills","reward":42},
+        {"id":"photo_terminal","label":"Terminal East Crown","pos":Vector2(22800,13200),"dir":Vector2(-0.55,-0.56),"taken":false,"district":"Terminal East","reward":40},
+        {"id":"photo_aero","label":"Aerodrome Runway","pos":Vector2(2600,15700),"dir":Vector2(0.82,-0.08),"taken":false,"district":"Aerodrome","reward":40},
+        {"id":"photo_wind","label":"Windfield Blades","pos":Vector2(7600,15700),"dir":Vector2(-0.72,-0.20),"taken":false,"district":"Windfeld","reward":40},
+        {"id":"photo_data","label":"Data Pylon Forest","pos":Vector2(12900,15600),"dir":Vector2(0.58,-0.54),"taken":false,"district":"Data Fields","reward":42},
+        {"id":"photo_coast","label":"Coastal Boardwalk","pos":Vector2(18100,15700),"dir":Vector2(-0.80,0.06),"taken":false,"district":"Küstenband","reward":40},
+        {"id":"photo_rail","label":"Railworks Gantry","pos":Vector2(23200,15700),"dir":Vector2(0.68,-0.30),"taken":false,"district":"Railworks","reward":42},
+        {"id":"photo_ring","label":"Outer Ring Overpass","pos":Vector2(18100,8900),"dir":Vector2(0.62,0.44),"taken":false,"district":"Außenring","reward":38}
     ]
     glyphs = [
         {"pos":Vector2(2450,1450),"taken":false,"district":"Altstadt"},
@@ -4883,7 +4898,8 @@ func _draw_race_markers() -> void:
 func _check_milestones() -> void:
     var milestones := [
         ["photos_5",photo_count>=5,60,"Photo Scout"],
-        ["photos_all",photo_count>=photo_points.size() and photo_points.size()>0,180,"Photo Master"],
+        ["photos_15",photo_count>=15,110,"District Lens"],
+        ["photos_all",photo_count>=photo_points.size() and photo_points.size()>0,260,"Photo Master"],
         ["cars_5",driven_classes.size()>=5,75,"Class Explorer"],
         ["cars_all",driven_classes.size()>=VEHICLE_CLASSES.size(),220,"Full Garage"],
         ["districts_15",visited_districts.size()>=15,85,"Urban Explorer"],
@@ -5130,6 +5146,7 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="districts": return mini(visited_districts.size(),int(c.goal))
     if kind=="hack_count": return mini(_completed_hack_count(),int(c.goal))
     if kind=="collector": return mini(cache_count+glyph_count,int(c.goal))
+    if kind=="archive": return mini(cache_count+glyph_count+photo_count,int(c.goal))
     if kind=="hack_replays": return mini(hack_replays,int(c.goal))
     if kind=="races": return mini(race_wins,int(c.goal))
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
@@ -5180,7 +5197,7 @@ func _draw_collection_overlay() -> void:
     draw_string(ThemeDB.fallback_font,Vector2(80,y),"MEILENSTEINE",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffd36b"))
     y+=38
     var milestones := [
-        ["Photo Scout","photos_5"],["Photo Master","photos_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
+        ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
         ["Urban Explorer","districts_15"],["Security Runner","hacks_8"],["Street Trialist","races_3"],["City Professional","jobs_10"]
     ]
     for m in milestones:
