@@ -56,6 +56,23 @@ var mission_sites: Array = []
 var hack_done: Dictionary = {}
 var native_chapter: int = 0
 var native_chapters: Array = []
+var minigame_open: bool = false
+var active_mission_site: Dictionary = {}
+var game_panel: PanelContainer
+var game_title: Label
+var game_info: Label
+var game_status: Label
+var game_grid: GridContainer
+var game_controls: HBoxContainer
+var game_type: String = ""
+var game_target: Array = []
+var game_current: Array = []
+var game_secret: Array = []
+var game_guess: Array = []
+var game_tries: int = 0
+var game_memory_seq: Array = []
+var game_memory_input: Array = []
+var game_memory_locked: bool = false
 
 # True multi-touch state: left and right touches can coexist.
 var move_touch := -1
@@ -563,6 +580,54 @@ func _build_ui() -> void:
     mission_button.pressed.connect(_toggle_missions)
     layer.add_child(mission_button)
 
+    game_panel = PanelContainer.new()
+    game_panel.position = Vector2(105,420)
+    game_panel.size = Vector2(870,1180)
+    game_panel.visible = false
+    var gsb := StyleBoxFlat.new()
+    gsb.bg_color = Color(0.025,0.055,0.075,0.985)
+    gsb.border_color = Color(0.45,0.95,0.82,0.45)
+    gsb.set_border_width_all(2)
+    gsb.corner_radius_top_left = 24
+    gsb.corner_radius_top_right = 24
+    gsb.corner_radius_bottom_left = 24
+    gsb.corner_radius_bottom_right = 24
+    game_panel.add_theme_stylebox_override("panel",gsb)
+    var gvb := VBoxContainer.new()
+    gvb.add_theme_constant_override("separation",14)
+    game_panel.add_child(gvb)
+    game_title = Label.new()
+    game_title.add_theme_font_size_override("font_size",28)
+    game_title.modulate = Color("#73f3ce")
+    gvb.add_child(game_title)
+    game_info = Label.new()
+    game_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    game_info.add_theme_font_size_override("font_size",18)
+    gvb.add_child(game_info)
+    game_status = Label.new()
+    game_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    game_status.add_theme_font_size_override("font_size",17)
+    game_status.modulate = Color("#c7d6de")
+    gvb.add_child(game_status)
+    var center_box := CenterContainer.new()
+    center_box.custom_minimum_size = Vector2(0,690)
+    game_grid = GridContainer.new()
+    game_grid.columns = 4
+    game_grid.add_theme_constant_override("h_separation",10)
+    game_grid.add_theme_constant_override("v_separation",10)
+    center_box.add_child(game_grid)
+    gvb.add_child(center_box)
+    game_controls = HBoxContainer.new()
+    game_controls.alignment = BoxContainer.ALIGNMENT_CENTER
+    game_controls.add_theme_constant_override("separation",8)
+    gvb.add_child(game_controls)
+    var close_game := Button.new()
+    close_game.text = "SCHLIESSEN"
+    close_game.custom_minimum_size = Vector2(0,70)
+    close_game.pressed.connect(_close_minigame)
+    gvb.add_child(close_game)
+    layer.add_child(game_panel)
+
     scan_button = Button.new()
     scan_button.text = "SCAN"
     scan_button.position = Vector2(820, 2060)
@@ -649,7 +714,7 @@ func _update_sensor(delta: float) -> void:
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
 func _update_player(delta: float) -> void:
-    if map_open or missions_open:
+    if map_open or missions_open or minigame_open:
         vehicle_velocity = move_toward(vehicle_velocity,0.0,delta*320.0)
         return
     if interior_active:
@@ -758,6 +823,8 @@ func _scan() -> void:
     _play_sfx("scan")
 
 func _interact() -> void:
+    if map_open or missions_open or minigame_open:
+        return
     var n := _nearest_interactable()
     if n.is_empty():
         return
@@ -1781,6 +1848,8 @@ func _draw_interior_scene() -> void:
         _draw_garage_interior(origin,accent)
     elif interior_kind in ["restaurant","cafe"]:
         _draw_restaurant_interior(origin,accent)
+    elif interior_kind=="home":
+        _draw_home_interior(origin,accent)
     else:
         _draw_shop_interior(origin,accent)
     draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),interior_name,HORIZONTAL_ALIGNMENT_LEFT,420,22,Color(0.94,0.98,0.99,0.92))
@@ -1834,6 +1903,15 @@ func _draw_restaurant_interior(origin: Vector2, accent: Color) -> void:
     draw_rect(Rect2(counter-Vector2(60,24),Vector2(120,48)),Color("#5e493d"),true)
     draw_line(counter+Vector2(-55,-18),counter+Vector2(55,-18),Color(accent.r,accent.g,accent.b,0.42),2.0)
 
+func _draw_home_interior(origin: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(origin+Vector2(300,130),Vector2(250,150)),Color("#2c3438"),true)
+    draw_rect(Rect2(origin+Vector2(325,155),Vector2(95,55)),Color("#59686f"),true)
+    draw_rect(Rect2(origin+Vector2(455,155),Vector2(70,55)),Color("#49545a"),true)
+    draw_circle(origin+Vector2(390,360),42,Color("#5d493b"))
+    draw_rect(Rect2(origin+Vector2(610,120),Vector2(170,310)),Color(0.08,0.10,0.12,0.88),true)
+    draw_rect(Rect2(origin+Vector2(610,120),Vector2(170,310)),Color(accent.r,accent.g,accent.b,0.35),false,2.0)
+    draw_string(ThemeDB.fallback_font,origin+Vector2(635,150),"PRIVATE GARAGE",HORIZONTAL_ALIGNMENT_LEFT,130,12,Color.WHITE)
+
 func _draw_shop_interior(origin: Vector2, accent: Color) -> void:
     for x in [330.0,450.0,570.0]:
         draw_rect(Rect2(origin+Vector2(x-32,130),Vector2(64,250)),Color("#263139"),true)
@@ -1862,13 +1940,319 @@ func _draw_interior_player() -> void:
     draw_line(chest-side*6,chest-side*6+Vector2(-swing,7),Color("#cfdde4"),2.2)
     draw_line(chest+side*6,chest+side*6+Vector2(swing,7),Color("#cfdde4"),2.2)
 
+func _clear_game_ui() -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    for child in game_controls.get_children():
+        child.queue_free()
+
+func _game_button(text_value: String, callback: Callable, active: bool = false) -> Button:
+    var b := Button.new()
+    b.text = text_value
+    b.custom_minimum_size = Vector2(126,104)
+    b.add_theme_font_size_override("font_size",28)
+    if active:
+        b.modulate = Color("#73f3ce")
+    b.pressed.connect(callback)
+    return b
+
+func _start_minigame(site: Dictionary) -> void:
+    var sid := str(site.id)
+    if bool(hack_done.get(sid,false)):
+        _notify("%s bereits abgeschlossen." % str(site.name))
+        return
+    active_mission_site = site
+    game_type = str(site.game)
+    minigame_open = true
+    map_open = false
+    missions_open = false
+    move_vec = Vector2.ZERO
+    game_panel.visible = true
+    game_title.text = str(site.name)
+    game_info.text = "Hacking-Minispiel · Belohnung: %s" % str(site.reward)
+    game_status.text = ""
+    _clear_game_ui()
+    if game_type=="wire":
+        _init_wire()
+    elif game_type=="slide":
+        _init_slide()
+    elif game_type=="mastermind":
+        _init_mastermind()
+    elif game_type=="frequency":
+        _init_frequency()
+    elif game_type=="memory":
+        _init_memory()
+    else:
+        _init_lightsout()
+
+func _close_minigame() -> void:
+    minigame_open = false
+    game_panel.visible = false
+    active_mission_site = {}
+    game_type = ""
+    move_vec = Vector2.ZERO
+
+func _finish_minigame() -> void:
+    if active_mission_site.is_empty():
+        return
+    var sid := str(active_mission_site.id)
+    hack_done[sid] = true
+    credits += 35
+    _play_sfx("secret")
+    game_status.text = "ERFOLG · %s erhalten · +35 Credits" % str(active_mission_site.reward)
+    await get_tree().create_timer(0.65).timeout
+    _close_minigame()
+    _notify("%s abgeschlossen." % str(active_mission_site.name))
+    _advance_native_chapter()
+
+func _init_wire() -> void:
+    game_grid.columns = 4
+    game_target = [0,1,1,2,3,0,1,2,0,3,2,2,0,1,1,0]
+    game_current = []
+    for i in range(game_target.size()):
+        game_current.append((int(game_target[i])+1+rng.randi_range(0,2))%4)
+    game_status.text = "Drehe alle Leiterbahnen in die richtige Richtung."
+    _render_wire()
+
+func _render_wire() -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    var symbols := ["━","┃","┗","┛"]
+    for i in range(game_current.size()):
+        var idx := i
+        game_grid.add_child(_game_button(str(symbols[int(game_current[i])]),_on_wire_cell.bind(idx)))
+    await get_tree().process_frame
+
+func _on_wire_cell(index: int) -> void:
+    game_current[index] = (int(game_current[index])+1)%4
+    _render_wire()
+    var ok := true
+    for i in range(game_current.size()):
+        if int(game_current[i]) != int(game_target[i]):
+            ok = false
+            break
+    if ok:
+        _finish_minigame()
+
+func _init_slide() -> void:
+    game_grid.columns = 3
+    game_current = [1,2,3,4,5,6,7,8,0]
+    for k in range(80):
+        var z := game_current.find(0)
+        var opts: Array = []
+        if z-3>=0: opts.append(z-3)
+        if z+3<9: opts.append(z+3)
+        if z%3>0: opts.append(z-1)
+        if z%3<2: opts.append(z+1)
+        var q: int = int(opts[rng.randi_range(0,opts.size()-1)])
+        var tmp = game_current[z]
+        game_current[z] = game_current[q]
+        game_current[q] = tmp
+    game_status.text = "Ordne die Routing-Kacheln von 1 bis 8."
+    _render_slide()
+
+func _render_slide() -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    for i in range(9):
+        var idx := i
+        var val := int(game_current[i])
+        game_grid.add_child(_game_button("" if val==0 else str(val),_on_slide_cell.bind(idx),val==0))
+    await get_tree().process_frame
+
+func _on_slide_cell(index: int) -> void:
+    var z := game_current.find(0)
+    var valid := abs(index-z)==3 or (index/3==z/3 and abs(index-z)==1)
+    if not valid:
+        return
+    var tmp = game_current[index]
+    game_current[index] = game_current[z]
+    game_current[z] = tmp
+    _render_slide()
+    var solved := true
+    for i in range(8):
+        if int(game_current[i]) != i+1:
+            solved = false
+            break
+    if solved and int(game_current[8])==0:
+        _finish_minigame()
+
+func _init_mastermind() -> void:
+    game_grid.columns = 4
+    game_secret = []
+    game_guess = [1,1,1,1]
+    game_tries = 0
+    for i in range(4):
+        game_secret.append(rng.randi_range(1,6))
+    game_status.text = "Tippe jede Stelle zum Hochzählen. Dann TEST."
+    _render_mastermind()
+
+func _render_mastermind() -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    for i in range(4):
+        var idx := i
+        game_grid.add_child(_game_button(str(game_guess[i]),_on_mastermind_digit.bind(idx)))
+    for child in game_controls.get_children():
+        child.queue_free()
+    var test := Button.new()
+    test.text = "TEST"
+    test.custom_minimum_size = Vector2(180,70)
+    test.pressed.connect(_test_mastermind)
+    game_controls.add_child(test)
+    await get_tree().process_frame
+
+func _on_mastermind_digit(index: int) -> void:
+    game_guess[index] = (int(game_guess[index])%6)+1
+    _render_mastermind()
+
+func _test_mastermind() -> void:
+    game_tries += 1
+    var exact := 0
+    var near := 0
+    var remaining_secret: Array = []
+    var remaining_guess: Array = []
+    for i in range(4):
+        if int(game_guess[i])==int(game_secret[i]):
+            exact += 1
+        else:
+            remaining_secret.append(game_secret[i])
+            remaining_guess.append(game_guess[i])
+    for v in remaining_guess:
+        var pos := remaining_secret.find(v)
+        if pos>=0:
+            near += 1
+            remaining_secret.remove_at(pos)
+    game_status.text = "Versuch %d · %d exakt · %d richtige Zahl/falsche Position" % [game_tries,exact,near]
+    if exact==4:
+        _finish_minigame()
+
+func _init_frequency() -> void:
+    game_grid.columns = 4
+    game_target = []
+    game_current = []
+    for i in range(4):
+        game_target.append(rng.randi_range(0,4))
+        game_current.append(rng.randi_range(0,4))
+    game_info.text = "Ziel-Spektrum: %s" % _frequency_text(game_target)
+    game_status.text = "Tippe jeden Kanal bis das Ziel-Spektrum erreicht ist."
+    _render_frequency()
+
+func _frequency_text(values: Array) -> String:
+    var symbols := ["▁","▂","▃","▄","▅"]
+    var out := ""
+    for v in values:
+        out += str(symbols[int(v)])+" "
+    return out.strip_edges()
+
+func _render_frequency() -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    var symbols := ["▁","▂","▃","▄","▅"]
+    for i in range(4):
+        var idx := i
+        game_grid.add_child(_game_button(str(symbols[int(game_current[i])]),_on_frequency_cell.bind(idx)))
+    await get_tree().process_frame
+
+func _on_frequency_cell(index: int) -> void:
+    game_current[index] = (int(game_current[index])+1)%5
+    _render_frequency()
+    var ok := true
+    for i in range(4):
+        if int(game_current[i])!=int(game_target[i]):
+            ok = false
+    if ok:
+        _finish_minigame()
+
+func _init_memory() -> void:
+    game_grid.columns = 3
+    game_memory_seq = []
+    game_memory_input = []
+    game_memory_locked = true
+    for i in range(6):
+        game_memory_seq.append(rng.randi_range(0,8))
+    _render_memory()
+    _show_memory_sequence()
+
+func _render_memory(highlight: int = -1) -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    for i in range(9):
+        var idx := i
+        game_grid.add_child(_game_button(str(i+1),_on_memory_cell.bind(idx),i==highlight))
+    await get_tree().process_frame
+
+func _show_memory_sequence() -> void:
+    game_memory_locked = true
+    game_status.text = "Paketfolge merken …"
+    for v in game_memory_seq:
+        _render_memory(int(v))
+        await get_tree().create_timer(0.34).timeout
+        _render_memory(-1)
+        await get_tree().create_timer(0.16).timeout
+    game_memory_locked = false
+    game_status.text = "Jetzt die Paketfolge wiederholen."
+
+func _on_memory_cell(index: int) -> void:
+    if game_memory_locked:
+        return
+    game_memory_input.append(index)
+    if int(game_memory_input[-1]) != int(game_memory_seq[game_memory_input.size()-1]):
+        game_memory_input.clear()
+        game_status.text = "Falsche Folge · Sequenz erneut."
+        _show_memory_sequence()
+        return
+    if game_memory_input.size()==game_memory_seq.size():
+        _finish_minigame()
+
+func _init_lightsout() -> void:
+    game_grid.columns = 4
+    game_current = []
+    for i in range(16):
+        game_current.append(false)
+    for k in range(12):
+        _toggle_light(rng.randi_range(0,15))
+    game_status.text = "Schalte das Firewall-Raster vollständig dunkel."
+    _render_lightsout()
+
+func _toggle_light(index: int) -> void:
+    var r := index/4
+    var c := index%4
+    for delta in [Vector2i(0,0),Vector2i(1,0),Vector2i(-1,0),Vector2i(0,1),Vector2i(0,-1)]:
+        var rr := r+delta.x
+        var cc := c+delta.y
+        if rr>=0 and rr<4 and cc>=0 and cc<4:
+            var j := rr*4+cc
+            game_current[j] = not bool(game_current[j])
+
+func _render_lightsout() -> void:
+    for child in game_grid.get_children():
+        child.queue_free()
+    for i in range(16):
+        var idx := i
+        game_grid.add_child(_game_button("●" if bool(game_current[i]) else "○",_on_lightsout_cell.bind(idx),bool(game_current[i])))
+    await get_tree().process_frame
+
+func _on_lightsout_cell(index: int) -> void:
+    _toggle_light(index)
+    _render_lightsout()
+    var any_on := false
+    for v in game_current:
+        if bool(v): any_on = true
+    if not any_on:
+        _finish_minigame()
+
 func _toggle_map() -> void:
+    if minigame_open:
+        return
     map_open = not map_open
     missions_open = false
     move_vec = Vector2.ZERO
     queue_redraw()
 
 func _toggle_missions() -> void:
+    if minigame_open:
+        return
     missions_open = not missions_open
     map_open = false
     move_vec = Vector2.ZERO
