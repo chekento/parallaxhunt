@@ -1653,7 +1653,10 @@ func _update_ui() -> void:
         detail_label.text = "Links bewegen · rechts Perspektive · MAP/MISSIONS für Übersicht."
     var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
     if current_vehicle >= 0:
-        mode = "Driving · %s" % str(parked_cars[current_vehicle]["class"]).capitalize()
+        var drive_cls: String = str(parked_cars[current_vehicle]["class"])
+        var group: String = str(VEHICLE_SPEED_GROUP.get(drive_cls,"ROAD"))
+        var speed_kmh: int = int(abs(vehicle_velocity)*0.42)
+        mode = "Driving · %s · %s · %d km/h" % [drive_cls.capitalize(),group,speed_kmh]
     elif transit_riding >= 0 and transit_riding < transit_vehicles.size():
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     status_label.text = "%s · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,world_zoom,credits,int(energy),jobs_done]
@@ -3037,13 +3040,30 @@ func _draw_parked_cars() -> void:
         _draw_car(c.pos,c.heading,c["class"],c.color,true)
 
 func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: bool) -> void:
-    var sz: Vector2 = VEHICLE_SIZES[cls]
+    var sz: Vector2 = VEHICLE_SIZES.get(cls,Vector2(45,22))
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
     var side := Vector2(-f.y,f.x)
-    _draw_poly_ellipse(center+Vector2(4,7),Vector2(sz.x*.52,sz.y*.42),heading,Color(0,0,0,0.18))
-    var nose := 0.58 if cls=="sport" else (0.50 if cls!="micro" else 0.52)
-    var rear := 0.46 if cls=="micro" else 0.50
+    _draw_poly_ellipse(center+Vector2(4,7),Vector2(sz.x*.53,sz.y*.43),heading,Color(0,0,0,0.19))
+
+    var nose: float = 0.50
+    var rear: float = 0.50
+    if cls in ["sport","hyper"]:
+        nose=0.60
+        rear=0.46
+    elif cls=="micro":
+        nose=0.50
+        rear=0.44
+    elif cls=="hatch":
+        nose=0.51
+        rear=0.48
+    elif cls in ["van","delivery"]:
+        nose=0.48
+        rear=0.53
+    elif cls=="pickup":
+        nose=0.54
+        rear=0.55
+
     var pts := PackedVector2Array([
         center+f*sz.x*nose+side*sz.y*.43,
         center+f*sz.x*nose-side*sz.y*.43,
@@ -3052,42 +3072,83 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     ])
     draw_colored_polygon(pts,color)
     draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.20),1.2,true)
-    var cabin_center := center - f*(3.0 if cls=="sport" else 0.0)
-    var cabin_len := sz.x*(0.20 if cls=="micro" else (0.30 if cls=="van" else 0.26))
-    var wind_a := cabin_center+f*cabin_len+side*sz.y*.29
-    var wind_b := cabin_center+f*cabin_len-side*sz.y*.29
-    var wind_c := cabin_center-f*cabin_len-side*sz.y*.29
-    var wind_d := cabin_center-f*cabin_len+side*sz.y*.29
+
+    var cabin_shift: float = 0.0
+    var cabin_scale: float = 0.26
+    if cls in ["sport","hyper"]:
+        cabin_shift=-4.0
+        cabin_scale=0.20
+    elif cls in ["van","delivery"]:
+        cabin_shift=4.0
+        cabin_scale=0.32
+    elif cls=="pickup":
+        cabin_shift=7.0
+        cabin_scale=0.22
+    elif cls=="suv":
+        cabin_scale=0.28
+    var cabin_center := center + f*cabin_shift
+    var cabin_len := sz.x*cabin_scale
+    var glass_w: float = sz.y*(0.28 if cls not in ["suv","van","delivery"] else 0.32)
+    var wind_a := cabin_center+f*cabin_len+side*glass_w
+    var wind_b := cabin_center+f*cabin_len-side*glass_w
+    var wind_c := cabin_center-f*cabin_len-side*glass_w
+    var wind_d := cabin_center-f*cabin_len+side*glass_w
     draw_colored_polygon(PackedVector2Array([wind_a,wind_b,wind_c,wind_d]),Color(0.58,0.82,0.92,0.72))
     draw_line(wind_a,wind_b,Color(1,1,1,0.24),1.0)
+
     var front_l := center+f*sz.x*.49+side*sz.y*.25
     var front_r := center+f*sz.x*.49-side*sz.y*.25
-    draw_circle(front_l,2.4,Color("#ffe0a0"))
-    draw_circle(front_r,2.4,Color("#ffe0a0"))
     var rear_l := center-f*sz.x*.45+side*sz.y*.25
     var rear_r := center-f*sz.x*.45-side*sz.y*.25
+    draw_circle(front_l,2.4,Color("#ffe0a0"))
+    draw_circle(front_r,2.4,Color("#ffe0a0"))
     draw_circle(rear_l,2.2,Color("#ff726f"))
     draw_circle(rear_r,2.2,Color("#ff726f"))
     _draw_car_wheels(center,f,side,sz)
-    if cls == "van":
+
+    if cls=="micro":
+        draw_line(center-f*2-side*sz.y*.37,center-f*2+side*sz.y*.37,Color(1,1,1,0.16),1.2)
+    elif cls=="hatch":
+        draw_line(center-f*sz.x*.30-side*sz.y*.44,center-f*sz.x*.30+side*sz.y*.44,Color(1,1,1,0.13),1.4)
+        draw_circle(center-f*sz.x*.39,3.2,Color(0.12,0.14,0.16,0.6))
+    elif cls=="sedan":
+        draw_line(center+side*sz.y*.44,center-side*sz.y*.44,Color(1,1,1,0.10),1.0)
+    elif cls=="executive":
+        draw_line(center+f*sz.x*.18-side*sz.y*.45,center+f*sz.x*.18+side*sz.y*.45,Color(0.85,0.92,0.95,0.16),2.0)
+        draw_line(center-f*sz.x*.20-side*sz.y*.44,center-f*sz.x*.20+side*sz.y*.44,Color(0.85,0.92,0.95,0.10),1.2)
+    elif cls=="suv":
+        draw_line(center+f*sz.x*.34-side*sz.y*.47,center+f*sz.x*.34+side*sz.y*.47,Color(0.12,0.15,0.16,0.52),2.2)
+        draw_line(center-f*sz.x*.32-side*sz.y*.47,center-f*sz.x*.32+side*sz.y*.47,Color(0.12,0.15,0.16,0.52),2.2)
+        draw_line(center-f*sz.x*.10-side*sz.y*.34,center+f*sz.x*.26-side*sz.y*.34,Color(1,1,1,0.12),1.2)
+    elif cls=="pickup":
+        var bed := PackedVector2Array([
+            center-f*sz.x*.17+side*sz.y*.40,center-f*sz.x*.17-side*sz.y*.40,
+            center-f*sz.x*.48-side*sz.y*.44,center-f*sz.x*.48+side*sz.y*.44])
+        draw_colored_polygon(bed,color.darkened(0.16))
+        draw_polyline(PackedVector2Array([bed[0],bed[1],bed[2],bed[3],bed[0]]),Color(1,1,1,0.12),1.0,true)
+    elif cls=="van":
         draw_line(center-f*7-side*sz.y*.44,center-f*7+side*sz.y*.44,Color(1,1,1,0.16),1.5)
         draw_line(center+side*sz.y*.49-f*6,center+side*sz.y*.49+f*10,Color(0.16,0.18,0.20,0.62),2.0)
         draw_line(center-side*sz.y*.49-f*6,center-side*sz.y*.49+f*10,Color(0.16,0.18,0.20,0.62),2.0)
-    elif cls == "sport":
+    elif cls=="delivery":
+        draw_rect(Rect2(center-f*8-side*sz.y*.34,Vector2(16,sz.y*.68)),Color(1,1,1,0.06),true)
+        draw_line(center-f*sz.x*.16-side*sz.y*.46,center-f*sz.x*.16+side*sz.y*.46,Color(0.10,0.13,0.15,0.48),2.0)
+    elif cls=="sport":
         draw_line(center-f*sz.x*.35-side*sz.y*.49,center-f*sz.x*.35+side*sz.y*.49,Color(0.05,0.07,0.09,0.64),2.2)
         draw_line(center+f*sz.x*.20-side*sz.y*.28,center+f*sz.x*.29-side*sz.y*.12,Color(1,1,1,0.15),1.0)
-    elif cls == "micro":
-        draw_line(center-f*2-side*sz.y*.37,center-f*2+side*sz.y*.37,Color(1,1,1,0.16),1.2)
-    else:
-        draw_line(center+side*sz.y*.44,center-side*sz.y*.44,Color(1,1,1,0.10),1.0)
-    var livery := int(abs(pos.x+pos.y)) % 13
-    if livery == 0:
+    elif cls=="hyper":
+        draw_line(center-f*sz.x*.38-side*sz.y*.50,center-f*sz.x*.38+side*sz.y*.50,Color(0.04,0.06,0.08,0.82),3.0)
+        draw_line(center+f*sz.x*.30-side*sz.y*.30,center+f*sz.x*.42-side*sz.y*.12,Color(0.45,1.0,0.92,0.24),2.0)
+        draw_line(center+f*sz.x*.30+side*sz.y*.30,center+f*sz.x*.42+side*sz.y*.12,Color(0.45,1.0,0.92,0.24),2.0)
+
+    var livery := int(abs(pos.x+pos.y)) % 17
+    if livery==0:
         draw_line(center-f*sz.x*.10-side*sz.y*.45,center-f*sz.x*.10+side*sz.y*.45,Color(0.98,0.88,0.34,0.58),2.0)
-    elif livery == 1:
+    elif livery==1:
         draw_line(center-f*sz.x*.28,center+f*sz.x*.30,Color(1,1,1,0.16),1.2)
     if not parked:
-        var tail := center - f*sz.x*.62
-        draw_line(tail,tail-f*24,Color(0.35,0.85,1.0,0.10),4.0,true)
+        var tail := center-f*sz.x*.62
+        draw_line(tail,tail-f*(30 if cls in ["sport","hyper"] else 22),Color(0.35,0.85,1.0,0.11),4.0,true)
 
 func _draw_car_wheels(center: Vector2, f: Vector2, side: Vector2, sz: Vector2) -> void:
     for ax in [0.28,-0.28]:
@@ -4307,7 +4368,8 @@ func _open_home_garage_menu() -> void:
     commerce_actions.add_child(_commerce_button("Aktuelles Fahrzeug einlagern",_store_current_vehicle))
     for i in range(owned_cars.size()):
         var car: Dictionary = Dictionary(owned_cars[i])
-        commerce_actions.add_child(_commerce_button("Ausparken: %s" % str(car.get("class","Auto")).capitalize(),_spawn_owned_car.bind(i)))
+        var stored_cls: String = str(car.get("class","sedan"))
+        commerce_actions.add_child(_commerce_button("Ausparken: %s · %s" % [stored_cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(stored_cls,"ROAD"))],_spawn_owned_car.bind(i)))
 
 func _store_current_vehicle() -> void:
     var idx: int = service_vehicle_index if service_vehicle_index>=0 else current_vehicle
@@ -4632,6 +4694,12 @@ func _draw_touch_controls() -> void:
     draw_circle(center,62,Color(0.04,0.11,0.15,0.36))
     draw_arc(center,62,0,TAU,48,Color(0.45,0.95,0.82,0.28),2,true)
     draw_circle(knob,24,Color(0.45,0.95,0.82,0.30))
+    if current_vehicle>=0:
+        draw_string(ThemeDB.fallback_font,center+Vector2(-48,-82),"GAS",HORIZONTAL_ALIGNMENT_CENTER,96,11,Color(0.75,0.95,0.90,0.70))
+        draw_string(ThemeDB.fallback_font,center+Vector2(-48,94),"BREMSE / R",HORIZONTAL_ALIGNMENT_CENTER,96,10,Color(0.95,0.78,0.70,0.70))
+        draw_string(ThemeDB.fallback_font,center+Vector2(-92,-5),"←",HORIZONTAL_ALIGNMENT_CENTER,36,14,Color(0.80,0.90,0.93,0.60))
+        draw_string(ThemeDB.fallback_font,center+Vector2(56,-5),"→",HORIZONTAL_ALIGNMENT_CENTER,36,14,Color(0.80,0.90,0.93,0.60))
+        draw_string(ThemeDB.fallback_font,center+Vector2(-48,72),"LENKEN",HORIZONTAL_ALIGNMENT_CENTER,96,10,Color(0.70,0.86,0.92,0.55))
     if look_touch>=0:
         draw_circle(look_origin,48,Color(0.04,0.11,0.15,0.25))
         draw_circle(look_now,16,Color(0.55,0.78,1.0,0.35))
