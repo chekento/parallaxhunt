@@ -41,6 +41,22 @@ jobs:
           archive_output: false
           export_debug: true
 
+      - name: Runtime smoke test
+        run: |
+          GODOT_BIN="$(find "$HOME/.local/share/godot/godot_executable" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' | head -1)"
+          echo "Godot runtime: $GODOT_BIN"
+          test -x "$GODOT_BIN"
+          set +e
+          "$GODOT_BIN" --headless --path . --quit-after 8 > runtime.log 2>&1
+          STATUS=$?
+          set -e
+          cat runtime.log
+          if grep -E "SCRIPT ERROR|Parse Error|Invalid access|Invalid call|Attempt to call|not declared in the current scope|Cannot get class" runtime.log; then
+            echo "Runtime smoke test detected a Godot script/runtime error."
+            exit 1
+          fi
+          test "$STATUS" -eq 0
+
       - name: Locate APK
         run: |
           find build -type f -maxdepth 4 -print
