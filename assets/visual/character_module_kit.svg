@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="800" viewBox="0 0 1400 800">
+<rect width="1400" height="800" fill="#0b141c"/><text x="60" y="70" font-family="sans-serif" font-size="38" font-weight="700" fill="#dcecf4">Parallax Hunt — Character / NPC Kit</text>
+<g font-family="sans-serif" fill="#fff" text-anchor="middle">
+<g transform="translate(180 350)"><circle cy="-90" r="35" fill="#f1c7a8"/><path d="M-35-100q35-40 70 0" fill="#30251f"/><path d="M-36-45h72v120h-72z" fill="#8dcfff"/><path d="M-28 75-42 155M28 75 42 155" stroke="#788792" stroke-width="18"/><text y="210">Commuter</text></g>
+<g transform="translate(460 350)"><circle cy="-90" r="35" fill="#d79b75"/><path d="M-35-100q35-30 70 0" fill="#6a4b30"/><path d="M-36-45h72v120h-72z" fill="#a8c7ff"/><rect x="32" y="-5" width="28" height="45" rx="5" fill="#536c98"/><text y="210">Student</text></g>
+<g transform="translate(740 350)"><circle cy="-90" r="35" fill="#b87655"/><path d="M-35-100q35-20 70 0" fill="#22252c"/><path d="M-36-45h72v120h-72z" fill="#ffcc67"/><rect x="-36" y="-45" width="72" height="18" fill="#fff19b"/><text y="210">Worker</text></g>
+<g transform="translate(1020 350)"><circle cy="-90" r="35" fill="#7b4f3d"/><path d="M-35-100q35-40 70 0" fill="#8d4a38"/><path d="M-36-45h72v120h-72z" fill="#ff9fc1"/><rect x="-62" y="-8" width="28" height="40" rx="5" fill="#75564d"/><text y="210">Shopper</text></g>
+<g transform="translate(1280 350)"><circle cy="-90" r="35" fill="#f1c7a8"/><path d="M-35-100q35-25 70 0" fill="#30251f"/><path d="M-36-45h72v120h-72z" fill="#90dfb8"/><path d="M-30-10h60" stroke="#73f3ce" stroke-width="8"/><text y="210">Runner</text></g>
+</g></svg>
