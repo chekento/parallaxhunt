@@ -1,0 +1,49 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Export Android debug APK
+        id: export
+        uses: firebelley/godot-export@v8.0.0
+        with:
+          godot_executable_download_url: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          godot_export_templates_download_url: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+          relative_project_path: ./
+          relative_export_path: ./build
+          archive_output: false
+
+      - name: Locate APK
+        run: |
+          find build -type f -maxdepth 4 -print
+          test -n "$(find build -type f -name '*.apk' -print -quit)"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ParallaxHunt-Android-debug
+          path: build/**/*.apk
+          if-no-files-found: error
+          retention-days: 30
