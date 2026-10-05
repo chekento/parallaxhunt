@@ -2135,7 +2135,10 @@ func _draw_player() -> void:
     draw_circle(pack+Vector2(0,-1),1.6,Color("#73f3ce"))
 
 func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vector2) -> void:
-    if kind not in ["garage","workshop","home"]:
+    if kind in ["garage","workshop","home"]:
+        if current_vehicle < 0:
+            service_vehicle_index=-1
+    else:
         service_vehicle_index=-1
     interior_active = true
     interior_name = name
@@ -3099,6 +3102,7 @@ func _interact_property(index: int) -> void:
         return
     credits -= int(p.price)
     owned_property = str(p.id)
+    service_vehicle_index=-1
     _save_game()
     _play_sfx("collect")
     _notify("%s gekauft · Garage %d Plätze" % [str(p.name),int(p.garage)])
