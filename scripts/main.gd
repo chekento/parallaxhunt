@@ -256,6 +256,46 @@ func _generate_visual_props() -> void:
         if d.style in ["heritage","canal","harbor"]:
             for i in range(10):
                 street_props.append({"type":"crate", "pos":Vector2(rng.randf_range(r.position.x+120,r.end.x-120),rng.randf_range(r.position.y+120,r.end.y-120)), "rot":0.0, "tint":d.accent.darkened(0.45)})
+    # Major intersections: traffic lights, crossings and signs.
+    var ix_list := [2700.0,5000.0,7500.0,10100.0,12800.0,15400.0,18100.0,21000.0]
+    var iy_list := [2600.0,4450.0,6500.0,9000.0,11600.0,14300.0]
+    for ix in ix_list:
+        for iy in iy_list:
+            if int(ix + iy) % 3 == 0:
+                continue
+            street_props.append({"type":"traffic_light","pos":Vector2(ix+115,iy+105),"phase":int(ix/100+iy/100)%3,"rot":0.0,"tint":Color("#9fd5e5")})
+            street_props.append({"type":"traffic_light","pos":Vector2(ix-115,iy-105),"phase":int(ix/100+iy/100+1)%3,"rot":PI,"tint":Color("#9fd5e5")})
+            street_props.append({"type":"crossing","pos":Vector2(ix,iy),"rot":0.0,"tint":Color.WHITE})
+    # Stops and wayfinding.
+    for i in range(10):
+        var rd = roads[(i*2+1) % roads.size()]
+        var tt := 0.10 + float(i) * 0.075
+        var sp := _sample_polyline(rd.points, fposmod(tt,0.92))
+        var st := _polyline_tangent(rd.points, fposmod(tt,0.92))
+        var sn := Vector2(-st.y,st.x)
+        street_props.append({"type":"bus_stop","pos":sp+sn*(float(rd.width)*0.5+32.0),"line":"B%d" % (12+(i%4)*4),"rot":st.angle(),"tint":Color("#64d7c1")})
+    for i in range(7):
+        var rd2 = roads[(i*3+2) % roads.size()]
+        var tt2 := 0.15 + float(i) * 0.10
+        var sp2 := _sample_polyline(rd2.points, fposmod(tt2,0.9))
+        var st2 := _polyline_tangent(rd2.points, fposmod(tt2,0.9))
+        var sn2 := Vector2(-st2.y,st2.x)
+        street_props.append({"type":"tram_stop","pos":sp2-sn2*(float(rd2.width)*0.5+36.0),"line":"T%d" % (2+(i%3)),"rot":st2.angle(),"tint":Color("#e66a84")})
+    # Small street life props.
+    for i in range(36):
+        var rd3 = roads[rng.randi_range(0,roads.size()-1)]
+        var tt3 := rng.randf_range(0.05,0.95)
+        var pp := _sample_polyline(rd3.points,tt3)
+        var tg := _polyline_tangent(rd3.points,tt3)
+        var nn := Vector2(-tg.y,tg.x)
+        street_props.append({"type":"bollard","pos":pp+nn*(float(rd3.width)*0.5+18.0),"rot":0.0,"tint":Color("#8c989f")})
+    for i in range(18):
+        var rd4 = roads[rng.randi_range(0,roads.size()-1)]
+        var tt4 := rng.randf_range(0.05,0.95)
+        var pp2 := _sample_polyline(rd4.points,tt4)
+        var tg2 := _polyline_tangent(rd4.points,tt4)
+        var nn2 := Vector2(-tg2.y,tg2.x)
+        street_props.append({"type":"sign","pos":pp2-nn2*(float(rd4.width)*0.5+30.0),"rot":tg2.angle(),"tint":Color("#a8d8ec")})
     for i in range(220):
         var road_index := rng.randi_range(0, roads.size()-1)
         pedestrians.append({
@@ -329,7 +369,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE ALPHA"
+    title.text = "PARALLAX HUNT · NATIVE VISUAL ALPHA"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -659,6 +699,7 @@ func _draw_roads() -> void:
         draw_polyline(screen, Color("#67737a"), road.width + 24.0, true)
         draw_polyline(screen, Color("#29343b"), road.width, true)
         draw_polyline(screen, Color(1.0,0.88,0.58,0.16), 3.0, true)
+        draw_polyline(screen, Color(0.72,0.82,0.85,0.10), maxf(2.0,float(road.width)-20.0), true)
         for k in range(3, 98, 6):
             var t := float(k)/100.0
             var wp := _sample_polyline(pts,t)
@@ -704,6 +745,7 @@ func _draw_buildings() -> void:
         draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),Color(1,1,1,0.12),1.2,true)
         draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),glow,4.2,true)
         _draw_roof_detail(b,top)
+        _draw_massing_detail(b,top)
 
 func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Vector2, edge: int) -> void:
     var height_vec := d-a
@@ -798,6 +840,39 @@ func _draw_roof_detail(b: Dictionary, top: Array) -> void:
         for ix in range(-2,3):
             draw_line(center+Vector2(ix*11,-12),center+Vector2(ix*11,12),Color(0.75,0.83,0.88,0.20),2.0)
 
+func _draw_massing_detail(b: Dictionary, top: Array) -> void:
+    var mode := str(b.get("massing","slab"))
+    var center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
+    if mode == "slab":
+        return
+    var inset := 0.26 if mode=="tower" else 0.18
+    var base := PackedVector2Array([
+        top[0].lerp(center,inset),
+        top[1].lerp(center,inset),
+        top[2].lerp(center,inset),
+        top[3].lerp(center,inset)
+    ])
+    if mode == "courtyard":
+        var hole := PackedVector2Array([
+            top[0].lerp(center,0.58),top[1].lerp(center,0.58),
+            top[2].lerp(center,0.58),top[3].lerp(center,0.58)
+        ])
+        draw_colored_polygon(hole,Color(0.04,0.07,0.08,0.55))
+        draw_polyline(PackedVector2Array([hole[0],hole[1],hole[2],hole[3],hole[0]]),Color(1,1,1,0.08),1.2,true)
+        return
+    var extra_h := 28.0 if mode=="terrace" else 48.0
+    var shift := view_amount * extra_h * parallax_strength * 0.72
+    var cap := PackedVector2Array([base[0]+shift,base[1]+shift,base[2]+shift,base[3]+shift])
+    var shade := b.wall.darkened(0.20)
+    draw_colored_polygon(PackedVector2Array([base[1],base[2],cap[2],cap[1]]),shade)
+    draw_colored_polygon(PackedVector2Array([base[2],base[3],cap[3],cap[2]]),shade.darkened(0.12))
+    draw_colored_polygon(cap,b.roof.lightened(0.06))
+    draw_polyline(PackedVector2Array([cap[0],cap[1],cap[2],cap[3],cap[0]]),Color(b.accent.r,b.accent.g,b.accent.b,0.28),2.0,true)
+    if mode == "terrace":
+        draw_circle((cap[0]+cap[2])/2.0,6,Color(0.30,0.62,0.36,0.72))
+    else:
+        draw_line((cap[0]+cap[3])/2.0,(cap[0]+cap[3])/2.0+Vector2(0,-18),Color(b.accent.r,b.accent.g,b.accent.b,0.45),2.0,true)
+
 func _quad_bilerp(a: Vector2, b: Vector2, c: Vector2, d: Vector2, u: float, v: float) -> Vector2:
     return a.lerp(b,u).lerp(d.lerp(c,u),v)
 
@@ -844,8 +919,56 @@ func _draw_street_props() -> void:
             var cr := _project(p.pos,8)
             draw_rect(Rect2(cr-Vector2(8,6),Vector2(16,12)),p.tint,true)
             draw_rect(Rect2(cr-Vector2(8,6),Vector2(16,12)),Color(1,1,1,0.12),false,1.0)
+        elif p.type == "traffic_light":
+            _draw_traffic_light_prop(p)
+        elif p.type == "crossing":
+            _draw_crossing_prop(p)
+        elif p.type == "bus_stop":
+            _draw_stop_prop(p,false)
+        elif p.type == "tram_stop":
+            _draw_stop_prop(p,true)
+        elif p.type == "bollard":
+            var bp := _project(p.pos,5)
+            draw_line(bp,bp+Vector2(0,-9),Color("#69767d"),3.0,true)
+            draw_circle(bp+Vector2(0,-10),2.5,Color("#d6e0e5"))
+        elif p.type == "sign":
+            var sg := _project(p.pos,8)
+            draw_line(sg,sg+Vector2(0,-22),Color("#68757c"),2.5,true)
+            draw_circle(sg+Vector2(0,-28),8,Color("#244858"))
+            draw_arc(sg+Vector2(0,-28),8,0,TAU,16,Color(p.tint.r,p.tint.g,p.tint.b,0.8),2.0,true)
         elif p.type == "attraction":
             _draw_attraction(p)
+
+func _draw_traffic_light_prop(p: Dictionary) -> void:
+    var base := _project(p.pos,0)
+    var mast := _project(p.pos,34)
+    draw_line(base,mast,Color("#58656c"),3.0,true)
+    draw_line(mast,mast+Vector2(9,-3),Color("#76838a"),2.0,true)
+    var box := mast+Vector2(11,-7)
+    draw_rect(Rect2(box-Vector2(5,11),Vector2(10,22)),Color("#151a1e"),true)
+    var phase := (int(Time.get_ticks_msec()/1300)+int(p.phase))%3
+    draw_circle(box+Vector2(0,-6),2.6,Color("#ff665d") if phase==0 else Color(0.28,0.10,0.10,0.7))
+    draw_circle(box,2.6,Color("#ffd663") if phase==1 else Color(0.28,0.23,0.08,0.7))
+    draw_circle(box+Vector2(0,6),2.6,Color("#6ee293") if phase==2 else Color(0.08,0.26,0.13,0.7))
+
+func _draw_crossing_prop(p: Dictionary) -> void:
+    var c := _project(p.pos,1)
+    for i in range(-4,5):
+        draw_rect(Rect2(c+Vector2(float(i)*10.0-3,-33),Vector2(6,66)),Color(0.88,0.90,0.88,0.22),true)
+
+func _draw_stop_prop(p: Dictionary, tram: bool) -> void:
+    var c := _project(p.pos,8)
+    var tint: Color = p.tint
+    draw_line(c,c+Vector2(0,-35),Color("#67747b"),3.0,true)
+    draw_rect(Rect2(c+Vector2(-18,-43),Vector2(36,22)),Color(0.04,0.08,0.10,0.92),true)
+    draw_rect(Rect2(c+Vector2(-18,-43),Vector2(36,22)),Color(tint.r,tint.g,tint.b,0.76),false,2.0)
+    draw_string(ThemeDB.fallback_font,c+Vector2(-15,-39),str(p.line),HORIZONTAL_ALIGNMENT_CENTER,30,10,Color.WHITE)
+    draw_line(c+Vector2(-28,-4),c+Vector2(28,-4),Color("#7b8b93"),3.0,true)
+    draw_line(c+Vector2(-24,-4),c+Vector2(-24,8),Color("#7b8b93"),2.0,true)
+    draw_line(c+Vector2(24,-4),c+Vector2(24,8),Color("#7b8b93"),2.0,true)
+    if tram:
+        draw_line(c+Vector2(-30,12),c+Vector2(30,12),Color("#b4bfc5"),2.0,true)
+        draw_line(c+Vector2(-30,17),c+Vector2(30,17),Color("#b4bfc5"),2.0,true)
 
 func _draw_attraction(p: Dictionary) -> void:
     var c := _project(p.pos,14)
@@ -1084,14 +1207,36 @@ func _draw_player() -> void:
         var c = parked_cars[current_vehicle]
         _draw_car(player_pos,player_heading,c["class"],c.color,false)
         return
-    var p := _project(player_pos,18)
+    var foot := _project(player_pos,0)
+    var pelvis := _project(player_pos,10)
+    var chest := _project(player_pos,17)
+    var head := _project(player_pos,24)
     var f := Vector2.from_angle(player_heading)
-    var s := Vector2(-f.y,f.x)
-    draw_circle(p+Vector2(3,8),10,Color(0,0,0,0.26))
-    var body := PackedVector2Array([p+f*15,p-f*8+s*9,p-f*13,p-f*8-s*9])
-    draw_colored_polygon(body,Color("#f2f7fb"))
-    draw_circle(p+f*1,4,Color("#73f3ce"))
-
+    var side := Vector2(-f.y,f.x)
+    var walking := move_vec.length() > 0.08
+    var phase := Time.get_ticks_msec()/95.0 if walking else 0.0
+    var swing := sin(phase)*5.0 if walking else 0.0
+    var bob := abs(sin(phase))*1.5 if walking else 0.0
+    pelvis.y -= bob
+    chest.y -= bob
+    head.y -= bob
+    draw_ellipse(foot+Vector2(3,5),Vector2(9,5),player_heading,Color(0,0,0,0.24))
+    var left_leg := pelvis + f*5.0 + side*swing
+    var right_leg := pelvis + f*5.0 - side*swing
+    draw_line(pelvis,left_leg+Vector2(0,7),Color("#5c6974"),3.0,true)
+    draw_line(pelvis,right_leg+Vector2(0,7),Color("#687886"),3.0,true)
+    var torso := PackedVector2Array([chest+f*7+side*6,chest+f*7-side*6,pelvis-side*6,pelvis+side*6])
+    draw_colored_polygon(torso,Color("#e8f2f6"))
+    draw_polyline(PackedVector2Array([torso[0],torso[1],torso[2],torso[3],torso[0]]),Color(0.2,0.35,0.42,0.45),1.0,true)
+    draw_line(chest+side*4,chest-side*swing+Vector2(0,7),Color("#cfdde4"),2.4,true)
+    draw_line(chest-side*4,chest+side*swing+Vector2(0,7),Color("#cfdde4"),2.4,true)
+    draw_circle(head,5.2,Color("#e8ba96"))
+    draw_arc(head+Vector2(0,-1),5.3,PI,TAU,14,Color("#263039"),2.5,true)
+    draw_line(chest-f*2-side*6,chest-f*2+side*6,Color("#73f3ce"),1.8,true)
+    # small tech pack that visually anchors the PMDD theme
+    var pack := chest - f*4.0
+    draw_rect(Rect2(pack-Vector2(3,4),Vector2(6,8)),Color("#20343f"),true)
+    draw_circle(pack+Vector2(0,-1),1.6,Color("#73f3ce"))
 
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
