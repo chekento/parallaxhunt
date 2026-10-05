@@ -2197,14 +2197,14 @@ func _dialogue_mission() -> void:
         return
     var npc: Dictionary = named_npcs[active_dialogue_npc]
     var id := str(npc.id)
-    var hint := {
+    var hint: String = str({
         "mira":"Caches reagieren auf die Perspektive. Nutze Karte, Scan und Seitenblick gemeinsam.",
         "nova":"Die Hafenrouten verbinden Caches, Jobboards und Sublevel-Knoten.",
         "luna":"Am Solar Grid brauchst du saubere Leitungsorientierung und Geduld an den Kreuzungen.",
         "iris":"Nach dem Firewall-Hack lohnt sich ein Blick in die Bio-Sublevels.",
         "vio":"Der Cipher Gate Code gibt nur Positionsfeedback. Jede Vermutung sollte Information gewinnen.",
         "bram":"Busse und Trams halten nur kurz. Steig am markierten Halt ein und erst am nächsten wieder aus."
-    }.get(id,"Erkunde die markierten POIs und verknüpfe ihre Hinweise.")
+    }.get(id,"Erkunde die markierten POIs und verknüpfe ihre Hinweise."))
     dialogue_body.text=str(hint)
     if not bool(npc_flags.get(id,false)):
         npc_flags[id]=true
