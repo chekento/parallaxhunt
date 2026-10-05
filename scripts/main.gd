@@ -4088,7 +4088,7 @@ func _init_mastermind() -> void:
     var max_digit: int = mini(8,5+diff)
     for i in range(4):
         game_secret.append(rng.randi_range(1,max_digit))
-    game_status.text = "Tippe jede Stelle zum Hochzählen. Dann TEST."
+    game_status.text = "Zahlenbereich 1–%d · Tippe jede Stelle zum Hochzählen. Dann TEST." % max_digit
     _render_mastermind()
 
 func _render_mastermind() -> void:
@@ -4107,7 +4107,10 @@ func _render_mastermind() -> void:
     await get_tree().process_frame
 
 func _on_mastermind_digit(index: int) -> void:
-    game_guess[index] = (int(game_guess[index])%6)+1
+    var diff: int = int(active_mission_site.get("difficulty",1))
+    var max_digit: int = mini(8,5+diff)
+    game_guess[index] = (int(game_guess[index])%max_digit)+1
+    _play_sfx("hack_click")
     _render_mastermind()
 
 func _test_mastermind() -> void:
