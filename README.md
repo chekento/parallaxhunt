@@ -1,44 +1,54 @@
 # Parallax Hunt
 
-Native Android/Game-Engine edition of **Parallax Hunt**, rebuilt in **Godot 4.7.2**.
+**Parallax Hunt 1.4.0 Native Alpha** is the Godot 4.7.2 Android migration of the original HTML prototype.
 
-## Current native alpha
+## Native systems currently implemented
 
-This repository is the engine migration from the HTML prototype into a real mobile game project. The first APK focuses on the native foundation:
-
-- procedural large top-down city with visually distinct districts
-- PMDD-style height/parallax projection for roofs, trees, vehicles and secrets
-- true simultaneous multi-touch: left movement + right perspective peek
-- Android sensor parallax (gravity/gyro) with touch fallback
-- large readable mobile HUD, district banners and quest tracker
-- collectible echo fragments, perspective secrets and scan pulse
-- traffic and usable parked vehicle classes
-- native synthesized SFX including a custom treasure/reveal chime
-- debug Android APK CI build
-
-The front-camera **face/head tracking** adapter is architected as the next native module. The alpha already uses Android motion sensors as a reliable native parallax source rather than pretending camera face tracking is complete.
-
-## Engine
-
-Godot **4.7.2 stable**, Compatibility renderer for broad Android support.
+- 25 visually distinct city districts in a 26,000 × 18,000 open world
+- dynamic camera zoom: closer on foot, wider while driving
+- PMDD-style parallax with Android motion-sensor input and simultaneous touch peek
+- mobile multi-touch movement + perspective control
+- procedural buildings, landmark architecture, vegetation, pedestrians, cars, buses and trams
+- OpenAI HQ landmark with a stylized visitor-lab interior
+- world map with POI legend and player position
+- mission menu with chapter progression and completion state
+- named NPCs including Mira, Nova, Luna, Iris, Vio and Bram
+- echo fragments, perspective secrets, data caches and city sigils
+- rooftop relays and sublevel utility nodes
+- six native hacking minigames:
+  - wire rotation
+  - sliding puzzle
+  - Mastermind
+  - frequency alignment
+  - packet-memory sequence
+  - Lights Out firewall
+- enterable restaurants, cafés, shops, garages, workshops, homes and special interiors
+- energy, credits, shop inventory and restaurant recovery
+- side jobs / city deliveries with distance-scaled rewards
+- vehicle classes, driving, paint workshop and persistent home-garage storage
+- purchasable homes with garage capacity
+- functional buses/trams with stops, dwell time, boarding and exiting
+- save/load and periodic autosave
+- native synthesized sound effects and perspective-secret reveal chime
+- runtime smoke test in CI: builds fail if the Godot main scene cannot actually start
 
 ## Android build
 
-Pushes to `main` run `.github/workflows/android-debug.yml` and upload `ParallaxHunt-debug.apk` as a workflow artifact.
+Every push to `main` runs:
 
-## Controls
+1. Godot 4.7.2 Android debug export
+2. headless runtime startup smoke test
+3. APK verification
+4. GitHub Actions artifact upload
 
-- Left thumb: move / steer
-- Right thumb: perspective peek (works simultaneously with left thumb)
-- `SCAN`: highlights perspective objects
-- `INTERACT`: collect/use nearby objects and vehicles
-- Sensor mode: Android gravity/gyro subtly drives PMDD parallax; touch remains additive
+## Important tracking status
 
-## Status
+The native game currently uses Android motion sensors plus touch peek for PMDD perspective. Front-camera permission/feed detection is prepared, but full native MediaPipe face/iris tracking is still a separate Android-plugin milestone and is not claimed as finished.
 
-This is the first native APK foundation. The existing web prototype remains the gameplay/design reference while systems are migrated incrementally into engine-native scenes and scripts.
+## Repository structure
 
-
-## Native build
-
-The repository now includes a reproducible Android debug APK workflow for Godot 4.7.2.
+- `scripts/main.gd` — current native gameplay/world implementation
+- `scenes/Main.tscn` — main scene
+- `assets/visual/` — building, vehicle, character and transit design sheets
+- `docs/ROADMAP.md` — native migration roadmap
+- `.github/workflows/android-debug.yml` — reproducible Android build + runtime test
