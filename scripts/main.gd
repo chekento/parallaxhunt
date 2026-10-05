@@ -9,10 +9,14 @@ var rng := RandomNumberGenerator.new()
 var districts: Array = []
 var roads: Array = []
 var parks: Array = []
+var waters: Array = []
 var buildings: Array = []
 var trees: Array = []
 var parked_cars: Array = []
 var traffic: Array = []
+var street_lights: Array = []
+var street_props: Array = []
+var pedestrians: Array = []
 var fragments: Array = []
 var secrets: Array = []
 var camera_pos := Vector2.ZERO
@@ -29,6 +33,7 @@ var mission_fragments := 0
 var mission_secrets := 0
 var current_district := ""
 var camera_status := "Sensor-PMDD"
+var world_clock := 19.15
 
 # True multi-touch state: left and right touches can coexist.
 var move_touch := -1
@@ -54,8 +59,10 @@ func _ready() -> void:
     _build_districts()
     _build_roads()
     _build_parks()
+    _build_water()
     _generate_city()
     _generate_traffic()
+    _generate_visual_props()
     _generate_collectibles()
     _build_ui()
     _build_audio()
@@ -69,6 +76,8 @@ func _process(delta: float) -> void:
     _update_sensor(delta)
     _update_player(delta)
     _update_traffic(delta)
+    _update_pedestrians(delta)
+    world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
     view_amount = view_amount.lerp((sensor_view * 0.72 + view_touch * 0.95).limit_length(1.0), minf(1.0, delta * 8.0))
     camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
@@ -152,6 +161,15 @@ func _build_parks() -> void:
         {"rect":Rect2(21600,12300,2100,1250), "name":"Terminal Pocket Park", "attraction":"Clock"}
     ]
 
+func _build_water() -> void:
+    waters = [
+        {"rect":Rect2(430,4750,720,3600), "tint":Color("#174b61"), "name":"Westkanal"},
+        {"rect":Rect2(3500,5050,1050,2700), "tint":Color("#15566a"), "name":"Museumskanal"},
+        {"rect":Rect2(11000,6900,3900,780), "tint":Color("#194c61"), "name":"Hafenbecken"},
+        {"rect":Rect2(12100,7700,1850,900), "tint":Color("#1b5268"), "name":"Dock Basin"},
+        {"rect":Rect2(18000,7300,3100,620), "tint":Color("#25235a"), "name":"Neon Reflecting Pool"}
+    ]
+
 func _generate_city() -> void:
     buildings.clear()
     trees.clear()
@@ -177,7 +195,7 @@ func _generate_city() -> void:
             var h := rng.randf_range(45, 125)
             if district.style in ["glass", "center", "neon"]:
                 h += rng.randf_range(45, 165)
-            buildings.append({"rect":rect, "height":h, "wall":district.wall, "roof":district.roof, "accent":district.accent, "style":district.style})
+            buildings.append({"rect":rect, "height":h, "wall":district.wall, "roof":district.roof, "accent":district.accent, "style":district.style, "seed":rng.randi(), "floors":maxi(2, int(h / 28.0))})
         var tree_count := 80 if district.style in ["green", "garden"] else 26
         for _j in range(tree_count):
             var tp := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
@@ -202,6 +220,47 @@ func _generate_traffic() -> void:
         var road_index := rng.randi_range(0, roads.size()-1)
         var cls: String = ["micro","sedan","van","sport"][rng.randi_range(0,3)]
         traffic.append({"road":road_index, "t":rng.randf(), "speed":rng.randf_range(0.018,0.052), "class":cls, "color":_car_color(cls), "reverse":rng.randf()<0.5})
+
+
+func _generate_visual_props() -> void:
+    street_lights.clear()
+    street_props.clear()
+    pedestrians.clear()
+    for ri in range(roads.size()):
+        var road = roads[ri]
+        for k in range(4, 97, 7):
+            var t := float(k) / 100.0
+            var pos := _sample_polyline(road.points, t)
+            var tangent := _polyline_tangent(road.points, t)
+            var normal := Vector2(-tangent.y, tangent.x)
+            var offset: float = float(road.width) * 0.5 + 23.0
+            street_lights.append({"pos":pos + normal * offset, "h":44.0, "tint":Color("#ffd99a")})
+            if k % 14 == 4:
+                street_lights.append({"pos":pos - normal * offset, "h":44.0, "tint":Color("#b9e9ff")})
+    for park in parks:
+        var r: Rect2 = park.rect
+        for i in range(8):
+            street_props.append({"type":"bench", "pos":r.position + Vector2(120 + (i%4)*210, 150 + (i/4)*220), "rot":0.0, "tint":Color("#b9875f")})
+        street_props.append({"type":"attraction", "pos":r.get_center(), "kind":park.attraction, "name":park.name})
+    for d in districts:
+        var r: Rect2 = d.rect
+        if d.style in ["neon","center","glass","terminal"]:
+            for i in range(8):
+                street_props.append({"type":"billboard", "pos":Vector2(rng.randf_range(r.position.x+180,r.end.x-180),rng.randf_range(r.position.y+180,r.end.y-180)), "rot":rng.randf_range(-0.35,0.35), "tint":d.accent})
+        if d.style in ["heritage","canal","harbor"]:
+            for i in range(10):
+                street_props.append({"type":"crate", "pos":Vector2(rng.randf_range(r.position.x+120,r.end.x-120),rng.randf_range(r.position.y+120,r.end.y-120)), "rot":0.0, "tint":d.accent.darkened(0.45)})
+    for i in range(220):
+        var road_index := rng.randi_range(0, roads.size()-1)
+        pedestrians.append({
+            "road":road_index,
+            "t":rng.randf(),
+            "speed":rng.randf_range(0.006,0.017),
+            "reverse":rng.randf()<0.5,
+            "side":-1.0 if rng.randf()<0.5 else 1.0,
+            "color":[Color("#eef4f7"),Color("#ffbf9a"),Color("#a8c7ff"),Color("#ff9fc1"),Color("#90dfb8")][rng.randi_range(0,4)],
+            "phase":rng.randf_range(0,TAU)
+        })
 
 func _generate_collectibles() -> void:
     fragments.clear()
@@ -384,6 +443,15 @@ func _update_traffic(delta: float) -> void:
         c.t = fposmod(float(c.t) + float(c.speed) * delta * direction, 1.0)
         traffic[i] = c
 
+
+func _update_pedestrians(delta: float) -> void:
+    for i in range(pedestrians.size()):
+        var p = pedestrians[i]
+        var direction := -1.0 if p.reverse else 1.0
+        p.t = fposmod(float(p.t) + float(p.speed) * delta * direction, 1.0)
+        p.phase = fposmod(float(p.phase) + delta * 5.0, TAU)
+        pedestrians[i] = p
+
 func _update_secrets() -> void:
     for i in range(secrets.size()):
         var s = secrets[i]
@@ -485,14 +553,18 @@ func _nearest_interactable() -> Dictionary:
 func _draw() -> void:
     draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color("#07131b"))
     _draw_district_ground()
+    _draw_water()
     _draw_parks()
     _draw_roads()
     _draw_buildings()
     _draw_trees()
+    _draw_street_props()
+    _draw_pedestrians()
     _draw_traffic()
     _draw_parked_cars()
     _draw_collectibles()
     _draw_player()
+    _draw_ambient_overlay()
     _draw_touch_controls()
     _draw_peek_meter()
 
@@ -515,15 +587,39 @@ func _draw_district_ground() -> void:
                 var cp := _project(r.position + Vector2(180+i*310, 240+(i%3)*220))
                 draw_circle(cp, 36+(i%4)*8, accent)
 
+
+func _draw_water() -> void:
+    for w in waters:
+        var r: Rect2 = w.rect
+        if not _world_rect_visible(r):
+            continue
+        var p := _project(r.position)
+        var tint: Color = w.tint
+        draw_rect(Rect2(p,r.size),tint.darkened(0.18))
+        var shimmer := Time.get_ticks_msec() / 900.0
+        for yy in range(26, int(r.size.y)-20, 54):
+            var y := p.y + yy
+            var phase := shimmer + float(yy) * 0.025
+            var start := p.x + 18 + sin(phase) * 12
+            draw_line(Vector2(start,y),Vector2(p.x+r.size.x-20,y+sin(phase*1.7)*4),Color(tint.r+0.12,tint.g+0.18,tint.b+0.22,0.24),2.0,true)
+        draw_rect(Rect2(p+Vector2(3,3),r.size-Vector2(6,6)),Color(0.55,0.85,1.0,0.10),false,3.0)
+
 func _draw_roads() -> void:
     for road in roads:
         var pts: PackedVector2Array = road.points
         var screen := PackedVector2Array()
         for p in pts:
             screen.append(_project(p))
-        draw_polyline(screen, Color("#151d23"), road.width + 28.0, true)
-        draw_polyline(screen, Color("#303c43"), road.width, true)
-        draw_polyline(screen, Color(0.92,0.86,0.63,0.34), 3.0, true)
+        draw_polyline(screen, Color("#0e151a"), road.width + 42.0, true)
+        draw_polyline(screen, Color("#67737a"), road.width + 24.0, true)
+        draw_polyline(screen, Color("#29343b"), road.width, true)
+        draw_polyline(screen, Color(1.0,0.88,0.58,0.16), 3.0, true)
+        for k in range(3, 98, 6):
+            var t := float(k)/100.0
+            var wp := _sample_polyline(pts,t)
+            var tan := _polyline_tangent(pts,t)
+            var c := _project(wp,1.0)
+            draw_line(c-tan*14.0,c+tan*14.0,Color(0.92,0.89,0.72,0.48),3.0,true)
 
 func _draw_parks() -> void:
     for park in parks:
@@ -535,34 +631,117 @@ func _draw_parks() -> void:
         var path := PackedVector2Array([p+Vector2(30,r.size.y*.28),p+Vector2(r.size.x*.32,50),p+Vector2(r.size.x*.58,r.size.y*.73),p+Vector2(r.size.x-40,r.size.y*.52)])
         draw_polyline(path,Color(0.85,0.82,0.62,0.20),12.0,true)
         var c := p + r.size * 0.5
-        draw_circle(c,42,Color("#23333b"))
-        draw_circle(c,31,Color("#54bad5"))
-        draw_string(ThemeDB.fallback_font,c+Vector2(-80,-58),park.name,HORIZONTAL_ALIGNMENT_CENTER,160,16,Color("#d9efe3"))
+        draw_string(ThemeDB.fallback_font,c+Vector2(-95,-70),park.name,HORIZONTAL_ALIGNMENT_CENTER,190,17,Color("#d9efe3"))
+
 
 func _draw_buildings() -> void:
     for b in buildings:
         var r: Rect2 = b.rect
-        if not _world_rect_visible(r.grow(220)):
+        if not _world_rect_visible(r.grow(260)):
             continue
         var z: float = b.height
         var base := [_project(r.position),_project(Vector2(r.end.x,r.position.y)),_project(r.end),_project(Vector2(r.position.x,r.end.y))]
         var top := [_project(r.position,z),_project(Vector2(r.end.x,r.position.y),z),_project(r.end,z),_project(Vector2(r.position.x,r.end.y),z)]
-        var side1 := PackedVector2Array([base[1],base[2],top[2],top[1]])
-        var side2 := PackedVector2Array([base[2],base[3],top[3],top[2]])
-        draw_colored_polygon(side1,b.wall.darkened(0.22))
-        draw_colored_polygon(side2,b.wall.darkened(0.34))
-        draw_colored_polygon(PackedVector2Array(top),b.roof)
-        draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),Color(1,1,1,0.10),1.5,true)
+        var roof_poly := PackedVector2Array([top[0],top[1],top[2],top[3]])
+        var shadow_shift := view_amount * z * 0.22 + Vector2(8,12)
+        draw_colored_polygon(PackedVector2Array([base[0]+shadow_shift,base[1]+shadow_shift,base[2]+shadow_shift,base[3]+shadow_shift]),Color(0,0,0,0.16))
+        for edge in range(4):
+            var next := (edge+1)%4
+            var face := PackedVector2Array([base[edge],base[next],top[next],top[edge]])
+            var shade := 0.12 + 0.09 * float(edge)
+            var fc: Color = b.wall.darkened(shade)
+            fc.a = 0.95
+            draw_colored_polygon(face,fc)
+            _draw_facade_face(b,base[edge],base[next],top[next],top[edge],edge)
+        draw_colored_polygon(roof_poly,b.roof)
         var glow: Color = b.accent
-        glow.a = 0.10 + minf(0.15,view_amount.length()*0.10)
-        draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),glow,4.0,true)
-        if b.style in ["glass","neon"]:
-            for k in range(1,5):
-                var t := float(k)/5.0
-                draw_line(top[0].lerp(top[3],t),top[1].lerp(top[2],t),Color(0.7,0.9,1.0,0.12),1.0)
-        elif b.style == "heritage":
-            var roof_center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
-            draw_circle(roof_center,8,Color(1.0,0.83,0.58,0.20))
+        glow.a = 0.11 + minf(0.22,view_amount.length()*0.16)
+        draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),Color(1,1,1,0.12),1.2,true)
+        draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),glow,4.2,true)
+        _draw_roof_detail(b,top)
+
+func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Vector2, edge: int) -> void:
+    var height_vec := d-a
+    if height_vec.length() < 5.0:
+        return
+    var floors: int = int(b.get("floors",4))
+    var cols := 5
+    var face_alpha := clampf(height_vec.length()/70.0,0.0,1.0)
+    var window_color := Color("#ffdca0") if b.style in ["heritage","harbor"] else Color("#9cddff")
+    if b.style == "neon":
+        window_color = b.accent
+    window_color.a = 0.20 + face_alpha*0.28
+    for fy in range(1, mini(floors,8)):
+        var v := float(fy)/float(mini(floors,8))
+        var l := a.lerp(d,v)
+        var rr := bb.lerp(c,v)
+        draw_line(l,rr,Color(1,1,1,0.045),1.0)
+    for row in range(1, mini(floors,7)):
+        var v0 := float(row)/float(mini(floors,7)+1)
+        for col in range(cols):
+            if (int(b.seed) + row*7 + col*13 + edge*17) % 5 == 0:
+                continue
+            var u := (float(col)+0.5)/float(cols)
+            var center := _quad_bilerp(a,bb,c,d,u,v0)
+            var along := (bb-a).normalized() * 5.0
+            var up := (d-a).normalized() * 3.5
+            var wpoly := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
+            draw_colored_polygon(wpoly,window_color)
+    if b.style == "heritage":
+        var sill := a.lerp(d,0.18)
+        draw_line(sill,bb.lerp(c,0.18),Color("#e5b889"),2.0)
+    elif b.style in ["glass","center"]:
+        for u_i in range(1,4):
+            var u := float(u_i)/4.0
+            draw_line(a.lerp(bb,u),d.lerp(c,u),Color(0.65,0.90,1.0,0.10+face_alpha*0.08),1.5)
+    elif b.style == "neon":
+        var mid1 := a.lerp(d,0.55)
+        var mid2 := bb.lerp(c,0.55)
+        draw_line(mid1,mid2,Color(b.accent.r,b.accent.g,b.accent.b,0.55),2.5)
+    elif b.style in ["green","garden"]:
+        var ledge1 := a.lerp(d,0.32)
+        var ledge2 := bb.lerp(c,0.32)
+        draw_line(ledge1,ledge2,Color(0.48,0.83,0.55,0.34),3.0)
+
+func _draw_roof_detail(b: Dictionary, top: Array) -> void:
+    var center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
+    var style: String = b.style
+    if style == "heritage":
+        var ridge_a := top[0].lerp(top[3],0.5)
+        var ridge_b := top[1].lerp(top[2],0.5)
+        draw_line(ridge_a,ridge_b,Color(1.0,0.82,0.61,0.24),3.0,true)
+        draw_circle(center,6,Color("#b78d70"))
+    elif style in ["glass","center"]:
+        draw_rect(Rect2(center-Vector2(15,8),Vector2(30,16)),Color(0.48,0.77,0.88,0.22),true)
+        draw_line(center,center+Vector2(0,-22),Color(b.accent.r,b.accent.g,b.accent.b,0.45),2.0,true)
+        draw_circle(center+Vector2(0,-24),3.5,Color(b.accent.r,b.accent.g,b.accent.b,0.7))
+    elif style == "solar":
+        for ix in [-1,0,1]:
+            var q := center + Vector2(ix*18,-3)
+            draw_rect(Rect2(q-Vector2(7,5),Vector2(14,10)),Color(0.16,0.30,0.38,0.9),true)
+            draw_rect(Rect2(q-Vector2(7,5),Vector2(14,10)),Color("#f1e36f"),false,1.0)
+    elif style in ["green","garden"]:
+        draw_circle(center+Vector2(-12,0),9,Color(0.28,0.58,0.34,0.75))
+        draw_circle(center+Vector2(11,2),8,Color(0.35,0.68,0.40,0.72))
+        draw_rect(Rect2(center+Vector2(-4,-12),Vector2(8,24)),Color(0.58,0.44,0.29,0.55),true)
+    elif style == "harbor":
+        draw_rect(Rect2(center-Vector2(18,7),Vector2(36,14)),Color(0.16,0.20,0.22,0.85),true)
+        draw_line(center+Vector2(15,-3),center+Vector2(15,-22),Color("#ffb66f"),2.0)
+    elif style == "neon":
+        draw_line(top[0].lerp(top[1],0.18),top[3].lerp(top[2],0.18),Color(b.accent.r,b.accent.g,b.accent.b,0.58),3.0,true)
+        draw_line(top[0].lerp(top[3],0.78),top[1].lerp(top[2],0.78),Color(0.45,0.78,1.0,0.42),2.0,true)
+    elif style == "campus":
+        draw_rect(Rect2(center-Vector2(18,10),Vector2(36,20)),Color(0.55,0.74,0.94,0.22),true)
+        draw_rect(Rect2(center-Vector2(18,10),Vector2(36,20)),Color("#b0c8ff"),false,1.0)
+    elif style == "astro":
+        draw_circle(center,15,Color(0.33,0.30,0.55,0.95))
+        draw_arc(center,15,PI,TAU,18,Color("#c3a6ff"),2.0,true)
+    elif style == "terminal":
+        for ix in range(-2,3):
+            draw_line(center+Vector2(ix*11,-12),center+Vector2(ix*11,12),Color(0.75,0.83,0.88,0.20),2.0)
+
+func _quad_bilerp(a: Vector2, b: Vector2, c: Vector2, d: Vector2, u: float, v: float) -> Vector2:
+    return a.lerp(b,u).lerp(d.lerp(c,u),v)
 
 func _draw_trees() -> void:
     for t in trees:
@@ -574,6 +753,97 @@ func _draw_trees() -> void:
         draw_circle(c+Vector2(3,6),t.r,Color(0,0,0,0.18))
         draw_circle(c,t.r,t.tint.darkened(0.2))
         draw_circle(c+Vector2(-5,-5),t.r*0.62,t.tint.lightened(0.12))
+
+
+func _draw_street_props() -> void:
+    for l in street_lights:
+        if player_pos.distance_to(l.pos) > 1750.0:
+            continue
+        var base := _project(l.pos,0)
+        var top := _project(l.pos,l.h)
+        draw_line(base,top,Color("#607079"),3.0,true)
+        draw_line(top,top+Vector2(8,-5),Color("#87959d"),2.0,true)
+        var bulb := top+Vector2(9,-6)
+        draw_circle(bulb,4.5,l.tint)
+        draw_circle(bulb,12.0,Color(l.tint.r,l.tint.g,l.tint.b,0.07))
+    for p in street_props:
+        if player_pos.distance_to(p.pos) > 1700.0:
+            continue
+        if p.type == "bench":
+            var c := _project(p.pos,4)
+            draw_line(c-Vector2(13,0),c+Vector2(13,0),p.tint,5.0,true)
+            draw_line(c-Vector2(10,-6),c+Vector2(10,-6),p.tint.lightened(0.08),3.0,true)
+            draw_line(c+Vector2(-9,1),c+Vector2(-9,8),Color("#59636a"),2.0)
+            draw_line(c+Vector2(9,1),c+Vector2(9,8),Color("#59636a"),2.0)
+        elif p.type == "billboard":
+            var btm := _project(p.pos,0)
+            var top := _project(p.pos,38)
+            draw_line(btm,top,Color("#59636d"),3.0,true)
+            draw_rect(Rect2(top-Vector2(22,14),Vector2(44,22)),Color(0.03,0.06,0.10,0.92),true)
+            draw_rect(Rect2(top-Vector2(22,14),Vector2(44,22)),Color(p.tint.r,p.tint.g,p.tint.b,0.72),false,2.0)
+            draw_line(top+Vector2(-16,-2),top+Vector2(16,-2),Color(p.tint.r,p.tint.g,p.tint.b,0.45),3.0)
+        elif p.type == "crate":
+            var cr := _project(p.pos,8)
+            draw_rect(Rect2(cr-Vector2(8,6),Vector2(16,12)),p.tint,true)
+            draw_rect(Rect2(cr-Vector2(8,6),Vector2(16,12)),Color(1,1,1,0.12),false,1.0)
+        elif p.type == "attraction":
+            _draw_attraction(p)
+
+func _draw_attraction(p: Dictionary) -> void:
+    var c := _project(p.pos,14)
+    var kind: String = p.kind
+    if kind == "Fountain":
+        draw_circle(c,34,Color("#203f4b"))
+        draw_circle(c,26,Color("#4bb8d5"))
+        draw_circle(c,16,Color(0.65,0.92,1.0,0.22))
+        draw_line(c,c+Vector2(0,-28),Color(0.75,0.95,1.0,0.72),3.0,true)
+    elif kind == "Stage":
+        draw_rect(Rect2(c-Vector2(42,18),Vector2(84,36)),Color("#5e453b"),true)
+        draw_line(c+Vector2(-34,-18),c+Vector2(-22,-42),Color("#ffc980"),3.0)
+        draw_line(c+Vector2(34,-18),c+Vector2(22,-42),Color("#ffc980"),3.0)
+        draw_line(c+Vector2(-22,-42),c+Vector2(22,-42),Color("#ffc980"),3.0)
+    elif kind == "Sculpture":
+        var pts := PackedVector2Array([c+Vector2(0,-34),c+Vector2(20,-2),c+Vector2(2,28),c+Vector2(-22,4)])
+        draw_colored_polygon(pts,Color(0.55,0.72,1.0,0.24))
+        draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color("#b0c8ff"),3.0,true)
+    elif kind == "Light Spire":
+        draw_line(c+Vector2(0,22),c+Vector2(0,-48),Color("#ff80ef"),5.0,true)
+        draw_circle(c+Vector2(0,-50),12,Color(1.0,0.38,0.91,0.18))
+        draw_circle(c+Vector2(0,-50),4,Color("#ffb7f7"))
+    elif kind == "Pavilion":
+        draw_circle(c,34,Color(0.1,0.16,0.2,0.75))
+        for a in range(0,360,60):
+            var dir := Vector2.from_angle(deg_to_rad(float(a)))
+            draw_line(c+dir*20,c+dir*35,Color("#d9c2ff"),3.0)
+        draw_circle(c,35,Color("#c3a6ff"),false,3.0)
+    else:
+        draw_circle(c,26,Color("#303d44"))
+        draw_circle(c,18,Color("#d9e5ef"),false,3.0)
+        draw_line(c,c+Vector2(0,-12),Color("#d9e5ef"),2.0)
+        draw_line(c,c+Vector2(8,0),Color("#d9e5ef"),2.0)
+    draw_string(ThemeDB.fallback_font,c+Vector2(-72,52),str(p.name),HORIZONTAL_ALIGNMENT_CENTER,144,14,Color(0.88,0.96,0.95,0.82))
+
+func _draw_pedestrians() -> void:
+    for ped in pedestrians:
+        var rd = roads[ped.road]
+        var pos := _sample_polyline(rd.points,float(ped.t))
+        if player_pos.distance_to(pos) > 1700.0:
+            continue
+        var tan := _polyline_tangent(rd.points,float(ped.t))
+        if ped.reverse:
+            tan *= -1.0
+        var normal := Vector2(-tan.y,tan.x)
+        pos += normal * (float(rd.width)*0.5 + 18.0) * float(ped.side)
+        var base := _project(pos,0)
+        var head := _project(pos,17)
+        var bob := sin(float(ped.phase))*1.8
+        head.y += bob
+        draw_circle(base+Vector2(2,5),5.5,Color(0,0,0,0.18))
+        draw_line(head+Vector2(0,5),head+Vector2(0,13),ped.color,4.0,true)
+        draw_circle(head,4.4,Color("#f1c7a8"))
+        var swing := sin(float(ped.phase))*4.0
+        draw_line(head+Vector2(0,7),head+Vector2(swing,12),ped.color.darkened(0.15),2.0)
+        draw_line(head+Vector2(0,12),head+Vector2(-swing,18),Color("#83919b"),2.0)
 
 func _draw_traffic() -> void:
     for c in traffic:
@@ -600,15 +870,44 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     var sz: Vector2 = VEHICLE_SIZES[cls]
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
-    var s := Vector2(-f.y,f.x)
-    var pts := PackedVector2Array([center+f*sz.x*.5+s*sz.y*.5,center+f*sz.x*.5-s*sz.y*.5,center-f*sz.x*.5-s*sz.y*.5,center-f*sz.x*.5+s*sz.y*.5])
+    var side := Vector2(-f.y,f.x)
+    var shadow := center + Vector2(4,7)
+    draw_ellipse(shadow,Vector2(sz.x*.50,sz.y*.42),heading,Color(0,0,0,0.18))
+    var nose := 0.56 if cls=="sport" else 0.50
+    var pts := PackedVector2Array([center+f*sz.x*nose+side*sz.y*.42,center+f*sz.x*nose-side*sz.y*.42,center-f*sz.x*.48-side*sz.y*.5,center-f*sz.x*.48+side*sz.y*.5])
     draw_colored_polygon(pts,color)
-    draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.18),1.2,true)
-    var cabin := _project(pos,15)
-    draw_circle(cabin,sz.y*.30,Color(0.68,0.86,0.92,0.65))
+    draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.20),1.2,true)
+    var cabin_center := center - f*(2.0 if cls=="sport" else 0.0)
+    var cabin_len := sz.x*.22 if cls=="micro" else sz.x*.28
+    var wind_a := cabin_center+f*cabin_len+side*sz.y*.30
+    var wind_b := cabin_center+f*cabin_len-side*sz.y*.30
+    var wind_c := cabin_center-f*cabin_len-side*sz.y*.30
+    var wind_d := cabin_center-f*cabin_len+side*sz.y*.30
+    draw_colored_polygon(PackedVector2Array([wind_a,wind_b,wind_c,wind_d]),Color(0.58,0.82,0.92,0.72))
+    draw_line(wind_a,wind_b,Color(1,1,1,0.24),1.0)
+    var front_l := center+f*sz.x*.49+side*sz.y*.25
+    var front_r := center+f*sz.x*.49-side*sz.y*.25
+    draw_circle(front_l,2.4,Color("#ffe0a0"))
+    draw_circle(front_r,2.4,Color("#ffe0a0"))
+    var rear_l := center-f*sz.x*.45+side*sz.y*.25
+    var rear_r := center-f*sz.x*.45-side*sz.y*.25
+    draw_circle(rear_l,2.2,Color("#ff726f"))
+    draw_circle(rear_r,2.2,Color("#ff726f"))
+    if cls == "van":
+        draw_line(center-f*6-side*sz.y*.45,center-f*6+side*sz.y*.45,Color(1,1,1,0.16),1.5)
+    elif cls == "sport":
+        draw_line(center-f*sz.x*.35-side*sz.y*.48,center-f*sz.x*.35+side*sz.y*.48,Color(0.06,0.08,0.10,0.6),2.0)
     if not parked:
         var tail := center - f * sz.x*.62
-        draw_line(tail,tail-f*18,Color(0.35,0.85,1.0,0.12),3.0,true)
+        draw_line(tail,tail-f*24,Color(0.35,0.85,1.0,0.10),4.0,true)
+
+func draw_ellipse(center: Vector2, radii: Vector2, rotation: float, color: Color) -> void:
+    var pts := PackedVector2Array()
+    for i in range(18):
+        var a := TAU*float(i)/18.0
+        var p := Vector2(cos(a)*radii.x,sin(a)*radii.y).rotated(rotation)
+        pts.append(center+p)
+    draw_colored_polygon(pts,color)
 
 func _draw_collectibles() -> void:
     for f in fragments:
@@ -647,6 +946,16 @@ func _draw_player() -> void:
     var body := PackedVector2Array([p+f*15,p-f*8+s*9,p-f*13,p-f*8-s*9])
     draw_colored_polygon(body,Color("#f2f7fb"))
     draw_circle(p+f*1,4,Color("#73f3ce"))
+
+
+func _draw_ambient_overlay() -> void:
+    var size := get_viewport_rect().size
+    var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
+    var night_alpha := lerpf(0.28,0.04,daylight)
+    draw_rect(Rect2(Vector2.ZERO,size),Color(0.025,0.055,0.12,night_alpha))
+    var edge_alpha := 0.12
+    draw_rect(Rect2(0,0,size.x,70),Color(0,0,0,edge_alpha))
+    draw_rect(Rect2(0,size.y-90,size.x,90),Color(0,0,0,edge_alpha))
 
 func _draw_touch_controls() -> void:
     var size := get_viewport_rect().size
@@ -691,6 +1000,15 @@ func _point_in_building(p: Vector2) -> bool:
 func _point_blocked(p: Vector2, radius: float) -> bool:
     for b in buildings:
         if (b.rect as Rect2).grow(radius).has_point(p):
+            return true
+    for w in waters:
+        if (w.rect as Rect2).grow(radius).has_point(p) and not _point_on_road(p):
+            return true
+    return false
+
+func _point_on_road(p: Vector2) -> bool:
+    for road in roads:
+        if _distance_to_polyline(p,road.points) < float(road.width)*0.55:
             return true
     return false
 
