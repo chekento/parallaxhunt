@@ -321,6 +321,11 @@ func _build_roads() -> void:
     roads.append({"points":PackedVector2Array([Vector2(1200,10500),Vector2(3700,9800),Vector2(6200,10300),Vector2(9000,12100),Vector2(12400,12600),Vector2(16000,11800)]), "width":150.0})
     roads.append({"points":PackedVector2Array([Vector2(16800,1200),Vector2(18000,2600),Vector2(19200,5000),Vector2(21000,6800),Vector2(24800,7600)]), "width":140.0})
     roads.append({"points":PackedVector2Array([Vector2(500,15500),Vector2(3300,14600),Vector2(5400,15000),Vector2(7800,16500),Vector2(11200,17000)]), "width":130.0})
+    roads.append({"points":PackedVector2Array([Vector2(900,3200),Vector2(2200,3550),Vector2(3600,3300),Vector2(4700,2700),Vector2(6100,2350)]), "width":118.0})
+    roads.append({"points":PackedVector2Array([Vector2(9900,7800),Vector2(11200,8200),Vector2(12600,8050),Vector2(13900,7500),Vector2(15200,7700)]), "width":122.0})
+    roads.append({"points":PackedVector2Array([Vector2(16000,15100),Vector2(17700,14650),Vector2(19400,14900),Vector2(21000,15700),Vector2(24400,16050)]), "width":124.0})
+    roads.append({"points":PackedVector2Array([Vector2(14800,10400),Vector2(16400,9800),Vector2(18000,10150),Vector2(19400,11000),Vector2(21100,11350)]), "width":116.0})
+    roads.append({"points":PackedVector2Array([Vector2(5200,7200),Vector2(6500,6800),Vector2(7900,7050),Vector2(9300,7900),Vector2(10100,9000)]), "width":112.0})
 
 func _build_junctions() -> void:
     junctions.clear()
@@ -386,12 +391,18 @@ func _traffic_world_transform(c: Dictionary) -> Dictionary:
 
 func _build_parks() -> void:
     parks = [
-        {"rect":Rect2(11200,500,2800,1500), "name":"Nordpark", "attraction":"Fountain"},
-        {"rect":Rect2(1200,10800,2200,1700), "name":"Garden Commons", "attraction":"Stage"},
-        {"rect":Rect2(7600,10400,1900,1400), "name":"Campus Green", "attraction":"Sculpture"},
-        {"rect":Rect2(17400,6900,2500,1300), "name":"Neon Plaza", "attraction":"Light Spire"},
-        {"rect":Rect2(14600,13700,1800,1400), "name":"Aurora Park", "attraction":"Pavilion"},
-        {"rect":Rect2(21600,12300,2100,1250), "name":"Terminal Pocket Park", "attraction":"Clock"}
+        {"rect":Rect2(11200,500,2800,1500),"name":"Nordpark","attraction":"Fountain"},
+        {"rect":Rect2(1200,10800,2200,1700),"name":"Garden Commons","attraction":"Stage"},
+        {"rect":Rect2(7600,10400,1900,1400),"name":"Campus Green","attraction":"Sculpture"},
+        {"rect":Rect2(17400,6900,2500,1300),"name":"Neon Plaza","attraction":"Light Spire"},
+        {"rect":Rect2(14600,13700,1800,1400),"name":"Aurora Park","attraction":"Pavilion"},
+        {"rect":Rect2(21600,12300,2100,1250),"name":"Terminal Pocket Park","attraction":"Clock"},
+        {"rect":Rect2(5600,900,1500,1050),"name":"Culture Courtyard","attraction":"Art Wall"},
+        {"rect":Rect2(1600,7900,1500,1100),"name":"Canal Steps","attraction":"Pond"},
+        {"rect":Rect2(16400,4200,1600,1100),"name":"Foundry Square","attraction":"Skate Bowl"},
+        {"rect":Rect2(22200,7800,1550,1050),"name":"Neon Pocket","attraction":"Drone Pad"},
+        {"rect":Rect2(10700,11300,1450,1050),"name":"Bio Garden","attraction":"Rose Garden"},
+        {"rect":Rect2(3900,14500,1600,1150),"name":"Aerodrome Family Park","attraction":"Playground"}
     ]
 
 func _build_water() -> void:
@@ -2919,6 +2930,35 @@ func _draw_attraction(p: Dictionary) -> void:
             var dir := Vector2.from_angle(deg_to_rad(float(a)))
             draw_line(c+dir*20,c+dir*35,Color("#d9c2ff"),3.0)
         draw_circle(c,35,Color("#c3a6ff"),false,3.0)
+    elif kind == "Art Wall":
+        draw_rect(Rect2(c-Vector2(45,24),Vector2(90,48)),Color("#26343c"),true)
+        for k in range(5):
+            draw_line(c+Vector2(-36,float(k)*8-16),c+Vector2(36-float(k)*8,float(k)*5-10),[Color("#ff80ef"),Color("#67d9ff"),Color("#f1e36f")][k%3],3.0)
+    elif kind == "Pond":
+        _draw_poly_ellipse(c,Vector2(48,27),0.0,Color("#2d7f92"))
+        draw_arc(c,38,-0.5,2.2,22,Color(0.72,0.94,1.0,0.35),2.0,true)
+        draw_circle(c+Vector2(-12,3),5,Color("#75b75d"))
+    elif kind == "Skate Bowl":
+        _draw_poly_ellipse(c,Vector2(45,28),0.0,Color("#59656c"))
+        _draw_poly_ellipse(c,Vector2(34,18),0.0,Color("#303a40"))
+        draw_arc(c,36,0,TAU,24,Color("#a8b5ba"),2.0,true)
+    elif kind == "Drone Pad":
+        draw_circle(c,34,Color("#222d36"))
+        draw_circle(c,27,Color("#ff80ef"),false,3.0)
+        draw_string(ThemeDB.fallback_font,c+Vector2(-12,-8),"H",HORIZONTAL_ALIGNMENT_CENTER,24,18,Color.WHITE)
+        var drone := c+Vector2(sin(Time.get_ticks_msec()/700.0)*20,-42+cos(Time.get_ticks_msec()/600.0)*5)
+        draw_circle(drone,5,Color("#dff7ff"))
+        draw_line(drone-Vector2(12,0),drone+Vector2(12,0),Color("#9ad5ff"),2.0)
+    elif kind == "Rose Garden":
+        for a in range(0,360,45):
+            var dir := Vector2.from_angle(deg_to_rad(float(a)))
+            draw_circle(c+dir*28,8,[Color("#ff8ca5"),Color("#ffd0d8"),Color("#d78cff")][(a/45)%3])
+        draw_circle(c,20,Color("#3f7449"))
+    elif kind == "Playground":
+        draw_line(c+Vector2(-28,20),c+Vector2(-8,-26),Color("#f2c65e"),5.0)
+        draw_line(c+Vector2(-8,-26),c+Vector2(14,20),Color("#f2c65e"),5.0)
+        draw_line(c+Vector2(-18,-2),c+Vector2(4,-2),Color("#6bc4e8"),4.0)
+        draw_arc(c+Vector2(28,3),18,PI,TAU,18,Color("#ff8fa6"),4.0,true)
     else:
         draw_circle(c,26,Color("#303d44"))
         draw_circle(c,18,Color("#d9e5ef"),false,3.0)
