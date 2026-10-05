@@ -398,7 +398,7 @@ func _shop_name(district_name: String, kind: String, index: int) -> String:
         "workshop":["Forge","Depth","Relay","Glass","Echo"]
     }
     var arr: Array = prefixes[kind]
-    var suffix := {"restaurant":"Kitchen","cafe":"Café","shop":"Store","garage":"Garage","workshop":"Works"}[kind]
+    var suffix: String = str({"restaurant":"Kitchen","cafe":"Café","shop":"Store","garage":"Garage","workshop":"Works"}[kind])
     return "%s %s" % [arr[(index+district_name.length())%arr.size()],suffix]
 
 func _generate_transit() -> void:
@@ -761,7 +761,7 @@ func _nearest_interactable() -> Dictionary:
             bd = ds
     for l in landmarks:
         if str(l.kind) == "openai_hq":
-            var entrance := l.pos + Vector2(0,l.size.y*0.5+48)
+            var entrance: Vector2 = Vector2(l.pos) + Vector2(0,float(l.size.y)*0.5+48.0)
             var dl := player_pos.distance_to(entrance)
             if dl < 105.0 and dl < bd:
                 best = {"type":"openai_hq","action":"ENTER OPENAI HQ"}
@@ -949,10 +949,10 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
 func _draw_roof_detail(b: Dictionary, top: Array) -> void:
     var center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
     var style: String = b.style
-    var roof_mode := str(b.get("roof_mode","flat"))
+    var roof_mode: String = str(b.get("roof_mode","flat"))
     if style == "heritage" or roof_mode == "pitched":
-        var ridge_a := top[0].lerp(top[3],0.5)
-        var ridge_b := top[1].lerp(top[2],0.5)
+        var ridge_a: Vector2 = Vector2(top[0]).lerp(Vector2(top[3]),0.5)
+        var ridge_b: Vector2 = Vector2(top[1]).lerp(Vector2(top[2]),0.5)
         draw_line(ridge_a,ridge_b,Color(1.0,0.82,0.61,0.24),3.0,true)
         draw_circle(center,6,Color("#b78d70"))
     if style in ["glass","center"] or roof_mode == "utility":
@@ -985,11 +985,11 @@ func _draw_roof_detail(b: Dictionary, top: Array) -> void:
             draw_line(center+Vector2(ix*11,-12),center+Vector2(ix*11,12),Color(0.75,0.83,0.88,0.20),2.0)
 
 func _draw_massing_detail(b: Dictionary, top: Array) -> void:
-    var mode := str(b.get("massing","slab"))
+    var mode: String = str(b.get("massing","slab"))
     var center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
     if mode == "slab":
         return
-    var inset := 0.26 if mode=="tower" else 0.18
+    var inset: float = 0.26 if mode=="tower" else 0.18
     var base := PackedVector2Array([
         top[0].lerp(center,inset),
         top[1].lerp(center,inset),
@@ -1004,10 +1004,10 @@ func _draw_massing_detail(b: Dictionary, top: Array) -> void:
         draw_colored_polygon(hole,Color(0.04,0.07,0.08,0.55))
         draw_polyline(PackedVector2Array([hole[0],hole[1],hole[2],hole[3],hole[0]]),Color(1,1,1,0.08),1.2,true)
         return
-    var extra_h := 28.0 if mode=="terrace" else 48.0
-    var shift := view_amount * extra_h * parallax_strength * 0.72
-    var cap := PackedVector2Array([base[0]+shift,base[1]+shift,base[2]+shift,base[3]+shift])
-    var shade := b.wall.darkened(0.20)
+    var extra_h: float = 28.0 if mode=="terrace" else 48.0
+    var shift: Vector2 = view_amount * extra_h * parallax_strength * 0.72
+    var cap: PackedVector2Array = PackedVector2Array([base[0]+shift,base[1]+shift,base[2]+shift,base[3]+shift])
+    var shade: Color = Color(b.wall).darkened(0.20)
     draw_colored_polygon(PackedVector2Array([base[1],base[2],cap[2],cap[1]]),shade)
     draw_colored_polygon(PackedVector2Array([base[2],base[3],cap[3],cap[2]]),shade.darkened(0.12))
     draw_colored_polygon(cap,b.roof.lightened(0.06))
@@ -1025,13 +1025,13 @@ func _draw_landmarks() -> void:
         var r := _landmark_rect(l)
         if not _world_rect_visible(r.grow(350)):
             continue
-        var center := l.pos
+        var center: Vector2 = Vector2(l.pos)
         var kind := str(l.kind)
         var h: float = l.h
         var base := _project(center,0)
         var top := _project(center,h)
         var accent: Color = l.accent
-        draw_ellipse(base+Vector2(8,14),Vector2(l.size.x*0.34,l.size.y*0.25),0.0,Color(0,0,0,0.18))
+        _draw_poly_ellipse(base+Vector2(8,14),Vector2(l.size.x*0.34,l.size.y*0.25),0.0,Color(0,0,0,0.18))
         if kind == "clock":
             _draw_landmark_tower(base,top,accent,true)
         elif kind == "openai_hq":
@@ -1208,7 +1208,7 @@ func _draw_vegetation_props() -> void:
             draw_circle(c+Vector2(-5+sway,-7),7,tint)
             draw_circle(c+Vector2(5+sway,-8),6,tint.lightened(0.08))
         elif v.kind=="flowerbed":
-            draw_ellipse(c,Vector2(16,8),0.0,Color(0.25,0.47,0.28,0.65))
+            _draw_poly_ellipse(c,Vector2(16,8),0.0,Color(0.25,0.47,0.28,0.65))
             for k in range(5):
                 var ang := float(k)/5.0*TAU
                 var p := c+Vector2(cos(ang)*9,sin(ang)*4)
@@ -1232,12 +1232,12 @@ func _draw_trees() -> void:
             var col: Color = t.tint.darkened(0.24)
             for k in range(3):
                 var yy := float(k)*8.0
-                var rr := t.r*(1.0-float(k)*0.18)
+                var rr: float = float(t.r)*(1.0-float(k)*0.18)
                 var pts := PackedVector2Array([c+Vector2(0,-rr-yy),c+Vector2(rr,rr*0.55-yy),c+Vector2(-rr,rr*0.55-yy)])
                 draw_colored_polygon(pts,col.lightened(float(k)*0.05))
         elif species == "cypress":
-            draw_ellipse(c,Vector2(t.r*0.55,t.r*1.55),0.0,t.tint.darkened(0.18))
-            draw_ellipse(c+Vector2(-2,-7),Vector2(t.r*0.32,t.r*1.1),0.0,t.tint.lightened(0.07))
+            _draw_poly_ellipse(c,Vector2(t.r*0.55,t.r*1.55),0.0,t.tint.darkened(0.18))
+            _draw_poly_ellipse(c+Vector2(-2,-7),Vector2(t.r*0.32,t.r*1.1),0.0,t.tint.lightened(0.07))
         elif species == "palm":
             draw_line(c,c+Vector2(0,-18),Color("#806342"),3.0,true)
             var crown := c+Vector2(0,-21)
@@ -1434,10 +1434,10 @@ func _draw_transit_vehicle(pos: Vector2, heading: float, tv: Dictionary) -> void
     var center := _project(pos,10)
     var f := Vector2.from_angle(heading)
     var side := Vector2(-f.y,f.x)
-    var is_tram := tv.kind == "tram"
-    var length := 88.0 if is_tram else 74.0
-    var width := 24.0 if is_tram else 27.0
-    draw_ellipse(center+Vector2(5,8),Vector2(length*0.50,width*0.48),heading,Color(0,0,0,0.19))
+    var is_tram: bool = str(tv.kind) == "tram"
+    var length: float = 88.0 if is_tram else 74.0
+    var width: float = 24.0 if is_tram else 27.0
+    _draw_poly_ellipse(center+Vector2(5,8),Vector2(length*0.50,width*0.48),heading,Color(0,0,0,0.19))
     var pts := PackedVector2Array([
         center+f*length*0.5+side*width*0.48,
         center+f*length*0.5-side*width*0.48,
@@ -1478,7 +1478,7 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
     var side := Vector2(-f.y,f.x)
-    draw_ellipse(center+Vector2(4,7),Vector2(sz.x*.52,sz.y*.42),heading,Color(0,0,0,0.18))
+    _draw_poly_ellipse(center+Vector2(4,7),Vector2(sz.x*.52,sz.y*.42),heading,Color(0,0,0,0.18))
     var nose := 0.58 if cls=="sport" else (0.50 if cls!="micro" else 0.52)
     var rear := 0.46 if cls=="micro" else 0.50
     var pts := PackedVector2Array([
@@ -1534,7 +1534,7 @@ func _draw_car_wheels(center: Vector2, f: Vector2, side: Vector2, sz: Vector2) -
         draw_line(w1-f*4,w1+f*4,Color(0.05,0.05,0.06,0.92),2.4)
         draw_line(w2-f*4,w2+f*4,Color(0.05,0.05,0.06,0.92),2.4)
 
-func draw_ellipse(center: Vector2, radii: Vector2, rotation: float, color: Color) -> void:
+func _draw_poly_ellipse(center: Vector2, radii: Vector2, rotation: float, color: Color) -> void:
     var pts := PackedVector2Array()
     for i in range(18):
         var a := TAU*float(i)/18.0
@@ -1579,13 +1579,13 @@ func _draw_player() -> void:
     var f := Vector2.from_angle(player_heading)
     var side := Vector2(-f.y,f.x)
     var walking := move_vec.length() > 0.08
-    var phase := Time.get_ticks_msec()/95.0 if walking else 0.0
-    var swing := sin(phase)*5.0 if walking else 0.0
-    var bob := abs(sin(phase))*1.5 if walking else 0.0
+    var phase: float = float(Time.get_ticks_msec())/95.0 if walking else 0.0
+    var swing: float = sin(phase)*5.0 if walking else 0.0
+    var bob: float = abs(sin(float(phase)))*1.5 if walking else 0.0
     pelvis.y -= bob
     chest.y -= bob
     head.y -= bob
-    draw_ellipse(foot+Vector2(3,5),Vector2(9,5),player_heading,Color(0,0,0,0.24))
+    _draw_poly_ellipse(foot+Vector2(3,5),Vector2(9,5),player_heading,Color(0,0,0,0.24))
     var left_leg := pelvis + f*5.0 + side*swing
     var right_leg := pelvis + f*5.0 - side*swing
     draw_line(pelvis,left_leg+Vector2(0,7),Color("#5c6974"),3.0,true)
@@ -1696,7 +1696,7 @@ func _draw_openai_interior(origin: Vector2, accent: Color) -> void:
     draw_string(ThemeDB.fallback_font,feature+Vector2(-68,58),"VISITOR LAB",HORIZONTAL_ALIGNMENT_CENTER,136,12,Color("#eaf5f6"))
     # research pods
     for q in [Vector2(330,330),Vector2(450,330),Vector2(570,330)]:
-        var c := origin+q
+        var c: Vector2 = origin+Vector2(q)
         draw_rect(Rect2(c-Vector2(38,24),Vector2(76,48)),Color(0.10,0.17,0.20,0.9),true)
         draw_rect(Rect2(c-Vector2(38,24),Vector2(76,48)),Color(0.75,0.91,0.94,0.22),false,1.5)
         draw_line(c+Vector2(-24,0),c+Vector2(24,0),Color(0.45,0.86,0.91,0.32),2.0)
@@ -1747,7 +1747,7 @@ func _draw_interior_player() -> void:
     var walking := move_vec.length()>0.08
     var phase := Time.get_ticks_msec()/95.0 if walking else 0.0
     var swing := sin(phase)*4.0 if walking else 0.0
-    draw_ellipse(p+Vector2(3,6),Vector2(9,5),player_heading,Color(0,0,0,0.24))
+    _draw_poly_ellipse(p+Vector2(3,6),Vector2(9,5),player_heading,Color(0,0,0,0.24))
     draw_line(p,p+Vector2(-swing,13),Color("#667682"),3.0,true)
     draw_line(p,p+Vector2(swing,13),Color("#758692"),3.0,true)
     var chest := p+Vector2(0,-9)
