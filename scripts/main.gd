@@ -804,7 +804,7 @@ func _update_district() -> void:
         tw.tween_property(district_banner, "modulate:a", 0.0, 0.65)
 
 func _update_ui() -> void:
-    var chapter := native_chapters[mini(native_chapter,native_chapters.size()-1)] if native_chapters.size()>0 else {"title":"Explore","desc":""}
+    var chapter: Dictionary = Dictionary(native_chapters[mini(native_chapter,native_chapters.size()-1)]) if native_chapters.size()>0 else {"title":"Explore","desc":""}
     mission_label.text = str(chapter.title)
     if interior_active:
         detail_label.text = "%s · Interior. Explore the rooms and return through the lobby exit." % interior_name
