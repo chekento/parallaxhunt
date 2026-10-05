@@ -16,6 +16,9 @@ var parked_cars: Array = []
 var traffic: Array = []
 var street_lights: Array = []
 var street_props: Array = []
+var landmarks: Array = []
+var storefronts: Array = []
+var vegetation_props: Array = []
 var pedestrians: Array = []
 var transit_vehicles: Array = []
 var fragments: Array = []
@@ -61,9 +64,11 @@ func _ready() -> void:
     _build_roads()
     _build_parks()
     _build_water()
+    _build_landmarks()
     _generate_city()
     _generate_traffic()
     _generate_visual_props()
+    _generate_storefronts()
     _generate_transit()
     _generate_collectibles()
     _build_ui()
@@ -173,6 +178,31 @@ func _build_water() -> void:
         {"rect":Rect2(18000,7300,3100,620), "tint":Color("#25235a"), "name":"Neon Reflecting Pool"}
     ]
 
+func _build_landmarks() -> void:
+    landmarks = [
+        {"name":"Old Clock Tower","district":"Altstadt","pos":Vector2(1850,1650),"size":Vector2(360,300),"h":220.0,"kind":"clock","accent":Color("#ffcd8a")},
+        {"name":"Crystal Forum","district":"Glass Quarter","pos":Vector2(8050,1700),"size":Vector2(520,380),"h":310.0,"kind":"crystal","accent":Color("#67d9ff")},
+        {"name":"Nordpark Glasshouse","district":"Nordpark","pos":Vector2(12800,1480),"size":Vector2(600,420),"h":120.0,"kind":"greenhouse","accent":Color("#8ff0b4")},
+        {"name":"Solar Beacon","district":"Solar Heights","pos":Vector2(20600,1550),"size":Vector2(460,360),"h":255.0,"kind":"solar_beacon","accent":Color("#f1e36f")},
+        {"name":"Canal Rotunda","district":"Kanäle","pos":Vector2(2700,6500),"size":Vector2(480,420),"h":145.0,"kind":"rotunda","accent":Color("#64e7e4")},
+        {"name":"Civic Prism","district":"Zentrum","pos":Vector2(7900,6500),"size":Vector2(520,440),"h":285.0,"kind":"civic","accent":Color("#9ad5ff")},
+        {"name":"Harbor Crane Hall","district":"Hafen","pos":Vector2(13100,6150),"size":Vector2(720,430),"h":135.0,"kind":"crane","accent":Color("#ffb66f")},
+        {"name":"Neon Theatre","district":"Neon Mile","pos":Vector2(19800,6000),"size":Vector2(680,500),"h":205.0,"kind":"theatre","accent":Color("#ff80ef")},
+        {"name":"Garden Conservatory","district":"Gärten","pos":Vector2(3300,13500),"size":Vector2(640,520),"h":125.0,"kind":"conservatory","accent":Color("#9be993")},
+        {"name":"Axis Library","district":"Universität","pos":Vector2(9300,13200),"size":Vector2(700,520),"h":175.0,"kind":"library","accent":Color("#b0c8ff")},
+        {"name":"Astra Observatory","district":"Observatorium","pos":Vector2(15600,13650),"size":Vector2(620,540),"h":245.0,"kind":"observatory","accent":Color("#c3a6ff")},
+        {"name":"Terminal Crown","district":"Terminal East","pos":Vector2(22200,13900),"size":Vector2(820,520),"h":165.0,"kind":"terminal","accent":Color("#d9e5ef")}
+    ]
+
+func _landmark_rect(l: Dictionary) -> Rect2:
+    return Rect2(l.pos - l.size * 0.5, l.size)
+
+func _rect_hits_landmark(r: Rect2) -> bool:
+    for l in landmarks:
+        if _landmark_rect(l).grow(70).intersects(r):
+            return true
+    return false
+
 func _generate_city() -> void:
     buildings.clear()
     trees.clear()
@@ -186,7 +216,7 @@ func _generate_city() -> void:
                 size *= rng.randf_range(1.0, 1.35)
             var pos := Vector2(rng.randf_range(r.position.x + 80, r.end.x - size.x - 80), rng.randf_range(r.position.y + 80, r.end.y - size.y - 80))
             var rect := Rect2(pos, size)
-            if _rect_near_road(rect, 75.0) or _rect_in_park(rect):
+            if _rect_near_road(rect, 75.0) or _rect_in_park(rect) or _rect_hits_landmark(rect):
                 continue
             var blocked := false
             for b in buildings:
@@ -206,11 +236,12 @@ func _generate_city() -> void:
         for _j in range(tree_count):
             var tp := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
             if not _point_in_building(tp):
-                trees.append({"pos":tp, "h":rng.randf_range(32,75), "r":rng.randf_range(11,24), "tint":district.accent.lerp(Color("#56a36b"),0.65)})
+                var species := "cypress" if district.style in ["heritage","canal"] else ("birch" if district.style in ["campus","terminal"] else ("palm" if district.style=="neon" else ("pine" if district.style=="astro" else "broadleaf")))
+                trees.append({"pos":tp, "h":rng.randf_range(32,75), "r":rng.randf_range(11,24), "tint":district.accent.lerp(Color("#56a36b"),0.65), "species":species, "phase":rng.randf_range(0,TAU)})
     for park in parks:
         var pr: Rect2 = park.rect
         for _k in range(38):
-            trees.append({"pos":Vector2(rng.randf_range(pr.position.x+40,pr.end.x-40),rng.randf_range(pr.position.y+40,pr.end.y-40)),"h":rng.randf_range(35,82),"r":rng.randf_range(13,26),"tint":Color("#63b878")})
+            trees.append({"pos":Vector2(rng.randf_range(pr.position.x+40,pr.end.x-40),rng.randf_range(pr.position.y+40,pr.end.y-40)),"h":rng.randf_range(35,82),"r":rng.randf_range(13,26),"tint":Color("#63b878"),"species":["broadleaf","birch","pine"][rng.randi_range(0,2)],"phase":rng.randf_range(0,TAU)})
     for _n in range(92):
         var rd = roads[rng.randi_range(0, roads.size()-1)]
         var t_sample := rng.randf()
@@ -312,6 +343,53 @@ func _generate_visual_props() -> void:
             "phase":rng.randf_range(0,TAU)
         })
 
+
+func _generate_storefronts() -> void:
+    storefronts.clear()
+    vegetation_props.clear()
+    var shop_kinds := ["restaurant","cafe","shop","garage","workshop"]
+    for d in districts:
+        var r: Rect2 = d.rect
+        var count := 5 if d.style in ["center","neon","heritage"] else 3
+        for i in range(count):
+            var road = roads[(i + int(r.position.x/1000.0) + int(r.position.y/1000.0)) % roads.size()]
+            var tt := clampf(0.12 + float(i)*0.16,0.08,0.88)
+            var pos := _sample_polyline(road.points,tt)
+            if not r.grow(-180).has_point(pos):
+                pos = r.position + Vector2(220 + i*260, 230 + (i%2)*180)
+            var tang := _polyline_tangent(road.points,tt)
+            var norm := Vector2(-tang.y,tang.x)
+            pos += norm*(float(road.width)*0.5+42.0)
+            storefronts.append({
+                "pos":pos,
+                "heading":tang.angle(),
+                "kind":shop_kinds[(i+int(r.position.x/500.0))%shop_kinds.size()],
+                "name":_shop_name(d.name,shop_kinds[(i+int(r.position.x/500.0))%shop_kinds.size()],i),
+                "accent":d.accent,
+                "district":d.name
+            })
+    for d in districts:
+        var r2: Rect2 = d.rect
+        var plant_count := 18 if d.style in ["green","garden","campus"] else 7
+        for j in range(plant_count):
+            vegetation_props.append({
+                "pos":Vector2(rng.randf_range(r2.position.x+120,r2.end.x-120),rng.randf_range(r2.position.y+120,r2.end.y-120)),
+                "kind":["flowerbed","shrub","planter"][rng.randi_range(0,2)],
+                "tint":d.accent.lerp(Color("#4ca966"),0.68),
+                "phase":rng.randf_range(0,TAU)
+            })
+
+func _shop_name(district_name: String, kind: String, index: int) -> String:
+    var prefixes := {
+        "restaurant":["Lumen","Copper","Astra","Canal","Garden"],
+        "cafe":["Orbit","Moss","Prism","Dock","North"],
+        "shop":["Facet","Loop","Signal","Corner","Axis"],
+        "garage":["Torque","Mako","Vector","Pulse","Lane"],
+        "workshop":["Forge","Depth","Relay","Glass","Echo"]
+    }
+    var arr: Array = prefixes[kind]
+    var suffix := {"restaurant":"Kitchen","cafe":"Café","shop":"Store","garage":"Garage","workshop":"Works"}[kind]
+    return "%s %s" % [arr[(index+district_name.length())%arr.size()],suffix]
 
 func _generate_transit() -> void:
     transit_vehicles.clear()
@@ -641,7 +719,10 @@ func _draw() -> void:
     _draw_parks()
     _draw_roads()
     _draw_buildings()
+    _draw_landmarks()
     _draw_trees()
+    _draw_vegetation_props()
+    _draw_storefronts()
     _draw_street_props()
     _draw_pedestrians()
     _draw_traffic()
@@ -876,17 +957,201 @@ func _draw_massing_detail(b: Dictionary, top: Array) -> void:
 func _quad_bilerp(a: Vector2, b: Vector2, c: Vector2, d: Vector2, u: float, v: float) -> Vector2:
     return a.lerp(b,u).lerp(d.lerp(c,u),v)
 
+func _draw_landmarks() -> void:
+    for l in landmarks:
+        var r := _landmark_rect(l)
+        if not _world_rect_visible(r.grow(350)):
+            continue
+        var center := l.pos
+        var kind := str(l.kind)
+        var h: float = l.h
+        var base := _project(center,0)
+        var top := _project(center,h)
+        var accent: Color = l.accent
+        draw_ellipse(base+Vector2(8,14),Vector2(l.size.x*0.34,l.size.y*0.25),0.0,Color(0,0,0,0.18))
+        if kind == "clock":
+            _draw_landmark_tower(base,top,accent,true)
+        elif kind == "crystal":
+            _draw_landmark_crystal(base,top,accent)
+        elif kind in ["greenhouse","conservatory"]:
+            _draw_landmark_greenhouse(base,top,accent,l.size)
+        elif kind == "solar_beacon":
+            _draw_landmark_solar(base,top,accent)
+        elif kind == "rotunda":
+            _draw_landmark_rotunda(base,top,accent)
+        elif kind == "civic":
+            _draw_landmark_tower(base,top,accent,false)
+        elif kind == "crane":
+            _draw_landmark_crane(base,top,accent)
+        elif kind == "theatre":
+            _draw_landmark_theatre(base,top,accent)
+        elif kind == "library":
+            _draw_landmark_library(base,top,accent)
+        elif kind == "observatory":
+            _draw_landmark_observatory(base,top,accent)
+        else:
+            _draw_landmark_terminal(base,top,accent)
+        draw_string(ThemeDB.fallback_font,base+Vector2(-110,52),str(l.name),HORIZONTAL_ALIGNMENT_CENTER,220,16,Color(0.93,0.98,1.0,0.80))
+
+func _draw_landmark_tower(base: Vector2, top: Vector2, accent: Color, clock: bool) -> void:
+    var w := 54.0
+    var body := PackedVector2Array([base+Vector2(-w,18),base+Vector2(w,18),top+Vector2(w*0.65,10),top+Vector2(-w*0.65,10)])
+    draw_colored_polygon(body,accent.darkened(0.48))
+    draw_polyline(PackedVector2Array([body[0],body[1],body[2],body[3],body[0]]),Color(accent.r,accent.g,accent.b,0.62),2.2,true)
+    draw_line(top+Vector2(-35,10),top+Vector2(35,10),Color(1,1,1,0.18),2.0)
+    if clock:
+        draw_circle(top+Vector2(0,28),15,Color("#f4ead0"))
+        draw_circle(top+Vector2(0,28),15,Color(accent.r,accent.g,accent.b,0.8),false,2.0)
+        draw_line(top+Vector2(0,28),top+Vector2(0,17),Color("#3d3b35"),2.0)
+        draw_line(top+Vector2(0,28),top+Vector2(9,28),Color("#3d3b35"),2.0)
+    draw_line(top,top+Vector2(0,-36),accent,3.0,true)
+
+func _draw_landmark_crystal(base: Vector2, top: Vector2, accent: Color) -> void:
+    var pts := PackedVector2Array([top+Vector2(0,-35),base+Vector2(95,30),base+Vector2(0,55),base+Vector2(-95,30)])
+    draw_colored_polygon(pts,Color(accent.r,accent.g,accent.b,0.24))
+    draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),accent,3.0,true)
+    draw_line(pts[0],pts[2],Color(0.8,0.96,1.0,0.38),2.0)
+    draw_line(pts[3],pts[1],Color(0.8,0.96,1.0,0.22),2.0)
+
+func _draw_landmark_greenhouse(base: Vector2, top: Vector2, accent: Color, size: Vector2) -> void:
+    var w := size.x*0.30
+    var h := 65.0
+    draw_rect(Rect2(base-Vector2(w,h*0.5),Vector2(w*2,h)),Color(0.30,0.68,0.52,0.18),true)
+    draw_rect(Rect2(base-Vector2(w,h*0.5),Vector2(w*2,h)),Color(accent.r,accent.g,accent.b,0.72),false,2.0)
+    for k in range(-3,4):
+        draw_line(base+Vector2(float(k)*w/3.5,-h*0.5),base+Vector2(float(k)*w/3.5,h*0.5),Color(0.78,0.96,0.91,0.20),1.0)
+    draw_arc(base+Vector2(0,-h*0.5),w*0.45,PI,TAU,20,accent,2.0,true)
+    draw_circle(base+Vector2(-35,4),14,Color(0.30,0.68,0.38,0.70))
+    draw_circle(base+Vector2(22,9),18,Color(0.36,0.74,0.43,0.68))
+
+func _draw_landmark_solar(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_line(base,top,Color("#606970"),9.0,true)
+    for k in range(4):
+        var yy := top.lerp(base,float(k+1)/5.0)
+        draw_line(yy+Vector2(-65,0),yy+Vector2(65,0),Color(accent.r,accent.g,accent.b,0.72),5.0,true)
+    draw_circle(top,18,accent)
+    draw_circle(top,38,Color(accent.r,accent.g,accent.b,0.10))
+
+func _draw_landmark_rotunda(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_circle(base,68,accent.darkened(0.50))
+    draw_circle(base,68,Color(accent.r,accent.g,accent.b,0.58),false,3.0)
+    for a in range(0,360,45):
+        var d := Vector2.from_angle(deg_to_rad(float(a)))
+        draw_line(base+d*42,top+d*28,Color(accent.r,accent.g,accent.b,0.62),3.0)
+    draw_circle(top,38,Color(accent.r,accent.g,accent.b,0.25))
+    draw_arc(top,38,PI,TAU,24,accent,3.0,true)
+
+func _draw_landmark_crane(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(base-Vector2(95,35),Vector2(190,70)),Color("#403b38"),true)
+    draw_line(base+Vector2(-62,-35),top+Vector2(-62,0),Color("#7a6759"),6.0,true)
+    draw_line(top+Vector2(-62,0),top+Vector2(85,0),accent,5.0,true)
+    draw_line(top+Vector2(60,0),top+Vector2(60,62),Color("#9d8b7c"),2.0)
+    draw_rect(Rect2(top+Vector2(52,62),Vector2(16,12)),accent.darkened(0.25),true)
+
+func _draw_landmark_theatre(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(base-Vector2(105,60),Vector2(210,120)),Color("#342244"),true)
+    draw_rect(Rect2(base-Vector2(105,60),Vector2(210,120)),accent,false,3.0)
+    for k in range(-3,4):
+        draw_line(base+Vector2(float(k)*25,-40),base+Vector2(float(k)*25,25),Color(accent.r,accent.g,accent.b,0.34),5.0)
+    draw_line(top+Vector2(-55,0),top+Vector2(55,0),accent,7.0,true)
+    draw_circle(top+Vector2(0,-12),15,Color(1.0,0.55,0.94,0.18))
+
+func _draw_landmark_library(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(base-Vector2(110,45),Vector2(220,90)),accent.darkened(0.55),true)
+    for k in range(-4,5):
+        draw_line(base+Vector2(float(k)*22,-42),base+Vector2(float(k)*22,35),Color(accent.r,accent.g,accent.b,0.35),3.0)
+    draw_line(top+Vector2(-95,0),top+Vector2(95,0),accent,5.0,true)
+
+func _draw_landmark_observatory(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_circle(base,78,Color("#353254"))
+    draw_arc(base,78,PI,TAU,30,accent,4.0,true)
+    draw_circle(top,44,Color(0.34,0.31,0.58,0.94))
+    draw_arc(top,44,PI,TAU,28,accent,3.0,true)
+    draw_line(top,top+Vector2(65,-45),Color("#8b8fae"),5.0,true)
+    draw_circle(top+Vector2(67,-47),7,accent)
+
+func _draw_landmark_terminal(base: Vector2, top: Vector2, accent: Color) -> void:
+    draw_rect(Rect2(base-Vector2(120,52),Vector2(240,104)),Color("#485057"),true)
+    for k in range(-5,6):
+        draw_line(base+Vector2(float(k)*20,-50),top+Vector2(float(k)*11,0),Color(accent.r,accent.g,accent.b,0.32),3.0,true)
+    draw_line(top+Vector2(-75,0),top+Vector2(75,0),accent,5.0,true)
+
+func _draw_storefronts() -> void:
+    for st in storefronts:
+        if player_pos.distance_to(st.pos)>1650.0:
+            continue
+        var c := _project(st.pos,6)
+        var accent: Color = st.accent
+        draw_rect(Rect2(c-Vector2(30,13),Vector2(60,26)),Color(0.04,0.08,0.10,0.90),true)
+        draw_rect(Rect2(c-Vector2(30,13),Vector2(60,26)),Color(accent.r,accent.g,accent.b,0.62),false,2.0)
+        var icon := "R" if st.kind=="restaurant" else ("C" if st.kind=="cafe" else ("S" if st.kind=="shop" else ("G" if st.kind=="garage" else "W")))
+        draw_circle(c+Vector2(-20,0),7,accent)
+        draw_string(ThemeDB.fallback_font,c+Vector2(-23,-5),icon,HORIZONTAL_ALIGNMENT_CENTER,8,9,Color("#102028"))
+        draw_string(ThemeDB.fallback_font,c+Vector2(-10,-5),str(st.name),HORIZONTAL_ALIGNMENT_LEFT,52,9,Color.WHITE)
+        if st.kind in ["garage","workshop"]:
+            draw_line(c+Vector2(-18,13),c+Vector2(-18,24),Color("#7d8a90"),2.0)
+            draw_line(c+Vector2(18,13),c+Vector2(18,24),Color("#7d8a90"),2.0)
+            draw_line(c+Vector2(-18,24),c+Vector2(18,24),accent,2.0)
+        elif st.kind in ["restaurant","cafe"]:
+            draw_circle(c+Vector2(-10,23),5,Color("#5f4b3e"))
+            draw_circle(c+Vector2(10,23),5,Color("#5f4b3e"))
+
+func _draw_vegetation_props() -> void:
+    for v in vegetation_props:
+        if player_pos.distance_to(v.pos)>1700.0:
+            continue
+        var c := _project(v.pos,4)
+        var tint: Color = v.tint
+        var sway := sin(Time.get_ticks_msec()/800.0+float(v.phase))*1.4
+        if v.kind=="planter":
+            draw_rect(Rect2(c-Vector2(10,5),Vector2(20,10)),Color("#6d5945"),true)
+            draw_circle(c+Vector2(-5+sway,-7),7,tint)
+            draw_circle(c+Vector2(5+sway,-8),6,tint.lightened(0.08))
+        elif v.kind=="flowerbed":
+            draw_ellipse(c,Vector2(16,8),0.0,Color(0.25,0.47,0.28,0.65))
+            for k in range(5):
+                var ang := float(k)/5.0*TAU
+                var p := c+Vector2(cos(ang)*9,sin(ang)*4)
+                draw_circle(p,2.2,[Color("#ff9fc1"),Color("#f0d36d"),Color("#9cc9ff")][k%3])
+        else:
+            draw_circle(c,10,tint.darkened(0.15))
+            draw_circle(c+Vector2(-4,-4),6,tint.lightened(0.10))
+
 func _draw_trees() -> void:
     for t in trees:
         if player_pos.distance_to(t.pos) > 1800.0:
             continue
         var b := _project(t.pos,0)
         var c := _project(t.pos,t.h)
+        var sway := sin(Time.get_ticks_msec()/900.0 + float(t.get("phase",0.0))) * 2.0
+        c.x += sway
         draw_line(b,c,Color("#604b35"),4.0,true)
-        draw_circle(c+Vector2(3,6),t.r,Color(0,0,0,0.18))
-        draw_circle(c,t.r,t.tint.darkened(0.2))
-        draw_circle(c+Vector2(-5,-5),t.r*0.62,t.tint.lightened(0.12))
-
+        var species := str(t.get("species","broadleaf"))
+        draw_circle(c+Vector2(3,6),t.r*1.08,Color(0,0,0,0.16))
+        if species == "pine":
+            var col: Color = t.tint.darkened(0.24)
+            for k in range(3):
+                var yy := float(k)*8.0
+                var rr := t.r*(1.0-float(k)*0.18)
+                var pts := PackedVector2Array([c+Vector2(0,-rr-yy),c+Vector2(rr,rr*0.55-yy),c+Vector2(-rr,rr*0.55-yy)])
+                draw_colored_polygon(pts,col.lightened(float(k)*0.05))
+        elif species == "cypress":
+            draw_ellipse(c,Vector2(t.r*0.55,t.r*1.55),0.0,t.tint.darkened(0.18))
+            draw_ellipse(c+Vector2(-2,-7),Vector2(t.r*0.32,t.r*1.1),0.0,t.tint.lightened(0.07))
+        elif species == "palm":
+            draw_line(c,c+Vector2(0,-18),Color("#806342"),3.0,true)
+            var crown := c+Vector2(0,-21)
+            for a in range(0,360,45):
+                var dir := Vector2.from_angle(deg_to_rad(float(a)))
+                draw_line(crown,crown+dir*t.r*1.3,t.tint,4.0,true)
+        elif species == "birch":
+            draw_line(b,c,Color("#d7d0bc"),4.0,true)
+            for off in [Vector2(-6,-4),Vector2(4,-8),Vector2(8,3),Vector2(-9,5)]:
+                draw_circle(c+off,t.r*0.60,t.tint.lightened(0.08))
+        else:
+            draw_circle(c,t.r,t.tint.darkened(0.2))
+            draw_circle(c+Vector2(-5,-5),t.r*0.62,t.tint.lightened(0.12))
+            draw_circle(c+Vector2(7,-1),t.r*0.48,t.tint)
 
 func _draw_street_props() -> void:
     for l in street_lights:
@@ -1288,6 +1553,9 @@ func _point_in_building(p: Vector2) -> bool:
     return false
 
 func _point_blocked(p: Vector2, radius: float) -> bool:
+    for l in landmarks:
+        if _landmark_rect(l).grow(radius).has_point(p):
+            return true
     for b in buildings:
         if (b.rect as Rect2).grow(radius).has_point(p):
             return true
