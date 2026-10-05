@@ -3981,20 +3981,23 @@ func _close_minigame() -> void:
 func _finish_minigame() -> void:
     if active_mission_site.is_empty():
         return
-    var sid := str(active_mission_site.id)
-    var reward_credits: int = 12 if active_mission_replay else 35
-    if active_mission_replay:
+    var sid: String = str(active_mission_site.id)
+    var site_name: String = str(active_mission_site.name)
+    var site_reward: String = str(active_mission_site.reward)
+    var was_replay: bool = active_mission_replay
+    var reward_credits: int = 12 if was_replay else 35
+    if was_replay:
         hack_replays += 1
     else:
         hack_done[sid] = true
     credits += reward_credits
     _save_game()
     _play_sfx("secret")
-    game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if active_mission_replay else "%s erhalten" % str(active_mission_site.reward)),reward_credits]
+    game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if was_replay else "%s erhalten" % site_reward),reward_credits]
     await get_tree().create_timer(0.65).timeout
     _close_minigame()
-    _show_reward_popup("HACK ERFOLGREICH",("%s\n%s · +%d CR" % [str(active_mission_site.name),("Replay" if active_mission_replay else str(active_mission_site.reward)),reward_credits]),Color("#ffdf75"))
-    _notify("%s %s." % [str(active_mission_site.name),("wiederholt" if active_mission_replay else "abgeschlossen")])
+    _show_reward_popup("HACK ERFOLGREICH",("%s\n%s · +%d CR" % [site_name,("Replay" if was_replay else site_reward),reward_credits]),Color("#ffdf75"))
+    _notify("%s %s." % [site_name,("wiederholt" if was_replay else "abgeschlossen")])
     active_mission_replay=false
     _advance_native_chapter()
     _check_npc_contract()
