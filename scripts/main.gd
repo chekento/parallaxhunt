@@ -167,6 +167,7 @@ var race_sites: Array = []
 var active_race: Dictionary = {}
 var race_best: Dictionary = {}
 var race_wins: int = 0
+var race_completed: Dictionary = {}
 var vehicle_upgrades: Dictionary = {}
 var milestones_claimed: Dictionary = {}
 var commerce_panel: PanelContainer
@@ -4506,6 +4507,7 @@ func _reset_game_state() -> void:
     hack_replays=0
     race_best.clear()
     race_wins=0
+    race_completed.clear()
     vehicle_upgrades.clear()
     milestones_claimed.clear()
     active_race={}
@@ -4680,6 +4682,7 @@ func _save_game() -> void:
         "hack_replays":hack_replays,
         "race_best":race_best,
         "race_wins":race_wins,
+        "race_completed":race_completed,
         "vehicle_upgrades":vehicle_upgrades,
         "milestones_claimed":milestones_claimed,
         "npc_flags":npc_flags,
@@ -4742,6 +4745,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     hack_replays = int(d.get("hack_replays",0))
     race_best = Dictionary(d.get("race_best",{}))
     race_wins = int(d.get("race_wins",0))
+    race_completed = Dictionary(d.get("race_completed",{}))
     vehicle_upgrades = Dictionary(d.get("vehicle_upgrades",{}))
     milestones_claimed = Dictionary(d.get("milestones_claimed",{}))
     npc_flags = Dictionary(d.get("npc_flags",{}))
@@ -5139,6 +5143,7 @@ func _update_active_race(delta: float) -> void:
                 race_best[id]=elapsed
             credits+=int(race.reward)
             race_wins+=1
+            race_completed[id]=true
             active_race={}
             _play_sfx("mission")
             _show_reward_popup("ZEITPRÜFUNG GESCHAFFT","%s · %.1fs\n+%d CR" % [str(race.name),elapsed,int(race.reward)],Color("#ffd36b"))
@@ -5178,7 +5183,7 @@ func _check_milestones() -> void:
         ["cars_all",driven_classes.size()>=VEHICLE_CLASSES.size(),220,"Full Garage"],
         ["districts_15",visited_districts.size()>=15,85,"Urban Explorer"],
         ["hacks_8",_completed_hack_count()>=8,90,"Security Runner"],
-        ["races_3",race_wins>=3,110,"Street Trialist"],
+        ["races_3",race_completed.size()>=3,110,"Street Trialist"],
         ["jobs_10",jobs_done>=10,120,"City Professional"]
     ]
     for m in milestones:
@@ -5423,7 +5428,7 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="archive": return mini(cache_count+glyph_count+photo_count+scan_collect_count,int(c.goal))
     if kind=="scan_collect": return mini(scan_collect_count,int(c.goal))
     if kind=="hack_replays": return mini(hack_replays,int(c.goal))
-    if kind=="races": return mini(race_wins,int(c.goal))
+    if kind=="races": return mini(race_completed.size(),int(c.goal))
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
     return 1
 
@@ -5440,7 +5445,7 @@ func _draw_collection_overlay() -> void:
         ["FAHRZEUGKLASSEN",driven_classes.size(),VEHICLE_CLASSES.size(),Color("#73f3ce")],
         ["HACKING TERMINALS",_completed_hack_count(),mission_sites.size(),Color("#ffdf75")],
         ["STADTTEILE",visited_districts.size(),districts.size(),Color("#9ad5ff")],
-        ["ZEITPRÜFUNGEN",race_wins,race_sites.size(),Color("#ffd36b")],
+        ["ZEITPRÜFUNGEN",race_completed.size(),race_sites.size(),Color("#ffd36b")],
         ["NPC-VERTRAUEN",_total_npc_trust(),named_npcs.size()*3,Color("#ff9fe8")]
     ]
     for sec in sections:
