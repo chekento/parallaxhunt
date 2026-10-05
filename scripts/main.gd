@@ -50,6 +50,9 @@ var target_world_zoom: float = 1.0
 var map_open: bool = false
 var missions_open: bool = false
 var credits: int = 520
+var energy: float = 100.0
+var inventory: Dictionary = {"scan_cell":0,"energy_drink":0,"transit_pass":0}
+var shop_stock: Dictionary = {}
 var owned_property: String = ""
 var property_sites: Array = []
 var mission_sites: Array = []
@@ -73,6 +76,16 @@ var game_tries: int = 0
 var game_memory_seq: Array = []
 var game_memory_input: Array = []
 var game_memory_locked: bool = false
+var owned_cars: Array = []
+var current_paint: String = ""
+var jobs_done: int = 0
+var active_job: Dictionary = {}
+var side_job_sites: Array = []
+var autosave_timer: float = 0.0
+var commerce_panel: PanelContainer
+var commerce_title: Label
+var commerce_info: Label
+var commerce_actions: VBoxContainer
 
 # True multi-touch state: left and right touches can coexist.
 var move_touch := -1
@@ -101,6 +114,7 @@ func _ready() -> void:
     _build_water()
     _build_landmarks()
     _build_native_gameplay_data()
+    _load_game()
     _generate_city()
     _generate_traffic()
     _generate_visual_props()
@@ -131,6 +145,10 @@ func _process(delta: float) -> void:
         _update_transit(delta)
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
+    autosave_timer += delta
+    if autosave_timer >= 12.0:
+        autosave_timer = 0.0
+        _save_game()
     view_amount = view_amount.lerp((sensor_view * 0.72 + view_touch * 0.95).limit_length(1.0), minf(1.0, delta * 8.0))
     if not interior_active:
         camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
@@ -276,19 +294,34 @@ func _build_native_gameplay_data() -> void:
         {"id":"packetTrace","name":"Expo Packet Node","pos":Vector2(7550,12600),"game":"memory","reward":"Packet Token"},
         {"id":"firewall","name":"Bio Firewall","pos":Vector2(12650,12650),"game":"lightsout","reward":"Firewall Shard"}
     ]
+    side_job_sites = [
+        {"id":"jobs_center","name":"Zentrum Jobboard","pos":Vector2(8050,5650)},
+        {"id":"jobs_harbor","name":"Hafen Dispatch","pos":Vector2(13250,5850)},
+        {"id":"jobs_terminal","name":"Terminal Courier Hub","pos":Vector2(23200,12600)}
+    ]
     native_chapters = [
         {"title":"Echo-Signale bergen","desc":"Sammle fünf Echo-Signale in der Stadt.","kind":"frag","goal":5},
         {"title":"Verdeckte Wege","desc":"Entdecke drei Perspektiv-Geheimnisse.","kind":"secret","goal":3},
         {"title":"OpenAI HQ","desc":"Besuche das OpenAI HQ im Glasdistrikt.","kind":"visit_openai","goal":1},
         {"title":"Solar Grid Repair","desc":"Löse das Leitungs-Puzzle am Solar Grid Terminal.","kind":"hack","id":"gridRepair","goal":1},
+        {"title":"Grid Key","desc":"Bring den Grid Key in die nächste Phase der Infrastrukturkette.","kind":"hack","id":"gridRepair","goal":1},
         {"title":"Transit Mosaic","desc":"Setze das Transit-Routing als Schiebepuzzle zusammen.","kind":"hack","id":"transitMosaic","goal":1},
         {"title":"Cipher Gate","desc":"Knacke den Mastermind-Code in Neon Mile.","kind":"hack","id":"cipherGate","goal":1},
         {"title":"Spectrum Alignment","desc":"Stimme die Frequenzkanäle am Observatorium ab.","kind":"hack","id":"spectrum","goal":1},
         {"title":"Packet Trace","desc":"Rekonstruiere die Paketfolge am Expo-Knoten.","kind":"hack","id":"packetTrace","goal":1},
         {"title":"Firewall Lattice","desc":"Schalte das Firewall-Raster vollständig dunkel.","kind":"hack","id":"firewall","goal":1},
+        {"title":"Nebenjobs","desc":"Schließe zwei Stadtaufträge ab und verdiene Credits.","kind":"jobs","goal":2},
+        {"title":"Werkstatt","desc":"Besuche eine Garage oder Werkstatt und lackiere ein Fahrzeug.","kind":"paint","goal":1},
         {"title":"Eigenheim","desc":"Kaufe ein Gebäude mit Garage.","kind":"property","goal":1},
+        {"title":"Fahrzeugsammlung","desc":"Lagere mindestens ein Fahrzeug in deiner Hausgarage.","kind":"stored_car","goal":1},
         {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
     ]
+    if shop_stock.is_empty():
+        shop_stock = {
+            "energy_drink":8,
+            "scan_cell":6,
+            "transit_pass":3
+        }
 
 func _generate_city() -> void:
     buildings.clear()
@@ -628,6 +661,40 @@ func _build_ui() -> void:
     gvb.add_child(close_game)
     layer.add_child(game_panel)
 
+    commerce_panel = PanelContainer.new()
+    commerce_panel.position = Vector2(145,520)
+    commerce_panel.size = Vector2(790,980)
+    commerce_panel.visible = false
+    var csb := StyleBoxFlat.new()
+    csb.bg_color = Color(0.025,0.055,0.075,0.985)
+    csb.border_color = Color(1.0,0.82,0.47,0.38)
+    csb.set_border_width_all(2)
+    csb.corner_radius_top_left = 24
+    csb.corner_radius_top_right = 24
+    csb.corner_radius_bottom_left = 24
+    csb.corner_radius_bottom_right = 24
+    commerce_panel.add_theme_stylebox_override("panel",csb)
+    var cvb := VBoxContainer.new()
+    cvb.add_theme_constant_override("separation",14)
+    commerce_panel.add_child(cvb)
+    commerce_title = Label.new()
+    commerce_title.add_theme_font_size_override("font_size",28)
+    commerce_title.modulate = Color("#ffd27a")
+    cvb.add_child(commerce_title)
+    commerce_info = Label.new()
+    commerce_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    commerce_info.add_theme_font_size_override("font_size",18)
+    cvb.add_child(commerce_info)
+    commerce_actions = VBoxContainer.new()
+    commerce_actions.add_theme_constant_override("separation",10)
+    cvb.add_child(commerce_actions)
+    var close_commerce := Button.new()
+    close_commerce.text = "SCHLIESSEN"
+    close_commerce.custom_minimum_size = Vector2(0,70)
+    close_commerce.pressed.connect(_close_commerce)
+    cvb.add_child(close_commerce)
+    layer.add_child(commerce_panel)
+
     scan_button = Button.new()
     scan_button.text = "SCAN"
     scan_button.position = Vector2(820, 2060)
@@ -714,7 +781,7 @@ func _update_sensor(delta: float) -> void:
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
 func _update_player(delta: float) -> void:
-    if map_open or missions_open or minigame_open:
+    if map_open or missions_open or minigame_open or commerce_panel.visible:
         vehicle_velocity = move_toward(vehicle_velocity,0.0,delta*320.0)
         return
     if interior_active:
@@ -745,13 +812,17 @@ func _update_player(delta: float) -> void:
         car["heading"] = player_heading
         parked_cars[current_vehicle] = car
     else:
-        var velocity2 := move_vec.normalized() * WALK_SPEED * minf(1.0, move_vec.length())
+        var foot_speed: float = WALK_SPEED if energy > 5.0 else 105.0
+        var velocity2 := move_vec.normalized() * foot_speed * minf(1.0, move_vec.length())
         var np2 := player_pos + velocity2 * delta
         if not _point_blocked(np2, 12.0):
             player_pos = np2
             player_heading = velocity2.angle()
     player_pos.x = clampf(player_pos.x, 20.0, WORLD_SIZE.x-20.0)
     player_pos.y = clampf(player_pos.y, 20.0, WORLD_SIZE.y-20.0)
+    if move_vec.length() > 0.08:
+        var drain: float = 0.018 if current_vehicle >= 0 else 0.055
+        energy = maxf(0.0,energy-delta*drain*10.0)
 
 func _update_traffic(delta: float) -> void:
     for i in range(traffic.size()):
@@ -807,16 +878,18 @@ func _update_ui() -> void:
     var chapter: Dictionary = Dictionary(native_chapters[mini(native_chapter,native_chapters.size()-1)]) if native_chapters.size()>0 else {"title":"Explore","desc":""}
     mission_label.text = str(chapter.title)
     if interior_active:
-        detail_label.text = "%s · Interior. Explore the rooms and return through the lobby exit." % interior_name
+        detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
+    elif not active_job.is_empty():
+        detail_label.text = "Nebenjob: %s · Ziel auf der Karte markiert." % str(active_job.get("title","Auftrag"))
     else:
-        detail_label.text = "Move with left thumb. Use right thumb or device tilt to look behind height layers."
-    var mode := "Inside · %s" % interior_name if interior_active else "On foot"
+        detail_label.text = "Links bewegen · rechts Perspektive · MAP/MISSIONS für Übersicht."
+    var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
     if current_vehicle >= 0:
         mode = "Driving · %s" % str(parked_cars[current_vehicle]["class"]).capitalize()
-    status_label.text = "%s  ·  %s  ·  Peek %d%%\n%s" % [current_district, mode, int(view_amount.length()*100.0), camera_status]
+    status_label.text = "%s · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,world_zoom,credits,int(energy),jobs_done]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
-    interact_button.text = "INTERACT" if near.is_empty() else near.get("action","INTERACT")
+    interact_button.text = "INTERACT" if near.is_empty() else str(near.get("action","INTERACT"))
 
 func _scan() -> void:
     scan_time = 2.2
@@ -832,12 +905,17 @@ func _interact() -> void:
         _leave_interior()
         return
     elif n.type == "interior_feature":
-        _play_sfx("collect")
-        _notify(n.get("message","Interior system online."))
+        _use_interior_feature()
         return
     elif n.type == "storefront":
         var st = storefronts[int(n.index)]
         _enter_interior(str(st.name),str(st.kind),st.accent,player_pos)
+        return
+    elif n.type == "jobboard":
+        _open_jobboard(int(n.index))
+        return
+    elif n.type == "job_target":
+        _complete_side_job()
         return
     elif n.type == "openai_hq":
         hack_done["visited_openai"] = true
@@ -856,6 +934,7 @@ func _interact() -> void:
             fragments[idx].taken = true
             mission_fragments += 1
             _play_sfx("collect")
+            _save_game()
             _advance_native_chapter()
     elif n.type == "secret":
         var si: int = n.index
@@ -863,6 +942,7 @@ func _interact() -> void:
             secrets[si].found = true
             mission_secrets += 1
             _play_sfx("secret")
+            _save_game()
             _advance_native_chapter()
     elif n.type == "car":
         var ci: int = n.index
@@ -904,6 +984,17 @@ func _nearest_interactable() -> Dictionary:
         if d2 < 88.0 and d2 < bd:
             best = {"type":"secret","index":j,"action":"OPEN SECRET"}
             bd = d2
+    if not active_job.is_empty():
+        var target_pos: Vector2 = Vector2(active_job.get("target",Vector2.ZERO))
+        var djob: float = player_pos.distance_to(target_pos)
+        if djob < 105.0 and djob < bd:
+            best = {"type":"job_target","action":"DELIVER"}
+            bd = djob
+    for ji in range(side_job_sites.size()):
+        var djb: float = player_pos.distance_to(Vector2(side_job_sites[ji].pos))
+        if djb < 110.0 and djb < bd:
+            best = {"type":"jobboard","index":ji,"action":"JOBS"}
+            bd = djb
     for pi in range(property_sites.size()):
         var dp := player_pos.distance_to(Vector2(property_sites[pi].pos))
         if dp < 105.0 and dp < bd:
@@ -953,6 +1044,7 @@ func _draw() -> void:
     _draw_trees()
     _draw_vegetation_props()
     _draw_storefronts()
+    _draw_jobboards()
     _draw_street_props()
     _draw_pedestrians()
     _draw_traffic()
@@ -1424,6 +1516,16 @@ func _draw_trees() -> void:
             draw_circle(c+Vector2(-5,-5),t.r*0.62,t.tint.lightened(0.12))
             draw_circle(c+Vector2(7,-1),t.r*0.48,t.tint)
 
+func _draw_jobboards() -> void:
+    for j in side_job_sites:
+        if player_pos.distance_to(Vector2(j.pos))>1700.0:
+            continue
+        var c := _project(Vector2(j.pos),8)
+        draw_rect(Rect2(c-Vector2(24,26),Vector2(48,52)),Color(0.04,0.10,0.09,0.92),true)
+        draw_rect(Rect2(c-Vector2(24,26),Vector2(48,52)),Color("#8de9aa"),false,2.0)
+        draw_string(ThemeDB.fallback_font,c+Vector2(-16,-8),"JOBS",HORIZONTAL_ALIGNMENT_CENTER,32,10,Color.WHITE)
+        draw_circle(c+Vector2(0,13),5,Color("#8de9aa"))
+
 func _draw_street_props() -> void:
     for l in street_lights:
         if player_pos.distance_to(l.pos) > 1750.0:
@@ -1787,6 +1889,7 @@ func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vect
     _notify("%s · entered" % name)
 
 func _leave_interior() -> void:
+    commerce_panel.visible = false
     interior_active = false
     player_pos = interior_return_pos + Vector2(0,42)
     camera_pos = player_pos
@@ -1998,6 +2101,7 @@ func _finish_minigame() -> void:
     var sid := str(active_mission_site.id)
     hack_done[sid] = true
     credits += 35
+    _save_game()
     _play_sfx("secret")
     game_status.text = "ERFOLG · %s erhalten · +35 Credits" % str(active_mission_site.reward)
     await get_tree().create_timer(0.65).timeout
@@ -2242,6 +2346,234 @@ func _on_lightsout_cell(index: int) -> void:
     if not any_on:
         _finish_minigame()
 
+func _save_game() -> void:
+    var data := {
+        "player":[player_pos.x,player_pos.y],
+        "credits":credits,
+        "energy":energy,
+        "owned_property":owned_property,
+        "owned_cars":owned_cars,
+        "current_paint":current_paint,
+        "jobs_done":jobs_done,
+        "active_job":_serialize_job(active_job),
+        "hack_done":hack_done,
+        "chapter":native_chapter,
+        "inventory":inventory,
+        "shop_stock":shop_stock,
+        "frag_count":mission_fragments,
+        "secret_count":mission_secrets
+    }
+    var file := FileAccess.open("user://parallaxhunt_save.json",FileAccess.WRITE)
+    if file:
+        file.store_string(JSON.stringify(data))
+
+func _load_game() -> void:
+    if not FileAccess.file_exists("user://parallaxhunt_save.json"):
+        return
+    var file := FileAccess.open("user://parallaxhunt_save.json",FileAccess.READ)
+    if not file:
+        return
+    var parsed = JSON.parse_string(file.get_as_text())
+    if not parsed is Dictionary:
+        return
+    var d: Dictionary = parsed
+    if d.has("player") and d.player is Array and d.player.size()>=2:
+        player_pos = Vector2(float(d.player[0]),float(d.player[1]))
+    credits = int(d.get("credits",credits))
+    energy = float(d.get("energy",energy))
+    owned_property = str(d.get("owned_property",""))
+    owned_cars = Array(d.get("owned_cars",[]))
+    current_paint = str(d.get("current_paint",""))
+    jobs_done = int(d.get("jobs_done",0))
+    active_job = _deserialize_job(Dictionary(d.get("active_job",{})))
+    hack_done = Dictionary(d.get("hack_done",{}))
+    native_chapter = int(d.get("chapter",0))
+    inventory = Dictionary(d.get("inventory",inventory))
+    shop_stock = Dictionary(d.get("shop_stock",shop_stock))
+    mission_fragments = int(d.get("frag_count",0))
+    mission_secrets = int(d.get("secret_count",0))
+
+func _serialize_job(job: Dictionary) -> Dictionary:
+    if job.is_empty():
+        return {}
+    var t: Vector2 = Vector2(job.get("target",Vector2.ZERO))
+    return {"title":str(job.get("title","Auftrag")),"target":[t.x,t.y],"pay":int(job.get("pay",0))}
+
+func _deserialize_job(job: Dictionary) -> Dictionary:
+    if job.is_empty():
+        return {}
+    var target = job.get("target",[])
+    if target is Array and target.size()>=2:
+        return {"title":str(job.get("title","Auftrag")),"target":Vector2(float(target[0]),float(target[1])),"pay":int(job.get("pay",0))}
+    return {}
+
+func _commerce_button(label_text: String, callback: Callable) -> Button:
+    var b := Button.new()
+    b.text = label_text
+    b.custom_minimum_size = Vector2(0,72)
+    b.add_theme_font_size_override("font_size",18)
+    b.pressed.connect(callback)
+    return b
+
+func _clear_commerce_actions() -> void:
+    for child in commerce_actions.get_children():
+        child.queue_free()
+
+func _open_commerce(title: String, info: String) -> void:
+    commerce_title.text = title
+    commerce_info.text = info
+    commerce_panel.visible = true
+    _clear_commerce_actions()
+
+func _close_commerce() -> void:
+    commerce_panel.visible = false
+
+func _use_interior_feature() -> void:
+    if commerce_panel.visible:
+        return
+    if interior_kind in ["restaurant","cafe"]:
+        _open_restaurant_menu()
+    elif interior_kind=="shop":
+        _open_shop_menu()
+    elif interior_kind in ["garage","workshop"]:
+        _open_garage_menu()
+    elif interior_kind=="home":
+        _open_home_garage_menu()
+    else:
+        _play_sfx("collect")
+        _notify(_interior_feature_message())
+
+func _open_restaurant_menu() -> void:
+    _open_commerce(interior_name,"Energie %d%% · Credits %d" % [int(energy),credits])
+    commerce_actions.add_child(_commerce_button("Snack · 10 CR · +22 Energie",_buy_food.bind(10,22.0)))
+    commerce_actions.add_child(_commerce_button("Warme Mahlzeit · 24 CR · +55 Energie",_buy_food.bind(24,55.0)))
+    commerce_actions.add_child(_commerce_button("Ausruhen · 38 CR · volle Energie",_buy_food.bind(38,100.0)))
+
+func _buy_food(cost: int, amount: float) -> void:
+    if credits < cost:
+        _notify("Nicht genug Credits.")
+        return
+    credits -= cost
+    energy = 100.0 if amount>=100.0 else minf(100.0,energy+amount)
+    _play_sfx("collect")
+    _save_game()
+    _open_restaurant_menu()
+
+func _open_shop_menu() -> void:
+    _open_commerce(interior_name,"Inventar · Credits %d" % credits)
+    commerce_actions.add_child(_commerce_button("Energy Drink · 18 CR · Bestand %d" % int(shop_stock.get("energy_drink",0)),_buy_shop_item.bind("energy_drink",18)))
+    commerce_actions.add_child(_commerce_button("Scan Cell · 20 CR · Bestand %d" % int(shop_stock.get("scan_cell",0)),_buy_shop_item.bind("scan_cell",20)))
+    commerce_actions.add_child(_commerce_button("Transit Pass · 35 CR · Bestand %d" % int(shop_stock.get("transit_pass",0)),_buy_shop_item.bind("transit_pass",35)))
+
+func _buy_shop_item(item: String, cost: int) -> void:
+    var stock: int = int(shop_stock.get(item,0))
+    if stock<=0:
+        _notify("Ausverkauft.")
+        return
+    if credits<cost:
+        _notify("Nicht genug Credits.")
+        return
+    credits -= cost
+    shop_stock[item]=stock-1
+    inventory[item]=int(inventory.get(item,0))+1
+    if item=="energy_drink":
+        energy=minf(100.0,energy+30.0)
+        inventory[item]=maxi(0,int(inventory[item])-1)
+    elif item=="scan_cell":
+        scan_time=2.2
+        inventory[item]=maxi(0,int(inventory[item])-1)
+    _play_sfx("collect")
+    _save_game()
+    _open_shop_menu()
+
+func _open_garage_menu() -> void:
+    _open_commerce(interior_name,"Werkstatt · Fahre ein Fahrzeug vor oder nutze die Lackierung.")
+    var colors := [["Arctic",Color("#e7edf1")],["Crimson",Color("#e95862")],["Ocean",Color("#5ba8df")],["Mint",Color("#66d7b0")],["Violet",Color("#9b7ad7")],["Sunburst",Color("#efcf55")]]
+    for entry in colors:
+        commerce_actions.add_child(_commerce_button("Lack %s · 45 CR" % str(entry[0]),_paint_current_vehicle.bind(str(entry[0]),Color(entry[1]))))
+
+func _paint_current_vehicle(paint_name: String, color: Color) -> void:
+    if current_vehicle<0:
+        _notify("Du musst mit einem Auto zur Werkstatt kommen.")
+        return
+    if credits<45:
+        _notify("Nicht genug Credits.")
+        return
+    credits-=45
+    parked_cars[current_vehicle]["color"]=color
+    current_paint=paint_name
+    _play_sfx("vehicle")
+    _save_game()
+    _advance_native_chapter()
+    _open_garage_menu()
+
+func _open_home_garage_menu() -> void:
+    _open_commerce(interior_name,"Eigene Garage · gespeicherte Fahrzeuge: %d" % owned_cars.size())
+    commerce_actions.add_child(_commerce_button("Aktuelles Fahrzeug einlagern",_store_current_vehicle))
+    for i in range(owned_cars.size()):
+        var car: Dictionary = Dictionary(owned_cars[i])
+        commerce_actions.add_child(_commerce_button("Ausparken: %s" % str(car.get("class","Auto")).capitalize(),_spawn_owned_car.bind(i)))
+
+func _store_current_vehicle() -> void:
+    if current_vehicle<0:
+        _notify("Kein Fahrzeug zum Einlagern.")
+        return
+    var cap := 5
+    for p in property_sites:
+        if str(p.id)==owned_property:
+            cap=int(p.garage)
+    if owned_cars.size()>=cap:
+        _notify("Garage voll.")
+        return
+    var car: Dictionary = parked_cars[current_vehicle]
+    owned_cars.append({"class":str(car["class"]),"color":car["color"].to_html(false)})
+    car["occupied"]=false
+    parked_cars[current_vehicle]=car
+    current_vehicle=-1
+    vehicle_velocity=0.0
+    _save_game()
+    _advance_native_chapter()
+    _open_home_garage_menu()
+
+func _spawn_owned_car(index: int) -> void:
+    if index<0 or index>=owned_cars.size():
+        return
+    var saved: Dictionary = Dictionary(owned_cars[index])
+    owned_cars.remove_at(index)
+    var color := Color("#d6dce2")
+    var html := str(saved.get("color","d6dce2"))
+    color = Color("#"+html)
+    parked_cars.append({"pos":player_pos+Vector2(65,0),"class":str(saved.get("class","sedan")),"heading":player_heading,"color":color,"occupied":false})
+    _save_game()
+    _open_home_garage_menu()
+
+func _open_jobboard(index: int) -> void:
+    if not active_job.is_empty():
+        _notify("Aktiver Auftrag läuft bereits.")
+        return
+    if index<0 or index>=side_job_sites.size():
+        return
+    var source: Vector2 = Vector2(side_job_sites[index].pos)
+    var targets := [Vector2(23800,1600),Vector2(13200,6150),Vector2(7900,12600),Vector2(18400,9100),Vector2(4200,15100),Vector2(23200,15100)]
+    var target: Vector2 = targets[rng.randi_range(0,targets.size()-1)]
+    var km_factor: float = source.distance_to(target)/1000.0
+    var pay: int = clampi(int(55.0+km_factor*13.0),60,190)
+    active_job={"title":"Stadtlieferung","target":target,"pay":pay}
+    _notify("Nebenjob angenommen · %d CR" % pay)
+    _save_game()
+
+func _complete_side_job() -> void:
+    if active_job.is_empty():
+        return
+    var pay: int = int(active_job.get("pay",60))
+    credits += pay
+    jobs_done += 1
+    active_job={}
+    _play_sfx("secret")
+    _notify("Auftrag erledigt · +%d Credits" % pay)
+    _save_game()
+    _advance_native_chapter()
+
 func _toggle_map() -> void:
     if minigame_open:
         return
@@ -2288,6 +2620,10 @@ func _draw_map_overlay() -> void:
         _draw_map_marker(_map_point(Vector2(st.pos),map_rect),col,"R" if st.kind in ["restaurant","cafe"] else ("G" if st.kind in ["garage","workshop"] else "S"))
     for p in property_sites:
         _draw_map_marker(_map_point(Vector2(p.pos),map_rect),Color("#d6a8ff"),"H")
+    for j in side_job_sites:
+        _draw_map_marker(_map_point(Vector2(j.pos),map_rect),Color("#8de9aa"),"J")
+    if not active_job.is_empty():
+        _draw_map_marker(_map_point(Vector2(active_job.get("target",Vector2.ZERO)),map_rect),Color("#ffffff"),"➤")
     for m in mission_sites:
         var done := bool(hack_done.get(str(m.id),false))
         _draw_map_marker(_map_point(Vector2(m.pos),map_rect),Color("#66717a") if done else Color("#ffdf75"),"!")
@@ -2303,6 +2639,7 @@ func _draw_map_overlay() -> void:
         ["G","Garage / Werkstatt",Color("#ff9b72")],
         ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
         ["H","Kaufbare Immobilie / Hausgarage",Color("#d6a8ff")],
+        ["J","Nebenjob-Board",Color("#8de9aa")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
     ]
     for row in legend:
@@ -2324,7 +2661,10 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="secret": return mini(mission_secrets,int(c.goal))
     if kind=="visit_openai": return 1 if bool(hack_done.get("visited_openai",false)) else 0
     if kind=="hack": return 1 if bool(hack_done.get(str(c.id),false)) else 0
+    if kind=="jobs": return mini(jobs_done,int(c.goal))
+    if kind=="paint": return 1 if current_paint!="" else 0
     if kind=="property": return 1 if owned_property!="" else 0
+    if kind=="stored_car": return 1 if owned_cars.size()>0 else 0
     return 1
 
 func _draw_missions_overlay() -> void:
@@ -2365,6 +2705,7 @@ func _interact_property(index: int) -> void:
         return
     credits -= int(p.price)
     owned_property = str(p.id)
+    _save_game()
     _play_sfx("collect")
     _notify("%s gekauft · Garage %d Plätze" % [str(p.name),int(p.garage)])
     _advance_native_chapter()
