@@ -2,8 +2,37 @@ extends Node2D
 
 const WORLD_SIZE := Vector2(26000.0, 18000.0)
 const WALK_SPEED := 165.0
-const VEHICLE_SPEEDS := {"micro": 340.0, "sedan": 430.0, "van": 365.0, "sport": 545.0}
-const VEHICLE_SIZES := {"micro": Vector2(36, 19), "sedan": Vector2(44, 22), "van": Vector2(50, 25), "sport": Vector2(48, 20)}
+const VEHICLE_CLASSES := ["micro","hatch","sedan","executive","suv","pickup","van","delivery","sport","hyper"]
+const VEHICLE_SPEEDS := {
+    "micro": 315.0, "hatch": 355.0, "sedan": 415.0, "executive": 455.0,
+    "suv": 390.0, "pickup": 370.0, "van": 350.0, "delivery": 325.0,
+    "sport": 535.0, "hyper": 610.0
+}
+const VEHICLE_ACCEL := {
+    "micro": 260.0, "hatch": 275.0, "sedan": 245.0, "executive": 265.0,
+    "suv": 220.0, "pickup": 205.0, "van": 190.0, "delivery": 175.0,
+    "sport": 335.0, "hyper": 390.0
+}
+const VEHICLE_BRAKE := {
+    "micro": 360.0, "hatch": 370.0, "sedan": 355.0, "executive": 375.0,
+    "suv": 340.0, "pickup": 330.0, "van": 315.0, "delivery": 300.0,
+    "sport": 440.0, "hyper": 500.0
+}
+const VEHICLE_HANDLING := {
+    "micro": 2.85, "hatch": 2.65, "sedan": 2.30, "executive": 2.15,
+    "suv": 1.95, "pickup": 1.82, "van": 1.70, "delivery": 1.58,
+    "sport": 2.55, "hyper": 2.40
+}
+const VEHICLE_SPEED_GROUP := {
+    "micro":"CITY","hatch":"CITY","sedan":"ROAD","executive":"ROAD",
+    "suv":"UTILITY","pickup":"UTILITY","van":"UTILITY","delivery":"UTILITY",
+    "sport":"PERFORMANCE","hyper":"HYPER"
+}
+const VEHICLE_SIZES := {
+    "micro":Vector2(35,19),"hatch":Vector2(40,20),"sedan":Vector2(45,22),"executive":Vector2(49,23),
+    "suv":Vector2(48,25),"pickup":Vector2(51,24),"van":Vector2(51,26),"delivery":Vector2(54,27),
+    "sport":Vector2(49,20),"hyper":Vector2(52,19)
+}
 
 var rng := RandomNumberGenerator.new()
 var districts: Array = []
@@ -39,6 +68,10 @@ var mission_fragments := 0
 var mission_secrets := 0
 var cache_count: int = 0
 var glyph_count: int = 0
+var photo_points: Array = []
+var photo_count: int = 0
+var visited_districts: Dictionary = {}
+var driven_classes: Dictionary = {}
 var current_district := ""
 var camera_status := "Sensor-PMDD"
 var world_clock := 19.15
@@ -405,7 +438,13 @@ func _build_native_gameplay_data() -> void:
         {"id":"cipherGate","name":"Neon Cipher Gate","pos":Vector2(23600,8700),"game":"mastermind","reward":"Cipher Core"},
         {"id":"spectrum","name":"Spectrum Array","pos":Vector2(13000,8750),"game":"frequency","reward":"Spectrum Seal"},
         {"id":"packetTrace","name":"Expo Packet Node","pos":Vector2(7550,12600),"game":"memory","reward":"Packet Token"},
-        {"id":"firewall","name":"Bio Firewall","pos":Vector2(12650,12650),"game":"lightsout","reward":"Firewall Shard"}
+        {"id":"firewall","name":"Bio Firewall","pos":Vector2(12650,12650),"game":"lightsout","reward":"Firewall Shard"},
+        {"id":"railCipher","name":"Railworks Signal Cipher","pos":Vector2(23200,16250),"game":"mastermind","reward":"Rail Token"},
+        {"id":"windSync","name":"Windfeld Phase Sync","pos":Vector2(7600,16050),"game":"frequency","reward":"Wind Seal"},
+        {"id":"dataTrace","name":"Data Fields Trace","pos":Vector2(12850,16000),"game":"memory","reward":"Data Trace"},
+        {"id":"coastGrid","name":"Coast Relay Grid","pos":Vector2(18150,16050),"game":"wire","reward":"Coast Key"},
+        {"id":"airportRoute","name":"Aerodrome Routing","pos":Vector2(2600,16050),"game":"slide","reward":"Runway Tile"},
+        {"id":"auroraFirewall","name":"Aurora Light Lattice","pos":Vector2(18150,12600),"game":"lightsout","reward":"Aurora Shard"}
     ]
     side_job_sites = [
         {"id":"jobs_center","name":"Zentrum Jobboard","pos":Vector2(8050,5650)},
@@ -434,6 +473,12 @@ func _build_native_gameplay_data() -> void:
         {"title":"Werkstatt","desc":"Besuche eine Garage oder Werkstatt und lackiere ein Fahrzeug.","kind":"paint","goal":1},
         {"title":"Eigenheim","desc":"Kaufe ein Gebäude mit Garage.","kind":"property","goal":1},
         {"title":"Fahrzeugsammlung","desc":"Lagere mindestens ein Fahrzeug in deiner Hausgarage.","kind":"stored_car","goal":1},
+        {"title":"Photo Hunt I","desc":"Fotografiere drei markierte PMDD-Fotopunkte aus dem richtigen Blickwinkel.","kind":"photo","goal":3},
+        {"title":"Fahrzeugkunde","desc":"Fahre mindestens vier unterschiedliche Fahrzeugklassen.","kind":"vehicles","goal":4},
+        {"title":"Stadtentdecker","desc":"Besuche zwölf unterschiedliche Stadtteile.","kind":"districts","goal":12},
+        {"title":"Photo Hunt II","desc":"Vervollständige acht Fotopunkte.","kind":"photo","goal":8},
+        {"title":"Hacking Marathon","desc":"Schließe mindestens zehn unterschiedliche Hacking-Terminals ab.","kind":"hack_count","goal":10},
+        {"title":"Sammler","desc":"Berge acht Caches und sechs Stadtsigils.","kind":"collector","goal":14},
         {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
     ]
     if shop_stock.is_empty():
@@ -474,6 +519,20 @@ func _build_story_content() -> void:
         {"id":"sub_harbor","name":"Harbor Service Sublevel","pos":Vector2(13350,6400),"kind":"sublevel","accent":Color("#ffb66f")},
         {"id":"sub_transit","name":"Transit Utility Node","pos":Vector2(23200,6000),"kind":"sublevel","accent":Color("#9adbe5")},
         {"id":"sub_bio","name":"Bio Utility Lab","pos":Vector2(12850,12850),"kind":"sublevel","accent":Color("#82e59b")}
+    ]
+    photo_points = [
+        {"id":"photo_clock","label":"Clock Tower Parallax","pos":Vector2(1850,1950),"dir":Vector2(0.75,-0.20),"taken":false,"district":"Altstadt","reward":32},
+        {"id":"photo_crystal","label":"Crystal Reflection","pos":Vector2(8050,2080),"dir":Vector2(-0.72,0.16),"taken":false,"district":"Kulturviertel","reward":34},
+        {"id":"photo_openai","label":"OpenAI Skybridge","pos":Vector2(9000,3560),"dir":Vector2(0.82,-0.14),"taken":false,"district":"Glasdistrikt","reward":45},
+        {"id":"photo_greenhouse","label":"Nordpark Glasshouse","pos":Vector2(12800,1950),"dir":Vector2(-0.62,-0.40),"taken":false,"district":"Nordpark","reward":32},
+        {"id":"photo_solar","label":"Solar Beacon","pos":Vector2(20600,2020),"dir":Vector2(0.18,-0.84),"taken":false,"district":"Solar Heights","reward":36},
+        {"id":"photo_rotunda","label":"Canal Rotunda","pos":Vector2(2700,6900),"dir":Vector2(0.70,0.24),"taken":false,"district":"Kanäle","reward":30},
+        {"id":"photo_prism","label":"Civic Prism","pos":Vector2(7900,6970),"dir":Vector2(-0.68,0.20),"taken":false,"district":"Zentrum","reward":36},
+        {"id":"photo_crane","label":"Harbor Crane","pos":Vector2(13100,6620),"dir":Vector2(0.76,0.06),"taken":false,"district":"Hafen","reward":34},
+        {"id":"photo_neon","label":"Neon Theatre","pos":Vector2(19800,6550),"dir":Vector2(-0.72,-0.10),"taken":false,"district":"Neon Mile","reward":40},
+        {"id":"photo_garden","label":"Conservatory Depth","pos":Vector2(3300,14050),"dir":Vector2(0.55,-0.55),"taken":false,"district":"Gärten","reward":34},
+        {"id":"photo_library","label":"Axis Library","pos":Vector2(9300,13800),"dir":Vector2(-0.58,-0.48),"taken":false,"district":"Universität","reward":34},
+        {"id":"photo_astra","label":"Astra Dome","pos":Vector2(15600,14250),"dir":Vector2(0.64,-0.30),"taken":false,"district":"Observatorium","reward":42}
     ]
     glyphs = [
         {"pos":Vector2(2450,1450),"taken":false,"district":"Altstadt"},
@@ -535,14 +594,14 @@ func _generate_city() -> void:
         var p := _sample_polyline(rd.points, t_sample)
         var tangent := _polyline_tangent(rd.points, t_sample)
         var normal := Vector2(-tangent.y, tangent.x)
-        var cls: String = ["micro","sedan","van","sport"][rng.randi_range(0,3)]
+        var cls: String = VEHICLE_CLASSES[rng.randi_range(0,VEHICLE_CLASSES.size()-1)]
         parked_cars.append({"pos":p + normal * rng.randf_range(45,70), "class":cls, "heading":tangent.angle(), "color":_car_color(cls), "occupied":false})
 
 func _generate_traffic() -> void:
     traffic.clear()
     for i in range(155):
         var road_index := rng.randi_range(0, roads.size()-1)
-        var cls: String = ["micro","sedan","van","sport"][rng.randi_range(0,3)]
+        var cls: String = VEHICLE_CLASSES[rng.randi_range(0,VEHICLE_CLASSES.size()-1)]
         var reverse := rng.randf()<0.5
         traffic.append({
             "road":road_index,
@@ -572,6 +631,7 @@ func _generate_smart_agents() -> void:
     smart_agents.clear()
     for i in range(28):
         var road_index := rng.randi_range(0,17)
+        var smart_cls: String = VEHICLE_CLASSES[rng.randi_range(0,7)]
         smart_agents.append({
             "state":"walking" if i%3==0 else "driving",
             "road":road_index,
@@ -580,8 +640,8 @@ func _generate_smart_agents() -> void:
             "lane":rng.randi_range(0,1),
             "timer":rng.randf_range(8.0,26.0),
             "speed":rng.randf_range(0.018,0.032),
-            "class":["micro","sedan","van"][rng.randi_range(0,2)],
-            "color":_car_color(["micro","sedan","van"][rng.randi_range(0,2)]),
+            "class":smart_cls,
+            "color":_car_color(smart_cls),
             "skin":[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655"),Color("#7b4f3d")][rng.randi_range(0,3)],
             "clothes":[Color("#8dcfff"),Color("#ff9fc1"),Color("#90dfb8"),Color("#ffd477")][rng.randi_range(0,3)],
             "phase":rng.randf_range(0,TAU),
@@ -1191,20 +1251,34 @@ func _update_player(delta: float) -> void:
         vehicle_velocity = move_toward(vehicle_velocity, 0.0, delta * 280.0)
         return
     if current_vehicle >= 0:
-        var car = parked_cars[current_vehicle]
-        var max_speed: float = VEHICLE_SPEEDS[car["class"]]
-        var desired_heading := move_vec.angle()
-        player_heading = lerp_angle(player_heading, desired_heading, minf(1.0, delta * 4.5))
-        vehicle_velocity = move_toward(vehicle_velocity, max_speed * move_vec.length(), delta * max_speed * 1.65)
-        var velocity := Vector2.from_angle(player_heading) * vehicle_velocity
-        var np := player_pos + velocity * delta
-        if not _point_blocked(np, 18.0):
-            player_pos = np
+        var car: Dictionary = parked_cars[current_vehicle]
+        var cls: String = str(car["class"])
+        var max_speed: float = float(VEHICLE_SPEEDS.get(cls,400.0))
+        var accel: float = float(VEHICLE_ACCEL.get(cls,240.0))
+        var brake: float = float(VEHICLE_BRAKE.get(cls,350.0))
+        var handling: float = float(VEHICLE_HANDLING.get(cls,2.2))
+        var throttle: float = clampf(-move_vec.y,-1.0,1.0)
+        var steer: float = clampf(move_vec.x,-1.0,1.0)
+        var desired_speed: float = max_speed*throttle if throttle>=0.0 else max_speed*0.30*throttle
+        var rate: float = accel if abs(desired_speed)>abs(vehicle_velocity) and sign(desired_speed)==sign(vehicle_velocity) else brake
+        if abs(throttle)<0.08:
+            desired_speed=0.0
+            rate=105.0
+        vehicle_velocity=move_toward(vehicle_velocity,desired_speed,rate*delta)
+        var speed_ratio: float = clampf(abs(vehicle_velocity)/maxf(1.0,max_speed),0.0,1.0)
+        var steer_gain: float = handling*(0.28+0.95*speed_ratio)
+        var reverse_sign: float = -1.0 if vehicle_velocity<0.0 else 1.0
+        player_heading += steer*steer_gain*delta*reverse_sign
+        var velocity := Vector2.from_angle(player_heading)*vehicle_velocity
+        var np := player_pos+velocity*delta
+        if not _point_blocked(np,18.0):
+            player_pos=np
         else:
-            vehicle_velocity *= 0.2
-        car["pos"] = player_pos
-        car["heading"] = player_heading
-        parked_cars[current_vehicle] = car
+            vehicle_velocity*=-0.08
+        car["pos"]=player_pos
+        car["heading"]=player_heading
+        parked_cars[current_vehicle]=car
+        driven_classes[cls]=true
     else:
         var foot_speed: float = WALK_SPEED if energy > 5.0 else 105.0
         var velocity2 := move_vec.normalized() * foot_speed * minf(1.0, move_vec.length())
@@ -1627,6 +1701,21 @@ func _interact() -> void:
             _save_game()
             _advance_native_chapter()
         return
+    elif n.type == "photo":
+        var pidx: int = int(n.index)
+        var req: Vector2 = Vector2(photo_points[pidx].dir).normalized()
+        var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
+        if aligned and not bool(photo_points[pidx].taken):
+            photo_points[pidx]["taken"]=true
+            photo_count+=1
+            credits+=int(photo_points[pidx].reward)
+            _play_sfx("secret")
+            _notify("PHOTO HUNT · %s · +%d CR" % [str(photo_points[pidx].label),int(photo_points[pidx].reward)])
+            _save_game()
+            _advance_native_chapter()
+        else:
+            _notify("Bewege Blick/PMDD-Perspektive in die markierte Richtung.")
+        return
     elif n.type == "fragment":
         var idx: int = n.index
         if not fragments[idx].taken:
@@ -1704,6 +1793,15 @@ func _nearest_interactable() -> Dictionary:
         if dg < 72.0 and dg < bd:
             best = {"type":"glyph","index":gi,"action":"SIGIL"}
             bd = dg
+    for pi in range(photo_points.size()):
+        if bool(photo_points[pi].taken):
+            continue
+        var dphoto: float = player_pos.distance_to(Vector2(photo_points[pi].pos))
+        if dphoto < 135.0 and dphoto < bd:
+            var req: Vector2 = Vector2(photo_points[pi].dir).normalized()
+            var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
+            best = {"type":"photo","index":pi,"action":"FOTO ✓" if aligned else "BLICK AUSRICHTEN"}
+            bd = dphoto
     for i in range(fragments.size()):
         if fragments[i].taken:
             continue
@@ -1798,6 +1896,7 @@ func _draw() -> void:
     _draw_storefronts()
     _draw_named_npcs()
     _draw_story_collectibles()
+    _draw_photo_points()
     _draw_transit_stops()
     _draw_jobboards()
     _draw_street_props()
@@ -2484,6 +2583,21 @@ func _dialogue_city() -> void:
 func _close_dialogue() -> void:
     dialogue_panel.visible=false
     active_dialogue_npc=-1
+
+func _draw_photo_points() -> void:
+    for ph in photo_points:
+        if bool(ph.taken) or player_pos.distance_to(Vector2(ph.pos))>1750.0:
+            continue
+        var p := _project(Vector2(ph.pos),20)
+        var pulse: float = 1.0+sin(Time.get_ticks_msec()/260.0+float(ph.pos.x)*0.001)*0.12
+        draw_circle(p,14.0*pulse,Color(1.0,0.55,0.86,0.05))
+        draw_arc(p,14.0*pulse,0,TAU,26,Color("#ff9fdd"),2.0,true)
+        draw_arc(p,8.0*pulse,-1.0,1.0,12,Color("#f2f8ff"),2.0,true)
+        if player_pos.distance_to(Vector2(ph.pos))<180.0:
+            var req: Vector2 = Vector2(ph.dir).normalized()
+            var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
+            draw_string(ThemeDB.fallback_font,p+Vector2(-90,-30),str(ph.label),HORIZONTAL_ALIGNMENT_CENTER,180,12,Color.WHITE)
+            draw_string(ThemeDB.fallback_font,p+Vector2(-90,34),"AUSRICHTUNG OK" if aligned else "PMDD-BLICK AUSRICHTEN",HORIZONTAL_ALIGNMENT_CENTER,180,10,Color("#73f3ce") if aligned else Color("#ffcf8a"))
 
 func _draw_transit_stops() -> void:
     for st in transit_stops:
@@ -3686,6 +3800,11 @@ func _reset_game_state() -> void:
     mission_secrets=0
     cache_count=0
     glyph_count=0
+    photo_count=0
+    visited_districts.clear()
+    driven_classes.clear()
+    for i in range(photo_points.size()):
+        photo_points[i]["taken"]=false
     inventory={"scan_cell":0,"energy_drink":0,"transit_pass":0}
     shop_stock={"energy_drink":8,"scan_cell":6,"transit_pass":3}
     transit_riding=-1
@@ -3837,6 +3956,10 @@ func _save_game() -> void:
         "secret_count":mission_secrets,
         "cache_count":cache_count,
         "glyph_count":glyph_count,
+        "photo_count":photo_count,
+        "photos":photo_points.map(func(x): return bool(x.taken)),
+        "visited_districts":visited_districts,
+        "driven_classes":driven_classes,
         "npc_flags":npc_flags,
         "npc_trust":npc_trust,
         "npc_contracts_done":npc_contracts_done,
@@ -3882,6 +4005,13 @@ func _load_game(slot: int = selected_save_slot) -> void:
     mission_secrets = int(d.get("secret_count",0))
     cache_count = int(d.get("cache_count",0))
     glyph_count = int(d.get("glyph_count",0))
+    photo_count = int(d.get("photo_count",0))
+    var photo_taken = d.get("photos",[])
+    if photo_taken is Array:
+        for i in range(mini(photo_taken.size(),photo_points.size())):
+            photo_points[i]["taken"]=bool(photo_taken[i])
+    visited_districts = Dictionary(d.get("visited_districts",{}))
+    driven_classes = Dictionary(d.get("driven_classes",{}))
     npc_flags = Dictionary(d.get("npc_flags",{}))
     npc_trust = Dictionary(d.get("npc_trust",{}))
     npc_contracts_done = Dictionary(d.get("npc_contracts_done",{}))
@@ -4211,6 +4341,9 @@ func _draw_map_overlay() -> void:
         _draw_map_marker(_map_point(Vector2(l.pos),map_rect),Color(l.accent),"★")
     for npc in named_npcs:
         _draw_map_marker(_map_point(Vector2(npc.pos),map_rect),Color(npc.accent),"N")
+    for ph in photo_points:
+        if not bool(ph.taken):
+            _draw_map_marker(_map_point(Vector2(ph.pos),map_rect),Color("#ffb3e6"),"◎")
     for i in range(storefronts.size()):
         var st = storefronts[i]
         var col := Color("#ffd27a") if st.kind in ["restaurant","cafe"] else (Color("#73f3ce") if st.kind=="shop" else Color("#ff9b72"))
@@ -4240,6 +4373,7 @@ func _draw_map_overlay() -> void:
     var legend := [
         ["★","Sehenswürdigkeit / Landmark",Color("#9ad5ff")],
         ["N","Benannter NPC / Kontakt",Color("#c7f2e7")],
+        ["◎","PMDD Photo Point",Color("#ffb3e6")],
         ["R","Restaurant / Café",Color("#ffd27a")],
         ["G","Garage / Werkstatt",Color("#ff9b72")],
         ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
@@ -4279,6 +4413,15 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="paint": return 1 if current_paint!="" else 0
     if kind=="property": return 1 if owned_property!="" else 0
     if kind=="stored_car": return 1 if owned_cars.size()>0 else 0
+    if kind=="photo": return mini(photo_count,int(c.goal))
+    if kind=="vehicles": return mini(driven_classes.size(),int(c.goal))
+    if kind=="districts": return mini(visited_districts.size(),int(c.goal))
+    if kind=="hack_count":
+        var hc: int = 0
+        for key in hack_done.keys():
+            if str(key)!="visited_openai" and bool(hack_done[key]): hc+=1
+        return mini(hc,int(c.goal))
+    if kind=="collector": return mini(cache_count+glyph_count,int(c.goal))
     return 1
 
 func _draw_missions_overlay() -> void:
@@ -4461,11 +4604,17 @@ func _distance_to_any_road(p: Vector2) -> float:
 func _car_color(cls: String) -> Color:
     var palettes := {
         "micro":[Color("#ef6b74"),Color("#70b8e8"),Color("#f4d37b"),Color("#d6dce2")],
+        "hatch":[Color("#68c5df"),Color("#e18a72"),Color("#9bd27f"),Color("#b7a7ea")],
         "sedan":[Color("#6aa8ff"),Color("#8e7fd8"),Color("#d7d7dc"),Color("#ffad91")],
+        "executive":[Color("#293846"),Color("#d2d7dc"),Color("#776b85"),Color("#36586c")],
+        "suv":[Color("#6e8c7a"),Color("#c6ad84"),Color("#72869b"),Color("#4f5f66")],
+        "pickup":[Color("#d48262"),Color("#7d9fbc"),Color("#4e6a5a"),Color("#d4c6a6")],
         "van":[Color("#98e1bd"),Color("#ffd3a0"),Color("#c7d5e4"),Color("#9eb9ff")],
-        "sport":[Color("#ff6eaa"),Color("#68efd7"),Color("#f2df61"),Color("#bba2ff")]
+        "delivery":[Color("#f0efe9"),Color("#ffcb67"),Color("#78a6ba"),Color("#c8d4db")],
+        "sport":[Color("#ff6eaa"),Color("#68efd7"),Color("#f2df61"),Color("#bba2ff")],
+        "hyper":[Color("#ff4f65"),Color("#51f0e1"),Color("#df67ff"),Color("#f3f7f8")]
     }
-    var arr: Array = palettes[cls]
+    var arr: Array = palettes.get(cls,palettes["sedan"])
     return arr[rng.randi_range(0,arr.size()-1)]
 
 func _draw_home_interior(origin: Vector2, accent: Color) -> void:
