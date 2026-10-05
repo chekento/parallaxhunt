@@ -35,6 +35,8 @@ var parallax_strength := 1.75
 var scan_time := 0.0
 var mission_fragments := 0
 var mission_secrets := 0
+var cache_count: int = 0
+var glyph_count: int = 0
 var current_district := ""
 var camera_status := "Sensor-PMDD"
 var world_clock := 19.15
@@ -81,6 +83,10 @@ var current_paint: String = ""
 var jobs_done: int = 0
 var active_job: Dictionary = {}
 var side_job_sites: Array = []
+var named_npcs: Array = []
+var caches: Array = []
+var glyphs: Array = []
+var npc_flags: Dictionary = {}
 var transit_riding: int = -1
 var transit_stops: Array = []
 var autosave_timer: float = 0.0
@@ -116,6 +122,7 @@ func _ready() -> void:
     _build_water()
     _build_landmarks()
     _build_native_gameplay_data()
+    _build_story_content()
     _load_game()
     _generate_city()
     _generate_traffic()
@@ -304,15 +311,19 @@ func _build_native_gameplay_data() -> void:
     ]
     native_chapters = [
         {"title":"Echo-Signale bergen","desc":"Sammle fünf Echo-Signale in der Stadt.","kind":"frag","goal":5},
+        {"title":"Mira finden","desc":"Sprich mit Mira im Zentrum.","kind":"npc","id":"mira","goal":1},
         {"title":"Verdeckte Wege","desc":"Entdecke drei Perspektiv-Geheimnisse.","kind":"secret","goal":3},
+        {"title":"Verlorene Caches","desc":"Berge vier Daten-Caches.","kind":"cache","goal":4},
+        {"title":"Stadtsigils","desc":"Sichere drei Stadtsigils.","kind":"glyph","goal":3},
+        {"title":"Nova am Hafen","desc":"Sprich mit Nova im Hafen.","kind":"npc","id":"nova","goal":1},
         {"title":"OpenAI HQ","desc":"Besuche das OpenAI HQ im Glasdistrikt.","kind":"visit_openai","goal":1},
         {"title":"Solar Grid Repair","desc":"Löse das Leitungs-Puzzle am Solar Grid Terminal.","kind":"hack","id":"gridRepair","goal":1},
-        {"title":"Grid Key","desc":"Bring den Grid Key in die nächste Phase der Infrastrukturkette.","kind":"hack","id":"gridRepair","goal":1},
         {"title":"Transit Mosaic","desc":"Setze das Transit-Routing als Schiebepuzzle zusammen.","kind":"hack","id":"transitMosaic","goal":1},
         {"title":"Cipher Gate","desc":"Knacke den Mastermind-Code in Neon Mile.","kind":"hack","id":"cipherGate","goal":1},
         {"title":"Spectrum Alignment","desc":"Stimme die Frequenzkanäle am Observatorium ab.","kind":"hack","id":"spectrum","goal":1},
         {"title":"Packet Trace","desc":"Rekonstruiere die Paketfolge am Expo-Knoten.","kind":"hack","id":"packetTrace","goal":1},
         {"title":"Firewall Lattice","desc":"Schalte das Firewall-Raster vollständig dunkel.","kind":"hack","id":"firewall","goal":1},
+        {"title":"Iris","desc":"Melde dich nach dem Firewall-Hack bei Iris.","kind":"npc","id":"iris","goal":1},
         {"title":"Nebenjobs","desc":"Schließe zwei Stadtaufträge ab und verdiene Credits.","kind":"jobs","goal":2},
         {"title":"Werkstatt","desc":"Besuche eine Garage oder Werkstatt und lackiere ein Fahrzeug.","kind":"paint","goal":1},
         {"title":"Eigenheim","desc":"Kaufe ein Gebäude mit Garage.","kind":"property","goal":1},
@@ -325,6 +336,44 @@ func _build_native_gameplay_data() -> void:
             "scan_cell":6,
             "transit_pass":3
         }
+
+func _build_story_content() -> void:
+    named_npcs = [
+        {"id":"mira","name":"Mira","pos":Vector2(6900,5100),"role":"Archivarin","accent":Color("#73f3ce"),"text":"Die Stadt verschiebt sich nicht nur optisch. Einige Daten existieren nur aus dem richtigen Blickwinkel."},
+        {"id":"nova","name":"Nova","pos":Vector2(12850,5700),"role":"Hafen-Kurierin","accent":Color("#ffb66f"),"text":"Wenn du die Caches findest, kann ich die Routen der alten Infrastruktur wieder zusammensetzen."},
+        {"id":"luna","name":"Luna","pos":Vector2(22800,1700),"role":"Solar-Technikerin","accent":Color("#f1e36f"),"text":"Das Solar Grid braucht jemanden, der nicht nur Leitungen sieht, sondern räumliche Zusammenhänge."},
+        {"id":"iris","name":"Iris","pos":Vector2(12700,12550),"role":"Bio-Security","accent":Color("#82e59b"),"text":"Die Firewall ist absichtlich räumlich fragmentiert. Eine flache Ansicht reicht hier nicht."},
+        {"id":"vio","name":"Vio","pos":Vector2(23200,8600),"role":"Arcade Host","accent":Color("#ff80ef"),"text":"Cipher Gate ist mein Lieblingsspiel. Vier Stellen, sechs Zustände, keine Ausreden."},
+        {"id":"bram","name":"Bram","pos":Vector2(23000,5400),"role":"Transitmeister","accent":Color("#9adbe5"),"text":"Die Linien funktionieren wieder besser. Achte auf die Haltephasen, bevor du einsteigst."}
+    ]
+    caches = [
+        {"pos":Vector2(1800,2600),"taken":false},
+        {"pos":Vector2(4200,6100),"taken":false},
+        {"pos":Vector2(8450,4750),"taken":false},
+        {"pos":Vector2(11800,6100),"taken":false},
+        {"pos":Vector2(17100,5150),"taken":false},
+        {"pos":Vector2(23200,5900),"taken":false},
+        {"pos":Vector2(3600,9000),"taken":false},
+        {"pos":Vector2(8900,8900),"taken":false},
+        {"pos":Vector2(13700,9300),"taken":false},
+        {"pos":Vector2(18700,9150),"taken":false},
+        {"pos":Vector2(7400,12700),"taken":false},
+        {"pos":Vector2(12600,12800),"taken":false}
+    ]
+    glyphs = [
+        {"pos":Vector2(2450,1450),"taken":false,"district":"Altstadt"},
+        {"pos":Vector2(7350,1750),"taken":false,"district":"Kulturviertel"},
+        {"pos":Vector2(12600,1750),"taken":false,"district":"Glasdistrikt"},
+        {"pos":Vector2(18100,1650),"taken":false,"district":"Nordpark"},
+        {"pos":Vector2(23200,1700),"taken":false,"district":"Solar Heights"},
+        {"pos":Vector2(2700,8800),"taken":false,"district":"Gärten"},
+        {"pos":Vector2(7900,8800),"taken":false,"district":"Universität"},
+        {"pos":Vector2(13000,8800),"taken":false,"district":"Observatorium"},
+        {"pos":Vector2(23500,9000),"taken":false,"district":"Neon Mile"},
+        {"pos":Vector2(7800,12600),"taken":false,"district":"Messe"},
+        {"pos":Vector2(13200,12600),"taken":false,"district":"Bioquartier"},
+        {"pos":Vector2(23400,16200),"taken":false,"district":"Railworks"}
+    ]
 
 func _generate_city() -> void:
     buildings.clear()
@@ -986,6 +1035,30 @@ func _interact() -> void:
     elif n.type == "mission_site":
         _start_minigame(mission_sites[int(n.index)])
         return
+    elif n.type == "named_npc":
+        _talk_named_npc(int(n.index))
+        return
+    elif n.type == "cache":
+        var cidx: int = int(n.index)
+        if not bool(caches[cidx].taken):
+            caches[cidx]["taken"]=true
+            cache_count += 1
+            credits += 18
+            _play_sfx("collect")
+            _notify("Daten-Cache geborgen · +18 CR")
+            _save_game()
+            _advance_native_chapter()
+        return
+    elif n.type == "glyph":
+        var gidx: int = int(n.index)
+        if not bool(glyphs[gidx].taken):
+            glyphs[gidx]["taken"]=true
+            glyph_count += 1
+            _play_sfx("secret")
+            _notify("Stadtsigil gesichert · %s" % str(glyphs[gidx].district))
+            _save_game()
+            _advance_native_chapter()
+        return
     elif n.type == "fragment":
         var idx: int = n.index
         if not fragments[idx].taken:
@@ -1033,6 +1106,25 @@ func _nearest_interactable() -> Dictionary:
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
     var best := {}
     var bd := 999999.0
+    for ni in range(named_npcs.size()):
+        var dn: float = player_pos.distance_to(Vector2(named_npcs[ni].pos))
+        if dn < 82.0 and dn < bd:
+            best = {"type":"named_npc","index":ni,"action":"SPRECHEN"}
+            bd = dn
+    for ci in range(caches.size()):
+        if bool(caches[ci].taken):
+            continue
+        var dc: float = player_pos.distance_to(Vector2(caches[ci].pos))
+        if dc < 72.0 and dc < bd:
+            best = {"type":"cache","index":ci,"action":"CACHE"}
+            bd = dc
+    for gi in range(glyphs.size()):
+        if bool(glyphs[gi].taken):
+            continue
+        var dg: float = player_pos.distance_to(Vector2(glyphs[gi].pos))
+        if dg < 72.0 and dg < bd:
+            best = {"type":"glyph","index":gi,"action":"SIGIL"}
+            bd = dg
     for i in range(fragments.size()):
         if fragments[i].taken:
             continue
@@ -1117,6 +1209,8 @@ func _draw() -> void:
     _draw_trees()
     _draw_vegetation_props()
     _draw_storefronts()
+    _draw_named_npcs()
+    _draw_story_collectibles()
     _draw_transit_stops()
     _draw_jobboards()
     _draw_street_props()
@@ -1589,6 +1683,47 @@ func _draw_trees() -> void:
             draw_circle(c,t.r,t.tint.darkened(0.2))
             draw_circle(c+Vector2(-5,-5),t.r*0.62,t.tint.lightened(0.12))
             draw_circle(c+Vector2(7,-1),t.r*0.48,t.tint)
+
+func _draw_named_npcs() -> void:
+    for npc in named_npcs:
+        if player_pos.distance_to(Vector2(npc.pos))>1700.0:
+            continue
+        var p := _project(Vector2(npc.pos),16)
+        var accent: Color = npc.accent
+        draw_circle(p+Vector2(3,8),8,Color(0,0,0,0.18))
+        draw_line(p+Vector2(0,3),p+Vector2(0,15),accent,5.0,true)
+        draw_circle(p,5,Color("#e8ba96"))
+        draw_arc(p+Vector2(0,-1),5.1,PI,TAU,12,accent.darkened(0.55),2.2,true)
+        draw_circle(p+Vector2(0,-16),5,Color(accent.r,accent.g,accent.b,0.28))
+        draw_string(ThemeDB.fallback_font,p+Vector2(-45,-28),str(npc.name),HORIZONTAL_ALIGNMENT_CENTER,90,11,Color.WHITE)
+
+func _draw_story_collectibles() -> void:
+    for c in caches:
+        if bool(c.taken) or player_pos.distance_to(Vector2(c.pos))>1700.0:
+            continue
+        var p := _project(Vector2(c.pos),12)
+        draw_rect(Rect2(p-Vector2(12,8),Vector2(24,16)),Color("#253941"),true)
+        draw_rect(Rect2(p-Vector2(12,8),Vector2(24,16)),Color("#73f3ce"),false,2.0)
+        draw_circle(p,3,Color("#73f3ce"))
+    for g in glyphs:
+        if bool(g.taken) or player_pos.distance_to(Vector2(g.pos))>1700.0:
+            continue
+        var q := _project(Vector2(g.pos),18)
+        var pts := PackedVector2Array([q+Vector2(0,-12),q+Vector2(10,0),q+Vector2(0,12),q+Vector2(-10,0)])
+        draw_colored_polygon(pts,Color(0.48,0.72,1.0,0.14))
+        draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color("#a8c7ff"),2.0,true)
+
+func _talk_named_npc(index: int) -> void:
+    if index<0 or index>=named_npcs.size():
+        return
+    var npc: Dictionary = named_npcs[index]
+    npc_flags[str(npc.id)] = true
+    _play_sfx("collect")
+    _notify("%s · %s" % [str(npc.name),str(npc.role)])
+    detail_label.text = str(npc.text)
+    credits += 12
+    _save_game()
+    _advance_native_chapter()
 
 func _draw_transit_stops() -> void:
     for st in transit_stops:
@@ -2471,7 +2606,12 @@ func _save_game() -> void:
         "inventory":inventory,
         "shop_stock":shop_stock,
         "frag_count":mission_fragments,
-        "secret_count":mission_secrets
+        "secret_count":mission_secrets,
+        "cache_count":cache_count,
+        "glyph_count":glyph_count,
+        "npc_flags":npc_flags,
+        "caches":caches.map(func(x): return bool(x.taken)),
+        "glyphs":glyphs.map(func(x): return bool(x.taken))
     }
     var file := FileAccess.open("user://parallaxhunt_save.json",FileAccess.WRITE)
     if file:
@@ -2502,6 +2642,17 @@ func _load_game() -> void:
     shop_stock = Dictionary(d.get("shop_stock",shop_stock))
     mission_fragments = int(d.get("frag_count",0))
     mission_secrets = int(d.get("secret_count",0))
+    cache_count = int(d.get("cache_count",0))
+    glyph_count = int(d.get("glyph_count",0))
+    npc_flags = Dictionary(d.get("npc_flags",{}))
+    var cache_taken = d.get("caches",[])
+    if cache_taken is Array:
+        for i in range(mini(cache_taken.size(),caches.size())):
+            caches[i]["taken"]=bool(cache_taken[i])
+    var glyph_taken = d.get("glyphs",[])
+    if glyph_taken is Array:
+        for i in range(mini(glyph_taken.size(),glyphs.size())):
+            glyphs[i]["taken"]=bool(glyph_taken[i])
 
 func _serialize_job(job: Dictionary) -> Dictionary:
     if job.is_empty():
@@ -2724,6 +2875,8 @@ func _draw_map_overlay() -> void:
         draw_polyline(pts,Color(0.75,0.80,0.78,0.16),2.0,true)
     for l in landmarks:
         _draw_map_marker(_map_point(Vector2(l.pos),map_rect),Color(l.accent),"★")
+    for npc in named_npcs:
+        _draw_map_marker(_map_point(Vector2(npc.pos),map_rect),Color(npc.accent),"N")
     for i in range(storefronts.size()):
         var st = storefronts[i]
         var col := Color("#ffd27a") if st.kind in ["restaurant","cafe"] else (Color("#73f3ce") if st.kind=="shop" else Color("#ff9b72"))
@@ -2747,6 +2900,7 @@ func _draw_map_overlay() -> void:
     y += 44
     var legend := [
         ["★","Sehenswürdigkeit / Landmark",Color("#9ad5ff")],
+        ["N","Benannter NPC / Kontakt",Color("#c7f2e7")],
         ["R","Restaurant / Café",Color("#ffd27a")],
         ["G","Garage / Werkstatt",Color("#ff9b72")],
         ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
@@ -2772,6 +2926,9 @@ func _chapter_progress(c: Dictionary) -> int:
     var kind := str(c.kind)
     if kind=="frag": return mini(mission_fragments,int(c.goal))
     if kind=="secret": return mini(mission_secrets,int(c.goal))
+    if kind=="cache": return mini(cache_count,int(c.goal))
+    if kind=="glyph": return mini(glyph_count,int(c.goal))
+    if kind=="npc": return 1 if bool(npc_flags.get(str(c.id),false)) else 0
     if kind=="visit_openai": return 1 if bool(hack_done.get("visited_openai",false)) else 0
     if kind=="hack": return 1 if bool(hack_done.get(str(c.id),false)) else 0
     if kind=="jobs": return mini(jobs_done,int(c.goal))
