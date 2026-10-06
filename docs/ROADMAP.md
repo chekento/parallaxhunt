@@ -133,3 +133,25 @@
 - district-specific sound one-shots with spatial falloff and richer weather variation
 - map filters for live events, photo points, jobs, services and transit
 - performance profiling for social simulation density on mobile
+
+
+## Alpha 1.14 — street scenes
+- Lightweight social set-pieces at transit stops, cafés/restaurants and selected corners
+- Transit-stop groups react to real bus/tram arrivals
+- Café seating/chatting clusters and intersection queues
+- Pedestrian transit-wave state
+- Traffic-light-aware pedestrian crossing decisions
+- Six rotating service / response incidents with crews, cones and marked vehicles
+- AI traffic slows and uses hazard lights around active incidents
+- Active incident markers and live incident count on the city map
+- Deterministic scene logic designed to stay mobile-friendly
+
+### Next quality targets
+- denser authored district set-pieces: plazas, school/campus edges, markets, harbor work zones and nightlife clusters
+- richer transit passenger behavior: boarding/exiting waves and crowd redistribution
+- staged emergency behavior with route priority rather than visual-only response vehicles
+- ambient reactions around live events and incidents: watching, photographing, dispersing and helping
+- more environmental animation such as flags, awnings, steam, shop doors and moving signage
+- further Photo Hunt anchoring of hidden targets to real roofs, façades, vehicles and props
+- map filter controls for live events, incidents, services, photo points and transit
+- profiling social-scene density and bad-weather combinations on Android
