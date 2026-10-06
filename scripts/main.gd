@@ -255,6 +255,8 @@ func _ready() -> void:
     _refresh_main_menu()
     _update_ui()
     queue_redraw()
+    if "--photo-smoke" in OS.get_cmdline_user_args():
+        call_deferred("_run_photo_smoke_test")
 
 func _process(delta: float) -> void:
     _update_sensor(delta)
@@ -1451,6 +1453,28 @@ func _haptic(duration_ms: int = 45) -> void:
         return
     if OS.get_name()=="Android":
         Input.vibrate_handheld(duration_ms)
+
+func _run_photo_smoke_test() -> void:
+    main_menu_active=false
+    if photo_points.is_empty():
+        push_error("PHOTO_SMOKE: no photo points")
+        get_tree().quit(41)
+        return
+    player_pos=Vector2(photo_points[0].pos)
+    camera_pos=player_pos
+    _start_photo_challenge(0)
+    await get_tree().process_frame
+    await get_tree().process_frame
+    if not photo_mode or photo_viewport==null or photo_camera==null or photo_targets.size()<3:
+        push_error("PHOTO_SMOKE: photo mode failed to initialize")
+        get_tree().quit(42)
+        return
+    _photo_update_camera()
+    _update_photo_3d_scene(0.016)
+    print("PHOTO_SMOKE_OK targets=",photo_targets.size()," cars=",photo_dynamic_cars.size()," peds=",photo_dynamic_peds.size())
+    _exit_photo_mode()
+    await get_tree().process_frame
+    get_tree().quit(0)
 
 func _build_photo_3d_system() -> void:
     var screen_size := get_viewport_rect().size
