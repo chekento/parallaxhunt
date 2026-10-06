@@ -185,6 +185,7 @@ var jobs_done: int = 0
 var active_job: Dictionary = {}
 var side_job_sites: Array = []
 var named_npcs: Array = []
+var city_micro_events: Array = []
 var caches: Array = []
 var glyphs: Array = []
 var npc_flags: Dictionary = {}
@@ -602,6 +603,20 @@ func _build_story_content() -> void:
         {"id":"iris","name":"Iris","pos":Vector2(12700,12550),"role":"Bio-Security","accent":Color("#82e59b"),"text":"Die Firewall ist absichtlich räumlich fragmentiert. Eine flache Ansicht reicht hier nicht."},
         {"id":"vio","name":"Vio","pos":Vector2(23200,8600),"role":"Arcade Host","accent":Color("#ff80ef"),"text":"Cipher Gate ist mein Lieblingsspiel. Vier Stellen, sechs Zustände, keine Ausreden."},
         {"id":"bram","name":"Bram","pos":Vector2(23000,5400),"role":"Transitmeister","accent":Color("#9adbe5"),"text":"Die Linien funktionieren wieder besser. Achte auf die Haltephasen, bevor du einsteigst."}
+    ]
+    city_micro_events = [
+        {"type":"busker","label":"Live Busker","pos":Vector2(6750,5250),"accent":Color("#73f3ce")},
+        {"type":"foodtruck","label":"Night Bites","pos":Vector2(12600,5750),"accent":Color("#ffb66f")},
+        {"type":"yoga","label":"Park Flow","pos":Vector2(11950,1250),"accent":Color("#8ff0b4")},
+        {"type":"drone_show","label":"Drone Light Show","pos":Vector2(22250,8950),"accent":Color("#ff80ef")},
+        {"type":"street_market","label":"Oldtown Market","pos":Vector2(2500,1450),"accent":Color("#ffcd8a")},
+        {"type":"maintenance","label":"Grid Maintenance","pos":Vector2(20800,2350),"accent":Color("#f1e36f")},
+        {"type":"run_club","label":"City Run Club","pos":Vector2(8700,8900),"accent":Color("#b0c8ff")},
+        {"type":"street_art","label":"Live Mural","pos":Vector2(7000,1550),"accent":Color("#9bdcff")},
+        {"type":"fountain_show","label":"Fountain Sequence","pos":Vector2(12600,1100),"accent":Color("#8ff0b4")},
+        {"type":"repair_crew","label":"Rail Crew","pos":Vector2(22500,16050),"accent":Color("#e8a977")},
+        {"type":"campus_group","label":"Campus Meetup","pos":Vector2(8200,10100),"accent":Color("#b0c8ff")},
+        {"type":"boardwalk_music","label":"Coast Session","pos":Vector2(18200,16300),"accent":Color("#72d7e6")}
     ]
     caches = [
         {"pos":Vector2(1800,2600),"taken":false},
@@ -1079,7 +1094,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.9"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.10"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2839,7 +2854,7 @@ func _update_ui() -> void:
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     var clock_h := int(floor(world_clock))
     var clock_m := int(floor((world_clock-float(clock_h))*60.0))
-    status_label.text = "%s · %s · %02d:%02d · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,world_zoom,credits,int(energy),jobs_done]
+    status_label.text = "%s · %s · %02d:%02d · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),world_zoom,credits,int(energy),jobs_done]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
     interact_button.text = "INTERACT" if near.is_empty() else str(near.get("action","INTERACT"))
@@ -3134,6 +3149,7 @@ func _draw() -> void:
     _draw_transit_stops()
     _draw_jobboards()
     _draw_street_props()
+    _draw_city_micro_events()
     _draw_pedestrians()
     _draw_traffic()
     _draw_transit()
@@ -3266,6 +3282,11 @@ func _draw_roads() -> void:
         draw_polyline(screen, Color("#29343b"), road.width, true)
         draw_polyline(screen, Color(1.0,0.88,0.58,0.16), 3.0, true)
         draw_polyline(screen, Color(0.72,0.82,0.85,0.10), maxf(2.0,float(road.width)-20.0), true)
+        var weather := _weather_state()
+        if weather in ["rain","storm"]:
+            var wet_strength := 0.10 if weather=="rain" else 0.16
+            draw_polyline(screen,Color(0.52,0.72,0.82,wet_strength),maxf(2.0,float(road.width)-12.0),true)
+            draw_polyline(screen,Color(0.80,0.92,1.0,wet_strength*0.45),2.0,true)
         for k in range(3, 98, 6):
             var t := float(k)/100.0
             var wp := _sample_polyline(pts,t)
@@ -3828,7 +3849,7 @@ func _talk_named_npc(index: int) -> void:
     active_dialogue_npc=index
     var npc: Dictionary = named_npcs[index]
     dialogue_title.text="%s · %s" % [str(npc.name),str(npc.role)]
-    dialogue_body.text=str(npc.text)
+    dialogue_body.text=str(npc.text)+"\n\n"+_npc_context_line(npc)
     for child in dialogue_actions.get_children():
         child.queue_free()
     var mission_btn := _commerce_button("MISSION BESPRECHEN",_dialogue_mission)
@@ -3841,6 +3862,24 @@ func _talk_named_npc(index: int) -> void:
     dialogue_actions.add_child(close_btn)
     dialogue_panel.visible=true
     move_vec=Vector2.ZERO
+
+func _npc_context_line(npc: Dictionary) -> String:
+    var id := str(npc.id)
+    var trust := int(npc_trust.get(id,0))
+    var state := _weather_state()
+    var time_text := "am Tag"
+    if world_clock>=18.0 or world_clock<6.0:
+        time_text="bei Nacht"
+    elif world_clock<10.0:
+        time_text="am Morgen"
+    elif world_clock>16.0:
+        time_text="am Abend"
+    var trust_text := "Wir kennen uns noch kaum."
+    if trust>=3:
+        trust_text="Du hast dir hier bereits Vertrauen erarbeitet."
+    elif trust>=1:
+        trust_text="Ich habe gesehen, dass du dich in der Stadt einbringst."
+    return "%s Aktuell: %s, %s · %s." % [trust_text,_weather_label(),time_text,current_district]
 
 func _dialogue_mission() -> void:
     if active_dialogue_npc<0 or active_dialogue_npc>=named_npcs.size():
@@ -3949,7 +3988,17 @@ func _dialogue_city() -> void:
     if active_dialogue_npc<0 or active_dialogue_npc>=named_npcs.size():
         return
     var npc: Dictionary = named_npcs[active_dialogue_npc]
-    dialogue_body.text="%s: In %s ändern Höhe, Verkehr, Gebäude und POIs den Rhythmus. Die Karte zeigt dir die wichtigsten Ebenen." % [str(npc.name),current_district]
+    var weather := _weather_state()
+    var advice := "Die Karte zeigt dir die wichtigsten Ebenen."
+    if weather=="rain":
+        advice="Bei Regen spiegeln die Straßen stärker. In den Glas- und Neonvierteln lohnt sich ein langsamerer Blick."
+    elif weather=="storm":
+        advice="Im Gewitter wirkt die Sicht unruhiger. Foto-Spots und enge Straßen verlangen mehr Kontrolle."
+    elif weather=="mist":
+        advice="Im Nebel verlieren entfernte Ebenen Kontrast. Nutze PMDD-Perspektive und Landmarken zur Orientierung."
+    elif world_clock>19.0 or world_clock<6.0:
+        advice="Nachts werden Neonachsen, Fenster und Verkehr deutlich wichtiger für die Orientierung."
+    dialogue_body.text="%s: In %s ändern Höhe, Verkehr, Gebäude und POIs den Rhythmus. %s" % [str(npc.name),current_district,advice]
 
 func _close_dialogue() -> void:
     dialogue_panel.visible=false
@@ -4510,10 +4559,23 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     var front_r := center+f*sz.x*.49-side*sz.y*.25
     var rear_l := center-f*sz.x*.45+side*sz.y*.25
     var rear_r := center-f*sz.x*.45-side*sz.y*.25
-    draw_circle(front_l,2.4,Color("#ffe0a0"))
-    draw_circle(front_r,2.4,Color("#ffe0a0"))
-    draw_circle(rear_l,2.2,Color("#ff726f"))
-    draw_circle(rear_r,2.2,Color("#ff726f"))
+    var player_car := current_vehicle>=0 and player_pos.distance_to(pos)<2.0 and not parked
+    var braking := player_car and move_vec.y>0.18
+    var head_alpha := 1.0
+    var rear_color := Color("#ff3f4d") if braking else Color("#ff726f")
+    draw_circle(front_l,2.6 if player_car else 2.4,Color("#ffe8ae"))
+    draw_circle(front_r,2.6 if player_car else 2.4,Color("#ffe8ae"))
+    draw_circle(rear_l,3.2 if braking else 2.2,rear_color)
+    draw_circle(rear_r,3.2 if braking else 2.2,rear_color)
+    if player_car and (world_clock>18.2 or world_clock<6.4 or _weather_state() in ["rain","storm","mist"]):
+        var beam_l := PackedVector2Array([front_l-side*3.0,front_l+side*3.0,front_l+f*78.0+side*19.0,front_l+f*78.0-side*19.0])
+        var beam_r := PackedVector2Array([front_r-side*3.0,front_r+side*3.0,front_r+f*78.0+side*19.0,front_r+f*78.0-side*19.0])
+        draw_colored_polygon(beam_l,Color(1.0,0.92,0.68,0.055))
+        draw_colored_polygon(beam_r,Color(1.0,0.92,0.68,0.055))
+    if player_car and abs(vehicle_velocity)>210.0 and abs(move_vec.x)>0.48:
+        for skid_side in [-1.0,1.0]:
+            var wheel_rear := center-f*sz.x*.36+side*sz.y*.42*float(skid_side)
+            draw_line(wheel_rear,wheel_rear-f*(16.0+abs(vehicle_velocity)*0.025),Color(0.04,0.05,0.06,0.28),2.2,true)
     _draw_car_wheels(center,f,side,sz)
 
     if cls=="micro":
@@ -6716,6 +6778,107 @@ func _advance_native_chapter() -> void:
         _show_reward_popup("NEUE MISSION",str(nc.title)+"\n"+str(nc.desc),Color("#73f3ce"))
         _notify("Neue Mission: %s" % str(nc.title))
 
+func _weather_state() -> String:
+    var sequence := ["clear","clear","mist","clear","rain","rain","clear","storm","rain","clear","mist","clear"]
+    var slot := int(floor(world_clock/1.5)) % sequence.size()
+    return str(sequence[slot])
+
+func _weather_label() -> String:
+    var state := _weather_state()
+    if state=="mist": return "Nebel"
+    if state=="rain": return "Regen"
+    if state=="storm": return "Gewitter"
+    return "Klar"
+
+func _weather_strength() -> float:
+    var state := _weather_state()
+    var base := 0.0
+    if state=="mist": base=0.45
+    elif state=="rain": base=0.72
+    elif state=="storm": base=1.0
+    var style := str(_district_at(player_pos).get("style","center"))
+    if state=="mist" and style in ["canal","coast","harbor"]:
+        base=minf(1.0,base+0.18)
+    return base
+
+func _micro_event_active(index: int, event: Dictionary) -> bool:
+    var slot := int(floor(world_clock/1.35))
+    var kind := str(event.type)
+    if kind in ["drone_show","foodtruck","boardwalk_music"] and world_clock>7.0 and world_clock<18.0:
+        return false
+    if kind in ["yoga","run_club"] and (world_clock<5.5 or world_clock>20.5):
+        return false
+    return ((slot + index*3) % 7) in [0,1,4]
+
+func _draw_city_micro_events() -> void:
+    for i in range(city_micro_events.size()):
+        var e: Dictionary = city_micro_events[i]
+        if not _micro_event_active(i,e):
+            continue
+        var wp := Vector2(e.pos)
+        if player_pos.distance_to(wp)>1750.0:
+            continue
+        var p := _project(wp,8)
+        var accent: Color = Color(e.accent)
+        var pulse := 0.78+0.22*sin(Time.get_ticks_msec()/360.0+float(i))
+        var kind := str(e.type)
+        if kind=="busker" or kind=="boardwalk_music":
+            draw_circle(p+Vector2(0,-12),6,Color("#d8ad8e"))
+            draw_line(p+Vector2(0,-6),p+Vector2(0,14),Color("#526774"),4.0,true)
+            draw_line(p+Vector2(0,2),p+Vector2(15,9),Color("#d6a66b"),3.0,true)
+            draw_arc(p+Vector2(18,-7),5,0,TAU,12,Color(accent.r,accent.g,accent.b,0.75),2.0,true)
+            draw_string(ThemeDB.fallback_font,p+Vector2(20,-19),"♪",HORIZONTAL_ALIGNMENT_LEFT,20,14,accent)
+        elif kind=="foodtruck":
+            draw_rect(Rect2(p-Vector2(30,14),Vector2(60,28)),Color("#384650"),true)
+            draw_rect(Rect2(p-Vector2(10,10),Vector2(28,12)),Color(accent.r,accent.g,accent.b,0.72),true)
+            draw_circle(p+Vector2(-19,17),6,Color("#151a1d"))
+            draw_circle(p+Vector2(19,17),6,Color("#151a1d"))
+            draw_line(p+Vector2(-8,-16),p+Vector2(24,-16),accent,4.0,true)
+        elif kind=="yoga":
+            for k in range(4):
+                var q := p+Vector2(float(k-2)*22.0,float(k%2)*10.0)
+                draw_rect(Rect2(q-Vector2(9,3),Vector2(18,6)),Color(accent.r,accent.g,accent.b,0.34),true)
+                draw_circle(q+Vector2(0,-8),4,Color("#d7af93"))
+        elif kind=="drone_show":
+            for k in range(7):
+                var a := float(Time.get_ticks_msec())/700.0+float(k)*TAU/7.0
+                var q := p+Vector2(cos(a)*42.0,sin(a*1.3)*24.0-28.0)
+                draw_circle(q,4,accent)
+                draw_circle(q,10,Color(accent.r,accent.g,accent.b,0.08))
+        elif kind=="street_market":
+            for k in range(3):
+                var q := p+Vector2(float(k-1)*34.0,0)
+                draw_rect(Rect2(q-Vector2(14,4),Vector2(28,18)),Color("#594437"),true)
+                draw_colored_polygon(PackedVector2Array([q+Vector2(-17,-4),q+Vector2(17,-4),q+Vector2(12,-16),q+Vector2(-12,-16)]),Color(accent.r,accent.g,accent.b,0.68))
+        elif kind in ["maintenance","repair_crew"]:
+            for k in range(3):
+                var q := p+Vector2(float(k-1)*18.0,12)
+                draw_colored_polygon(PackedVector2Array([q+Vector2(-5,6),q+Vector2(5,6),q+Vector2(2,-7),q+Vector2(-2,-7)]),Color("#e47d35"))
+            draw_rect(Rect2(p+Vector2(-20,-20),Vector2(40,12)),Color("#3a454a"),true)
+            draw_line(p+Vector2(-18,-14),p+Vector2(18,-14),accent,2.5,true)
+        elif kind=="run_club":
+            for k in range(5):
+                var q := p+Vector2(float(k-2)*15.0,sin(Time.get_ticks_msec()/180.0+float(k))*5.0)
+                draw_circle(q+Vector2(0,-10),4,Color("#d7aa8c"))
+                draw_line(q+Vector2(0,-5),q+Vector2(0,9),Color(accent.r,accent.g,accent.b,0.78),3.0,true)
+        elif kind=="street_art":
+            draw_rect(Rect2(p-Vector2(34,25),Vector2(68,50)),Color("#25323a"),true)
+            for k in range(5):
+                draw_line(p+Vector2(-27,float(k)*8-16),p+Vector2(27-float(k)*6,float(k)*5-12),[accent,Color("#ff80ef"),Color("#67d9ff")][k%3],3.0,true)
+        elif kind=="fountain_show":
+            draw_circle(p,28,Color("#244957"))
+            for k in range(-2,3):
+                var x := float(k)*9.0
+                draw_arc(p+Vector2(x,0),18.0+abs(float(k))*4.0,PI,TAU,20,Color(accent.r,accent.g,accent.b,0.35+0.22*pulse),2.0,true)
+        elif kind=="campus_group":
+            for k in range(6):
+                var a := float(k)*TAU/6.0
+                var q := p+Vector2.from_angle(a)*24.0
+                draw_circle(q,5,Color("#d6ad92"))
+                draw_line(q+Vector2(0,5),q+Vector2(0,16),Color(accent.r,accent.g,accent.b,0.55),3.0,true)
+        if player_pos.distance_to(wp)<520.0:
+            draw_string(ThemeDB.fallback_font,p+Vector2(-90,48),"LIVE · %s" % str(e.label),HORIZONTAL_ALIGNMENT_CENTER,180,12,Color(accent.r,accent.g,accent.b,0.88))
+
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
     var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
@@ -6726,6 +6889,29 @@ func _draw_ambient_overlay() -> void:
     var warm := maxf(dusk,dawn)
     if warm>0.0:
         draw_rect(Rect2(Vector2.ZERO,size),Color(0.42,0.18,0.07,0.035*warm))
+
+    var weather := _weather_state()
+    var weather_strength := _weather_strength()
+    if weather=="mist":
+        draw_rect(Rect2(Vector2.ZERO,size),Color(0.70,0.82,0.85,0.07+weather_strength*0.08))
+        for k in range(5):
+            var yy := fposmod(float(k*510)+float(Time.get_ticks_msec())*0.012,size.y+260.0)-130.0
+            draw_rect(Rect2(-80,yy,size.x+160,115),Color(0.72,0.82,0.84,0.018+0.018*weather_strength),true)
+    elif weather in ["rain","storm"]:
+        var rain_count := 44 if graphics_quality>=2 else 24
+        var speed := 0.58 if weather=="rain" else 0.88
+        for i in range(rain_count):
+            var seed := float(i*977)
+            var x := fposmod(seed*1.71+float(Time.get_ticks_msec())*0.11,size.x+120.0)-60.0
+            var y := fposmod(seed*0.83+float(Time.get_ticks_msec())*speed,size.y+180.0)-90.0
+            var len := 20.0+float(i%5)*5.0
+            draw_line(Vector2(x,y),Vector2(x-8.0,y+len),Color(0.70,0.86,0.94,0.12+weather_strength*0.13),1.4,true)
+        draw_rect(Rect2(Vector2.ZERO,size),Color(0.08,0.14,0.19,0.04+weather_strength*0.035))
+        if weather=="storm":
+            var lightning := maxf(0.0,sin(float(Time.get_ticks_msec())/1730.0*TAU)-0.965)*15.0
+            if lightning>0.0:
+                draw_rect(Rect2(Vector2.ZERO,size),Color(0.78,0.88,1.0,minf(0.18,lightning*0.08)))
+
     if scan_time>0.0 and not interior_active:
         var scan_strength := clampf(scan_time/1.8,0.0,1.0)
         var radius := lerpf(70.0,minf(size.x,size.y)*0.46,1.0-scan_strength)
