@@ -85,7 +85,10 @@ var photo_viewport: SubViewport
 var photo_view_rect: TextureRect
 var photo_ui_layer: CanvasLayer
 var photo_crosshair: Label
+var photo_flash_rect: ColorRect
 var photo_world_root: Node3D
+var photo_environment: Environment
+var photo_sun: DirectionalLight3D
 var photo_camera: Camera3D
 var photo_target_label: Label
 var photo_status_label: Label
@@ -1462,6 +1465,7 @@ func _build_photo_3d_system() -> void:
 
     var world_env := WorldEnvironment.new()
     var env := Environment.new()
+    photo_environment=env
     env.background_mode=Environment.BG_COLOR
     env.background_color=Color("#9cc5d8")
     env.ambient_light_source=Environment.AMBIENT_SOURCE_COLOR
@@ -1472,6 +1476,7 @@ func _build_photo_3d_system() -> void:
     photo_world_root.add_child(world_env)
 
     var sun := DirectionalLight3D.new()
+    photo_sun=sun
     sun.rotation_degrees=Vector3(-54,-28,0)
     sun.light_energy=1.15
     sun.shadow_enabled=true
@@ -1500,6 +1505,15 @@ func _build_photo_3d_system() -> void:
     photo_ui_layer=CanvasLayer.new()
     photo_ui_layer.layer=40
     add_child(photo_ui_layer)
+
+    photo_flash_rect=ColorRect.new()
+    photo_flash_rect.position=Vector2.ZERO
+    photo_flash_rect.size=screen_size
+    photo_flash_rect.color=Color.WHITE
+    photo_flash_rect.modulate=Color(1,1,1,0)
+    photo_flash_rect.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    photo_ui_layer.add_child(photo_flash_rect)
+
     for ctrl in [photo_target_label,photo_status_label,photo_shutter_button,photo_exit_button,photo_hint_button,photo_zoom_in_button,photo_zoom_out_button]:
         ctrl.reparent(photo_ui_layer)
 
@@ -1572,12 +1586,17 @@ func _photo_build_scene(index: int) -> void:
             var length: float = Vector2(delta.x,delta.z).length()
             if length<0.5:
                 continue
-            var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.02,0),Vector3(float(road.width)*0.10,0.10,length),Color("#30383d"))
+            var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.14,0),Vector3(float(road.width)*0.10,0.16,length),Color("#30383d"))
             slab.rotation.y=atan2(delta.x,delta.z)
-            var sidewalk_w: float = float(road.width)*0.10+3.2
-            var walk := _photo_box("Walk_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.10,0),Vector3(sidewalk_w,0.12,length),Color("#6b7478"))
-            walk.rotation.y=slab.rotation.y
-            slab.position.y=0.16
+            var flat_dir := Vector2(delta.x,delta.z).normalized()
+            var flat_normal := Vector2(-flat_dir.y,flat_dir.x)
+            var edge_offset: float = float(road.width)*0.05+1.15
+            for side_sign in [-1.0,1.0]:
+                var off := Vector3(flat_normal.x*edge_offset,0.26,flat_normal.y*edge_offset)
+                var walk := _photo_box("Walk_%d_%d_%d" % [ri,k,int(side_sign)],(la+lb)*0.5+off,Vector3(2.0,0.24,length),Color("#6b7478"))
+                walk.rotation.y=slab.rotation.y
+            var lane := _photo_box("Lane_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.25,0),Vector3(0.16,0.05,length*0.92),Color(0.92,0.90,0.72,0.65))
+            lane.rotation.y=slab.rotation.y
 
     # Nearby procedural buildings become 3D masses with roof caps and windows.
     var built: int = 0
@@ -1880,10 +1899,43 @@ func _photo_build_target_visual(root: Node3D, kind: String, variant: int) -> voi
         _photo_box("WingL",Vector3(-1.0,0,0),Vector3(1.6,0.18,0.8),Color("#3e5059"),root)
         _photo_box("WingR",Vector3(1.0,0,0),Vector3(1.6,0.18,0.8),Color("#3e5059"),root)
 
+func _photo_apply_lighting() -> void:
+    if photo_environment==null or photo_sun==null:
+        return
+    var hour: float = world_clock
+    if hour>=20.0 or hour<5.5:
+        photo_environment.background_color=Color("#071422")
+        photo_environment.ambient_light_color=Color("#7287a0")
+        photo_environment.ambient_light_energy=0.34
+        photo_sun.light_color=Color("#9cb6d7")
+        photo_sun.light_energy=0.28
+    elif hour>=17.5:
+        photo_environment.background_color=Color("#d58d73")
+        photo_environment.ambient_light_color=Color("#f0baa0")
+        photo_environment.ambient_light_energy=0.58
+        photo_sun.light_color=Color("#ffd0a0")
+        photo_sun.light_energy=0.78
+    elif hour<8.0:
+        photo_environment.background_color=Color("#9fb8cc")
+        photo_environment.ambient_light_color=Color("#cadde7")
+        photo_environment.ambient_light_energy=0.58
+        photo_sun.light_color=Color("#ffe0ba")
+        photo_sun.light_energy=0.72
+    else:
+        photo_environment.background_color=Color("#9cc5d8")
+        photo_environment.ambient_light_color=Color("#d8e7ec")
+        photo_environment.ambient_light_energy=0.72
+        photo_sun.light_color=Color.WHITE
+        photo_sun.light_energy=1.15
+
 func _start_photo_challenge(index: int) -> void:
-    if index<0 or index>=photo_points.size() or bool(photo_points[index].taken):
+    if index<0 or index>=photo_points.size():
         return
     active_photo_index=index
+    if bool(photo_points[index].taken):
+        var replay_id: String = str(photo_points[index].id)
+        for i in range(3):
+            photo_found["%s_%d" % [replay_id,i]]=false
     photo_mode=true
     var initial_dir: Vector2 = Vector2(photo_points[index].dir).normalized()
     photo_yaw=atan2(-initial_dir.x,-initial_dir.y)
@@ -1894,6 +1946,7 @@ func _start_photo_challenge(index: int) -> void:
     vehicle_velocity=0.0
     if current_vehicle>=0:
         parked_cars[current_vehicle]["occupied"]=true
+    _photo_apply_lighting()
     _photo_build_scene(index)
     _photo_show_ui(true)
     photo_view_rect.visible=true
@@ -1984,6 +2037,10 @@ func _photo_shutter() -> void:
     if not photo_mode:
         return
     photo_flash_alpha=1.0
+    if photo_flash_rect!=null:
+        photo_flash_rect.modulate=Color(1,1,1,0.88)
+        var flash_tw := create_tween()
+        flash_tw.tween_property(photo_flash_rect,"modulate:a",0.0,0.16)
     _play_sfx("photo")
     var target := _photo_center_target()
     if target.is_empty():
@@ -2040,18 +2097,21 @@ func _complete_photo_challenge() -> void:
     if active_photo_index<0:
         return
     var ph: Dictionary = photo_points[active_photo_index]
+    var quality: int = 0
+    for t in photo_targets:
+        quality+=int(photo_scores.get(str(t.key),0))
     if not bool(ph.taken):
         photo_points[active_photo_index]["taken"]=true
         photo_count+=1
-        var quality: int = 0
-        for t in photo_targets:
-            quality+=int(photo_scores.get(str(t.key),0))
         var quality_bonus: int = 25 if quality>=270 else (12 if quality>=225 else 0)
         credits+=int(ph.reward)+quality_bonus
         _save_game()
         _advance_native_chapter()
         _check_milestones()
         _show_reward_popup("PHOTO SPOT ABGESCHLOSSEN","%s\n3 Motive · +%d CR%s" % [str(ph.label),int(ph.reward),(" · Qualitätsbonus" if quality_bonus>0 else "")],Color("#ffb3e6"))
+    else:
+        _save_game()
+        _show_reward_popup("PHOTO REPLAY","%s\nNeuer Spot-Score: %d/300" % [str(ph.label),quality],Color("#ffb3e6"))
     await get_tree().create_timer(0.85).timeout
     _exit_photo_mode()
 
@@ -2862,11 +2922,9 @@ func _nearest_interactable() -> Dictionary:
             best = {"type":"glyph","index":gi,"action":"SIGIL"}
             bd = dg
     for pi in range(photo_points.size()):
-        if bool(photo_points[pi].taken):
-            continue
         var dphoto: float = player_pos.distance_to(Vector2(photo_points[pi].pos))
         if dphoto < 150.0 and dphoto < bd:
-            best = {"type":"photo","index":pi,"action":"PHOTO CHALLENGE"}
+            best = {"type":"photo","index":pi,"action":"PHOTO REPLAY" if bool(photo_points[pi].taken) else "PHOTO CHALLENGE"}
             bd = dphoto
     for i in range(fragments.size()):
         if fragments[i].taken:
@@ -3744,16 +3802,17 @@ func _draw_scan_points() -> void:
 
 func _draw_photo_points() -> void:
     for ph in photo_points:
-        if bool(ph.taken) or player_pos.distance_to(Vector2(ph.pos))>1750.0:
+        if player_pos.distance_to(Vector2(ph.pos))>1750.0:
             continue
         var p := _project(Vector2(ph.pos),20)
+        var completed: bool = bool(ph.taken)
         var pulse: float = 1.0+sin(Time.get_ticks_msec()/260.0+float(ph.pos.x)*0.001)*0.12
         draw_circle(p,14.0*pulse,Color(1.0,0.55,0.86,0.05))
-        draw_arc(p,14.0*pulse,0,TAU,26,Color("#ff9fdd"),2.0,true)
+        draw_arc(p,14.0*pulse,0,TAU,26,Color(0.55,0.65,0.69,0.45) if completed else Color("#ff9fdd"),2.0,true)
         draw_arc(p,8.0*pulse,-1.0,1.0,12,Color("#f2f8ff"),2.0,true)
         if player_pos.distance_to(Vector2(ph.pos))<180.0:
             draw_string(ThemeDB.fallback_font,p+Vector2(-90,-30),str(ph.label),HORIZONTAL_ALIGNMENT_CENTER,180,12,Color.WHITE)
-            draw_string(ThemeDB.fallback_font,p+Vector2(-90,34),"PHOTO CHALLENGE STARTEN",HORIZONTAL_ALIGNMENT_CENTER,180,10,Color("#ffcf8a"))
+            draw_string(ThemeDB.fallback_font,p+Vector2(-90,34),"PHOTO REPLAY" if completed else "PHOTO CHALLENGE STARTEN",HORIZONTAL_ALIGNMENT_CENTER,180,10,Color("#aebcc2") if completed else Color("#ffcf8a"))
 
 func _draw_transit_stops() -> void:
     for st in transit_stops:
