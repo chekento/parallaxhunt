@@ -81,6 +81,12 @@ var response_dispatch_slot: int = -1
 var view_touch := Vector2.ZERO
 var sensor_view := Vector2.ZERO
 var view_amount := Vector2.ZERO
+var default_view_bias := Vector2(0.0,-0.24)
+var headtrack_gravity_zero := Vector3.ZERO
+var headtrack_integrated := Vector2.ZERO
+var headtrack_calibrated: bool = false
+var headtrack_motion_strength: float = 0.0
+var headtrack_sensor_mode: String = "initializing"
 var parallax_strength := 1.75
 var scan_time := 0.0
 var mission_fragments := 0
@@ -310,9 +316,11 @@ func _process(delta: float) -> void:
     elif interior_active:
         target_world_zoom = 1.0
     elif current_vehicle >= 0:
-        target_world_zoom = 0.76
+        target_world_zoom = 0.82
+    elif transit_riding >= 0:
+        target_world_zoom = 0.92
     else:
-        target_world_zoom = 1.55
+        target_world_zoom = 2.15
     world_zoom = lerpf(world_zoom,target_world_zoom,minf(1.0,delta*4.5))
     _update_player(delta)
     if not interior_active:
@@ -333,7 +341,13 @@ func _process(delta: float) -> void:
     if autosave_timer >= 12.0:
         autosave_timer = 0.0
         _save_game()
-    view_amount = view_amount.lerp((sensor_view * 0.72 + view_touch * 0.95).limit_length(1.0), minf(1.0, delta * 8.0))
+    var passive_bias:=default_view_bias
+    if current_vehicle>=0:
+        passive_bias=Vector2(0.0,-0.12)
+    elif transit_riding>=0:
+        passive_bias=Vector2(0.0,-0.15)
+    var view_target: Vector2=(passive_bias+sensor_view*0.92+view_touch*0.98).limit_length(1.0)
+    view_amount = view_amount.lerp(view_target,minf(1.0,delta*8.5))
     if not interior_active:
         camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
         _update_secrets()
@@ -800,6 +814,38 @@ func _random_vehicle_class(allow_hyper: bool = true) -> String:
     if roll<99.3: return "sport"
     return "hyper" if allow_hyper else "sport"
 
+func _building_recipe(style: String) -> Dictionary:
+    match style:
+        "heritage":
+            return {"massing":["slab","courtyard","terrace"],"facade":["arches","balconies","mixed"],"roof":["pitched","terrace","garden"]}
+        "culture":
+            return {"massing":["slab","terrace","courtyard"],"facade":["mixed","ribs","grid"],"roof":["terrace","antenna","garden"]}
+        "glass","center":
+            return {"massing":["tower","tower","slab","terrace"],"facade":["grid","ribs","windows"],"roof":["antenna","utility","terrace"]}
+        "green","garden":
+            return {"massing":["terrace","courtyard","slab"],"facade":["living","balconies","windows"],"roof":["garden","terrace","solar"]}
+        "solar","wind","data":
+            return {"massing":["slab","tower","terrace"],"facade":["ribs","grid","living"],"roof":["solar","antenna","utility"]}
+        "canal","coast":
+            return {"massing":["terrace","slab","courtyard"],"facade":["balconies","windows","mixed"],"roof":["terrace","garden","pitched"]}
+        "harbor","industry","rail":
+            return {"massing":["slab","slab","tower"],"facade":["ribs","striped","grid"],"roof":["utility","antenna","flat"]}
+        "terminal","air":
+            return {"massing":["slab","tower","terrace"],"facade":["grid","ribs","windows"],"roof":["antenna","utility","solar"]}
+        "campus":
+            return {"massing":["courtyard","terrace","slab"],"facade":["windows","living","balconies"],"roof":["garden","solar","terrace"]}
+        "astro":
+            return {"massing":["tower","terrace","slab"],"facade":["grid","ribs","mixed"],"roof":["antenna","solar","terrace"]}
+        "neon":
+            return {"massing":["tower","terrace","tower"],"facade":["grid","ribs","mixed"],"roof":["antenna","terrace","utility"]}
+        "expo":
+            return {"massing":["terrace","slab","tower"],"facade":["ribs","grid","mixed"],"roof":["terrace","antenna","solar"]}
+        _:
+            return {"massing":["slab","tower","terrace","courtyard"],"facade":["windows","mixed","grid"],"roof":["flat","utility","terrace"]}
+
+func _pick_recipe_value(values: Array) -> String:
+    return str(values[rng.randi_range(0,values.size()-1)])
+
 func _generate_city() -> void:
     buildings.clear()
     trees.clear()
@@ -825,10 +871,19 @@ func _generate_city() -> void:
             var h := rng.randf_range(45, 125)
             if district.style in ["glass", "center", "neon"]:
                 h += rng.randf_range(45, 165)
-            var massing: String = ["slab","tower","terrace","courtyard"][rng.randi_range(0,3)]
-            var facade_mode: String = ["windows","striped","balconies","mixed","grid","arches","ribs","living"][rng.randi_range(0,7)]
-            var roof_mode: String = ["flat","utility","garden","pitched","solar","antenna","terrace"][rng.randi_range(0,6)]
-            buildings.append({"rect":rect, "height":h, "wall":district.wall, "roof":district.roof, "accent":district.accent, "style":district.style, "seed":rng.randi(), "floors":maxi(2, int(h / 28.0)), "massing":massing, "facade":facade_mode, "roof_mode":roof_mode})
+            var recipe:=_building_recipe(str(district.style))
+            var massing: String=_pick_recipe_value(Array(recipe.massing))
+            var facade_mode: String=_pick_recipe_value(Array(recipe.facade))
+            var roof_mode: String=_pick_recipe_value(Array(recipe.roof))
+            var wall_variant: Color=Color(district.wall)
+            var roof_variant: Color=Color(district.roof)
+            if rng.randf()<0.55:
+                wall_variant=wall_variant.lerp(Color(district.accent),rng.randf_range(0.025,0.085))
+            if str(district.style) in ["heritage","harbor"]:
+                wall_variant=wall_variant.lightened(rng.randf_range(0.00,0.06))
+            elif str(district.style) in ["industry","rail","data"]:
+                wall_variant=wall_variant.darkened(rng.randf_range(0.00,0.07))
+            buildings.append({"rect":rect,"height":h,"wall":wall_variant,"roof":roof_variant,"accent":district.accent,"style":district.style,"seed":rng.randi(),"floors":maxi(2,int(h/28.0)),"massing":massing,"facade":facade_mode,"roof_mode":roof_mode})
         var tree_count := 80 if district.style in ["green", "garden"] else 26
         for _j in range(tree_count):
             var tp := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
@@ -1462,7 +1517,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.18"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.19"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2542,8 +2597,8 @@ func _start_photo_challenge(index: int) -> void:
     photo_mode=true
     var initial_dir: Vector2 = Vector2(photo_points[index].dir).normalized()
     photo_yaw=atan2(-initial_dir.x,-initial_dir.y)
-    photo_pitch=-0.08
-    photo_fov=68.0
+    photo_pitch=-0.17
+    photo_fov=66.0
     photo_drag_touch=-1
     move_vec=Vector2.ZERO
     vehicle_velocity=0.0
@@ -2606,7 +2661,7 @@ func _input_photo_mode(event: InputEvent) -> void:
 func _photo_update_camera() -> void:
     if photo_camera==null:
         return
-    photo_camera.position=Vector3(0,6.2,0)
+    photo_camera.position=Vector3(0,7.0,0)
     photo_camera.rotation=Vector3(photo_pitch,photo_yaw,0)
     photo_camera.fov=photo_fov
 
@@ -3013,24 +3068,86 @@ func _play_sfx(name: String) -> void:
 func _bootstrap_android_camera() -> void:
     if OS.get_name() != "Android":
         camera_status = "Desktop · Touch Peek"
+        headtrack_sensor_mode="desktop"
         return
     OS.request_permissions()
-    camera_status = "Frontkamera: Plugin vorbereitet · Sensor-PMDD aktiv"
-    if CameraServer.has_method("feeds"):
-        CameraServer.set("monitoring_feeds", true)
-        await get_tree().create_timer(0.75).timeout
-        var feeds = CameraServer.call("feeds")
-        if feeds is Array and feeds.size() > 0:
-            camera_status = "Frontkamera erkannt · Sensor-PMDD aktiv"
+    _recenter_headtracking()
+    camera_status = "Headtracking · Gyro+Gravity wird kalibriert"
+    headtrack_sensor_mode="calibrating"
+    CameraServer.monitoring_feeds=true
+    await get_tree().create_timer(0.75).timeout
+    _recenter_headtracking()
+    var feeds:=CameraServer.feeds()
+    var front_seen:=false
+    for feed in feeds:
+        if feed!=null and feed.has_method("get_position") and int(feed.call("get_position"))==1:
+            front_seen=true
+            break
+    camera_status = "Headtracking · Gyro+Gravity aktiv" + (" · Frontkamera erkannt" if front_seen else "")
+
+func _recenter_headtracking() -> void:
+    headtrack_integrated=Vector2.ZERO
+    sensor_view=Vector2.ZERO
+    headtrack_motion_strength=0.0
+    if OS.get_name()!="Android":
+        headtrack_calibrated=false
+        return
+    var g:=Input.get_gravity()
+    if g.length()>1.0:
+        headtrack_gravity_zero=g
+        headtrack_calibrated=true
+        headtrack_sensor_mode="gyro_gravity"
+    else:
+        headtrack_gravity_zero=Vector3.ZERO
+        headtrack_calibrated=false
+        headtrack_sensor_mode="waiting"
 
 func _update_sensor(delta: float) -> void:
-    if OS.get_name() == "Android":
-        var g := Input.get_gravity()
-        if g.length() > 1.0:
-            var target := Vector2(g.x / 9.8, -g.y / 9.8) * 0.32 * sensor_gain
-            sensor_view = sensor_view.lerp(target.limit_length(0.58), minf(1.0,delta*3.5))
-            return
-    sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
+    if OS.get_name()!="Android":
+        sensor_view=sensor_view.lerp(Vector2.ZERO,minf(1.0,delta*2.0))
+        return
+
+    var g:=Input.get_gravity()
+    var gyro:=Input.get_gyroscope()
+    var has_gravity:=g.length()>1.0
+    var has_gyro:=gyro.length()>0.002
+
+    if not headtrack_calibrated and has_gravity:
+        headtrack_gravity_zero=g
+        headtrack_calibrated=true
+        headtrack_integrated=Vector2.ZERO
+
+    if not has_gravity and not has_gyro:
+        headtrack_sensor_mode="unavailable"
+        camera_status="Headtracking · Sensoren nicht verfügbar"
+        sensor_view=sensor_view.lerp(Vector2.ZERO,minf(1.0,delta*2.0))
+        return
+
+    var tilt:=Vector2.ZERO
+    if has_gravity and headtrack_calibrated:
+        tilt=Vector2(
+            (g.x-headtrack_gravity_zero.x)/9.8,
+            -(g.y-headtrack_gravity_zero.y)/9.8
+        )*0.95
+
+    if has_gyro:
+        # Portrait device axes: Y maps horizontal yaw, X maps vertical pitch.
+        var gyro_step:=Vector2(-gyro.y,gyro.x)*delta*0.58
+        headtrack_integrated+=gyro_step
+        headtrack_integrated=headtrack_integrated.limit_length(0.58)
+        headtrack_motion_strength=lerpf(headtrack_motion_strength,clampf(gyro.length()/1.8,0.0,1.0),minf(1.0,delta*8.0))
+    else:
+        headtrack_motion_strength=lerpf(headtrack_motion_strength,0.0,minf(1.0,delta*4.0))
+
+    # Gravity gives drift-free recentering while gyro gives immediate movement response.
+    if has_gravity:
+        headtrack_integrated=headtrack_integrated.lerp(tilt*0.72,minf(1.0,delta*0.62))
+
+    var target: Vector2=(tilt*0.48+headtrack_integrated*0.92)*sensor_gain
+    target=target.limit_length(0.72)
+    sensor_view=sensor_view.lerp(target,minf(1.0,delta*(7.0 if has_gyro else 4.2)))
+    headtrack_sensor_mode="gyro_gravity" if has_gyro else "gravity"
+    camera_status="Headtracking · %s · %.0f%%" % [("GYRO+GRAVITY" if has_gyro else "GRAVITY"),headtrack_motion_strength*100.0]
 
 func _traffic_world_speed(car: Dictionary) -> float:
     var road_index:=int(car.road)
@@ -4559,7 +4676,7 @@ func _update_ui() -> void:
         var task_text:=str(active_job.get("task",""))
         detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m%s · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance,(" · "+task_text if task_text!="" else "")]
     else:
-        detail_label.text = "Links bewegen · rechts Perspektive · MAP/MISSIONS für Übersicht."
+        detail_label.text = "Links bewegen · rechts Perspektive · Headtracking %s · MAP/MISSIONS für Übersicht." % camera_status
     var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
     if current_vehicle >= 0:
         var drive_cls: String = str(parked_cars[current_vehicle]["class"])
@@ -4918,13 +5035,91 @@ func _draw() -> void:
     if hospital_transition>0.0:
         _draw_hospital_cutscene()
 
+func _tile_visible(p: Vector2, margin: float = 90.0) -> bool:
+    var s:=get_viewport_rect().size
+    return p.x>-margin and p.y>-margin and p.x<s.x+margin and p.y<s.y+margin
+
+func _draw_district_tile_pattern(d: Dictionary) -> void:
+    var r: Rect2=d.rect
+    var style:=str(d.style)
+    var accent: Color=Color(d.accent)
+    var step_world:=280.0
+    if style in ["heritage","campus","culture"]:
+        step_world=220.0
+    elif style in ["industry","harbor","rail","terminal"]:
+        step_world=320.0
+    var cols:=int(ceil(r.size.x/step_world))
+    var rows:=int(ceil(r.size.y/step_world))
+    var tile_px:=step_world*world_zoom
+    for gx in range(cols):
+        for gy in range(rows):
+            var wp:=r.position+Vector2((float(gx)+0.5)*step_world,(float(gy)+0.5)*step_world)
+            var p:=_project(wp,0)
+            if not _tile_visible(p,tile_px*0.55):
+                continue
+            if style=="heritage":
+                var w:=tile_px*0.42
+                var h:=tile_px*0.18
+                var stagger:=w*0.48 if gy%2==1 else 0.0
+                draw_rect(Rect2(p-Vector2(w*0.5-stagger,h*0.5),Vector2(w,h)),Color(0.56,0.49,0.42,0.055),false,maxf(1.0,world_zoom*0.75))
+                draw_line(p+Vector2(-w*0.45,h*0.05),p+Vector2(w*0.45,h*0.05),Color(0.92,0.82,0.68,0.035),1.0,true)
+            elif style in ["culture","campus"]:
+                var sq:=tile_px*0.34
+                draw_rect(Rect2(p-Vector2(sq*0.5,sq*0.5),Vector2(sq,sq)),Color(accent.r,accent.g,accent.b,0.035),false,maxf(1.0,world_zoom*0.65))
+                if (gx+gy)%3==0:
+                    draw_circle(p,3.0*clampf(world_zoom,0.8,1.8),Color(accent.r,accent.g,accent.b,0.16))
+            elif style in ["glass","center","neon","expo","data"]:
+                var slab:=tile_px*0.72
+                draw_rect(Rect2(p-Vector2(slab*0.5,slab*0.5),Vector2(slab,slab)),Color(0.68,0.83,0.88,0.025),false,maxf(1.0,world_zoom*0.55))
+                if (gx*3+gy)%4==0:
+                    draw_line(p-Vector2(slab*0.38,0),p+Vector2(slab*0.38,0),Color(accent.r,accent.g,accent.b,0.055),2.0,true)
+                    draw_circle(p+Vector2(slab*0.28,0),2.4*clampf(world_zoom,0.8,1.7),Color(accent.r,accent.g,accent.b,0.28))
+            elif style in ["green","garden"]:
+                var patch:=tile_px*0.28
+                draw_circle(p,patch*0.38,Color(0.30,0.55,0.31,0.040))
+                draw_circle(p+Vector2(patch*0.28,-patch*0.15),patch*0.17,Color(0.49,0.72,0.42,0.035))
+            elif style in ["canal","coast"]:
+                var plank:=tile_px*0.70
+                draw_line(p-Vector2(plank*0.5,0),p+Vector2(plank*0.5,0),Color(0.74,0.71,0.62,0.050),2.0,true)
+                draw_line(p+Vector2(-plank*0.20,-8),p+Vector2(-plank*0.20,8),Color(0.45,0.47,0.45,0.045),1.0,true)
+                draw_line(p+Vector2(plank*0.20,-8),p+Vector2(plank*0.20,8),Color(0.45,0.47,0.45,0.045),1.0,true)
+            elif style in ["industry","harbor","rail","terminal"]:
+                var slab:=tile_px*0.62
+                draw_rect(Rect2(p-Vector2(slab*0.5,slab*0.34),Vector2(slab,slab*0.68)),Color(0.68,0.66,0.60,0.032),false,maxf(1.0,world_zoom*0.55))
+                if (gx+gy)%4==0:
+                    draw_line(p+Vector2(-slab*0.25,slab*0.24),p+Vector2(-slab*0.05,slab*0.04),Color(0.92,0.67,0.26,0.11),3.0,true)
+                    draw_line(p+Vector2(0,slab*0.24),p+Vector2(slab*0.20,slab*0.04),Color(0.92,0.67,0.26,0.11),3.0,true)
+            elif style in ["solar","wind","air"]:
+                var slab:=tile_px*0.64
+                draw_line(p-Vector2(slab*0.5,0),p+Vector2(slab*0.5,0),Color(accent.r,accent.g,accent.b,0.050),2.0,true)
+                draw_line(p-Vector2(0,slab*0.28),p+Vector2(0,slab*0.28),Color(0.85,0.90,0.90,0.030),1.0,true)
+            else:
+                draw_circle(p,2.2*clampf(world_zoom,0.8,1.8),Color(accent.r,accent.g,accent.b,0.10))
+
+func _draw_sidewalk_tiles(road: Dictionary) -> void:
+    var pts: PackedVector2Array=road.points
+    var scale:=clampf(world_zoom,0.78,1.65)
+    for k in range(3,98,4):
+        var t:=float(k)/100.0
+        var wp:=_sample_polyline(pts,t)
+        var tan:=_polyline_tangent(pts,t)
+        var normal:=Vector2(-tan.y,tan.x)
+        var edge_world:=float(road.width)*0.5+13.0
+        for side_sign in [-1.0,1.0]:
+            var edge:=_project(wp+normal*edge_world*float(side_sign),0.6)
+            var half:=tan*9.0*scale
+            draw_line(edge-half,edge+half,Color(0.78,0.82,0.82,0.16),1.2*scale,true)
+            if k%12==3:
+                draw_circle(edge,2.2*scale,Color(0.92,0.78,0.44,0.24))
+
 func _draw_district_ground() -> void:
     for d in districts:
         var r: Rect2 = d.rect
         if not _world_rect_visible(r):
             continue
         var p := _project(r.position)
-        draw_rect(Rect2(p, r.size), d.ground)
+        draw_rect(Rect2(p,r.size*world_zoom),d.ground)
+        _draw_district_tile_pattern(d)
         var accent: Color = d.accent
         accent.a = 0.06
         var style: String = str(d.style)
@@ -5035,22 +5230,24 @@ func _draw_roads() -> void:
         var screen := PackedVector2Array()
         for p in pts:
             screen.append(_project(p))
-        draw_polyline(screen, Color("#0e151a"), road.width + 42.0, true)
-        draw_polyline(screen, Color("#67737a"), road.width + 24.0, true)
-        draw_polyline(screen, Color("#29343b"), road.width, true)
-        draw_polyline(screen, Color(1.0,0.88,0.58,0.16), 3.0, true)
-        draw_polyline(screen, Color(0.72,0.82,0.85,0.10), maxf(2.0,float(road.width)-20.0), true)
+        var road_scale:=clampf(world_zoom,0.78,1.65)
+        draw_polyline(screen,Color("#0e151a"),(float(road.width)+42.0)*road_scale,true)
+        draw_polyline(screen,Color("#67737a"),(float(road.width)+24.0)*road_scale,true)
+        draw_polyline(screen,Color("#29343b"),float(road.width)*road_scale,true)
+        draw_polyline(screen,Color(1.0,0.88,0.58,0.16),3.0*road_scale,true)
+        draw_polyline(screen,Color(0.72,0.82,0.85,0.10),maxf(2.0,float(road.width)-20.0)*road_scale,true)
         var weather := _weather_state()
         if weather in ["rain","storm"]:
             var wet_strength := 0.10 if weather=="rain" else 0.16
-            draw_polyline(screen,Color(0.52,0.72,0.82,wet_strength),maxf(2.0,float(road.width)-12.0),true)
-            draw_polyline(screen,Color(0.80,0.92,1.0,wet_strength*0.45),2.0,true)
+            draw_polyline(screen,Color(0.52,0.72,0.82,wet_strength),maxf(2.0,float(road.width)-12.0)*road_scale,true)
+            draw_polyline(screen,Color(0.80,0.92,1.0,wet_strength*0.45),2.0*road_scale,true)
         for k in range(3, 98, 6):
             var t := float(k)/100.0
             var wp := _sample_polyline(pts,t)
             var tan := _polyline_tangent(pts,t)
             var cpos := _project(wp,1.0)
-            draw_line(cpos-tan*14.0,cpos+tan*14.0,Color(0.92,0.89,0.72,0.48),3.0,true)
+            draw_line(cpos-tan*14.0*road_scale,cpos+tan*14.0*road_scale,Color(0.92,0.89,0.72,0.48),3.0*road_scale,true)
+        _draw_sidewalk_tiles(road)
         _draw_road_surface_details(road)
     _draw_junction_overlays()
 
@@ -6615,6 +6812,8 @@ func _draw_parked_cars() -> void:
 
 func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: bool, archetype: String = "") -> void:
     var sz: Vector2 = VEHICLE_SIZES.get(cls,Vector2(45,22))
+    var object_zoom:=clampf(pow(world_zoom,0.34),0.92,1.30)
+    sz*=object_zoom
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
     var side := Vector2(-f.y,f.x)
@@ -7951,6 +8150,7 @@ func _cycle_sensor_option() -> void:
         sensor_gain=1.5
     else:
         sensor_gain=0.6
+    _recenter_headtracking()
     _save_options()
     _refresh_option_labels()
 
@@ -7961,7 +8161,7 @@ func _refresh_option_labels() -> void:
     var qualities := ["ECO","BALANCED","HIGH"]
     graphics_option_button.text="Grafik · %s" % qualities[graphics_quality]
     pmdd_option_button.text="PMDD Tiefe · %.2fx" % parallax_strength
-    sensor_option_button.text="Sensor-Empfindlichkeit · %.1fx" % sensor_gain
+    sensor_option_button.text="Headtracking · %.1fx · %s" % [sensor_gain,("GYRO" if headtrack_sensor_mode=="gyro_gravity" else headtrack_sensor_mode.to_upper())]
     if drive_option_button!=null:
         drive_option_button.text="Fahrhilfe · %s" % ("AN" if driving_assist else "AUS")
     if haptics_option_button!=null:
@@ -9345,6 +9545,15 @@ func _draw_peek_meter() -> void:
 
 func _project(world: Vector2, z: float = 0.0) -> Vector2:
     var screen_center := get_viewport_rect().size * 0.5
+    var frame_y:=0.0
+    if not interior_active and not photo_mode:
+        if current_vehicle>=0:
+            frame_y=42.0
+        elif transit_riding>=0:
+            frame_y=56.0
+        else:
+            frame_y=104.0
+    screen_center.y+=frame_y
     var par := view_amount * z * parallax_strength * 0.72
     var shake := Vector2.ZERO
     if camera_shake_strength>0.01:
