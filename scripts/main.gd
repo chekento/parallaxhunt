@@ -96,6 +96,7 @@ var photo_zoom_in_button: Button
 var photo_zoom_out_button: Button
 var photo_dynamic_cars: Dictionary = {}
 var photo_dynamic_peds: Dictionary = {}
+var photo_dynamic_transit: Dictionary = {}
 var scan_points: Array = []
 var scan_collect_count: int = 0
 var visited_districts: Dictionary = {}
@@ -1523,6 +1524,7 @@ func _photo_clear_3d_scene() -> void:
         child.queue_free()
     photo_dynamic_cars.clear()
     photo_dynamic_peds.clear()
+    photo_dynamic_transit.clear()
     photo_targets.clear()
 
 func _photo_material(color: Color, metallic: float = 0.0, roughness: float = 0.72) -> StandardMaterial3D:
@@ -1572,6 +1574,10 @@ func _photo_build_scene(index: int) -> void:
                 continue
             var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.02,0),Vector3(float(road.width)*0.10,0.10,length),Color("#30383d"))
             slab.rotation.y=atan2(delta.x,delta.z)
+            var sidewalk_w: float = float(road.width)*0.10+3.2
+            var walk := _photo_box("Walk_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.10,0),Vector3(sidewalk_w,0.12,length),Color("#6b7478"))
+            walk.rotation.y=slab.rotation.y
+            slab.position.y=0.16
 
     # Nearby procedural buildings become 3D masses with roof caps and windows.
     var built: int = 0
@@ -1596,11 +1602,7 @@ func _photo_build_scene(index: int) -> void:
         var lp: Vector2 = Vector2(l.pos)
         if lp.distance_to(center)>radius*1.25:
             continue
-        var h: float = maxf(8.0,float(l.h)*0.085)
-        var sz: Vector2 = Vector2(l.size)*0.10
-        var local := _photo_local(lp,center,h*0.5)
-        var lm := _photo_box("Landmark_%s" % str(l.name),local,Vector3(maxf(8.0,sz.x),h,maxf(8.0,sz.y)),Color(l.accent).darkened(0.42))
-        var cap := _photo_box("LandmarkCap_%s" % str(l.name),local+Vector3(0,h*0.53,0),Vector3(maxf(6.0,sz.x*0.72),1.0,maxf(6.0,sz.y*0.72)),Color(l.accent))
+        _photo_make_landmark(l,center)
 
     # Trees as trunk/crown 3D forms.
     var tree_count: int = 0
@@ -1648,6 +1650,26 @@ func _photo_build_scene(index: int) -> void:
         if traffic_count>30:
             break
 
+    # Buses and trams keep moving through the 3D photo scene.
+    for vi in range(transit_vehicles.size()):
+        var tv: Dictionary = transit_vehicles[vi]
+        var rd = roads[int(tv.road)]
+        var vp: Vector2 = _sample_polyline(rd.points,float(tv.t))
+        if vp.distance_to(center)>radius*1.15:
+            continue
+        var tan := _polyline_tangent(rd.points,float(tv.t))
+        if bool(tv.reverse):
+            tan*=-1.0
+        var transit_root := Node3D.new()
+        transit_root.name="Transit_%d" % vi
+        photo_world_root.add_child(transit_root)
+        var long_size := Vector3(9.0,2.8,2.7) if str(tv.kind)=="bus" else Vector3(12.0,2.9,2.65)
+        _photo_box("TransitBody",Vector3(0,1.55,0),long_size,Color(tv.color),transit_root)
+        _photo_box("TransitGlass",Vector3(-0.4,2.65,0),Vector3(long_size.x*0.70,0.70,long_size.z*0.78),Color("#79b5cc"),transit_root)
+        transit_root.position=_photo_local(vp,center,0.0)
+        transit_root.rotation.y=-tan.angle()+PI*0.5
+        photo_dynamic_transit[vi]=transit_root
+
     # Moving pedestrians are mirrored as simple 3D characters.
     var ped_count: int = 0
     for pi in range(pedestrians.size()):
@@ -1681,6 +1703,74 @@ func _photo_build_scene(index: int) -> void:
             break
 
     _photo_spawn_targets(index,center)
+
+func _photo_make_landmark(l: Dictionary, center: Vector2) -> void:
+    var lp: Vector2 = Vector2(l.pos)
+    var kind: String = str(l.kind)
+    var h: float = maxf(8.0,float(l.h)*0.085)
+    var sz: Vector2 = Vector2(l.size)*0.10
+    var base := _photo_local(lp,center,0.0)
+    var accent: Color = Color(l.accent)
+
+    if kind=="openai_hq":
+        var left := _photo_box("OpenAI_Left",base+Vector3(-sz.x*0.23,h*0.50,0),Vector3(sz.x*0.42,h,sz.y*0.78),Color("#35505c"))
+        var right := _photo_box("OpenAI_Right",base+Vector3(sz.x*0.23,h*0.50,0),Vector3(sz.x*0.42,h,sz.y*0.78),Color("#3b5965"))
+        _photo_box("OpenAI_Skybridge",base+Vector3(0,h*0.58,0),Vector3(sz.x*0.28,2.7,sz.y*0.30),Color("#9acbd7"))
+        _photo_box("OpenAI_Plaza",base+Vector3(0,0.35,sz.y*0.50),Vector3(sz.x*0.85,0.55,sz.y*0.28),Color("#d7e2e5"))
+        for x in [-0.23,0.23]:
+            for y in range(2,8):
+                _photo_box("OpenAI_Glass",base+Vector3(sz.x*x,h*float(y)/9.0,sz.y*0.401),Vector3(sz.x*0.31,0.22,0.14),Color(0.55,0.82,0.90,0.78))
+    elif kind=="clock":
+        _photo_box("ClockTower",base+Vector3(0,h*0.50,0),Vector3(sz.x*0.36,h,sz.y*0.38),Color("#725747"))
+        var clock := CylinderMesh.new()
+        clock.top_radius=2.8
+        clock.bottom_radius=2.8
+        clock.height=0.30
+        var cn := MeshInstance3D.new()
+        cn.mesh=clock
+        cn.rotation_degrees=Vector3(90,0,0)
+        cn.position=base+Vector3(0,h*0.76,-sz.y*0.20)
+        cn.material_override=_photo_material(Color("#f4ead0"))
+        photo_world_root.add_child(cn)
+        _photo_box("ClockSpire",base+Vector3(0,h+4.5,0),Vector3(0.65,9.0,0.65),accent)
+    elif kind in ["greenhouse","conservatory"]:
+        _photo_box("Glasshouse",base+Vector3(0,4.0,0),Vector3(sz.x,8.0,sz.y),Color(0.40,0.70,0.58,0.38))
+        for x in range(-3,4):
+            _photo_box("GlassRib",base+Vector3(float(x)*sz.x/7.0,8.8,0),Vector3(0.24,9.5,sz.y*1.02),Color("#b9e4d7"))
+    elif kind=="solar_beacon":
+        _photo_box("SolarMast",base+Vector3(0,h*0.50,0),Vector3(1.4,h,1.4),Color("#606970"))
+        for y in range(1,5):
+            _photo_box("SolarWing",base+Vector3(0,h*float(y)/5.0,0),Vector3(sz.x*0.62,0.45,3.2),accent)
+    elif kind=="observatory":
+        var dome := SphereMesh.new()
+        dome.radius=maxf(6.0,sz.x*0.22)
+        dome.height=dome.radius*1.45
+        var dn := MeshInstance3D.new()
+        dn.mesh=dome
+        dn.position=base+Vector3(0,h*0.55,0)
+        dn.material_override=_photo_material(Color("#544e7a"))
+        photo_world_root.add_child(dn)
+        _photo_box("ObservatoryBase",base+Vector3(0,h*0.20,0),Vector3(sz.x*0.55,h*0.40,sz.y*0.55),Color("#38344f"))
+        _photo_box("Scope",base+Vector3(4,h*0.80,-2),Vector3(3.0,3.0,15.0),accent)
+    elif kind=="crystal":
+        var root := Node3D.new()
+        root.position=base
+        photo_world_root.add_child(root)
+        for i in range(5):
+            var shard := _photo_box("CrystalShard",Vector3(float(i-2)*4.0,7.0+float(i%2)*3.0,float((i*5)%7)-3.0),Vector3(5.0,15.0+float(i)*2.5,5.0),Color(accent.r,accent.g,accent.b,0.70),root)
+            shard.rotation_degrees=Vector3(float(i)*3.0,float(i)*19.0,float(i-2)*5.0)
+    elif kind=="theatre":
+        _photo_box("TheatreBody",base+Vector3(0,h*0.42,0),Vector3(sz.x,h*0.84,sz.y),Color("#342244"))
+        _photo_box("TheatreMarquee",base+Vector3(0,h*0.40,-sz.y*0.56),Vector3(sz.x*0.78,3.2,sz.y*0.18),accent)
+        for x in range(-3,4):
+            _photo_box("NeonStrip",base+Vector3(float(x)*sz.x/8.0,h*0.55,-sz.y*0.575),Vector3(0.35,h*0.48,0.20),accent)
+    elif kind=="crane":
+        _photo_box("CraneHall",base+Vector3(0,5.0,0),Vector3(sz.x,10.0,sz.y),Color("#4b4039"))
+        _photo_box("CraneMast",base+Vector3(-sz.x*0.30,h*0.52,0),Vector3(1.8,h,1.8),Color("#806d60"))
+        _photo_box("CraneArm",base+Vector3(sz.x*0.05,h,0),Vector3(sz.x*0.72,1.8,1.8),accent)
+    else:
+        _photo_box("Landmark_%s" % str(l.name),base+Vector3(0,h*0.5,0),Vector3(maxf(8.0,sz.x),h,maxf(8.0,sz.y)),Color(l.accent).darkened(0.42))
+        _photo_box("LandmarkCap_%s" % str(l.name),base+Vector3(0,h*1.03,0),Vector3(maxf(6.0,sz.x*0.72),1.0,maxf(6.0,sz.y*0.72)),accent)
 
 func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls: String, color: Color, center: Vector2, parent: Node3D = null) -> Node3D:
     var root := Node3D.new()
@@ -1980,6 +2070,22 @@ func _update_photo_3d_scene(_delta: float) -> void:
         var wp: Vector2 = Vector2(tf.pos)
         node.position=_photo_local(wp,center,0.0)
         node.rotation.y=-Vector2(tf.tangent).angle()+PI*0.5
+
+    for key in photo_dynamic_transit.keys():
+        var vi: int = int(key)
+        if vi<0 or vi>=transit_vehicles.size():
+            continue
+        var vnode: Node3D = photo_dynamic_transit[key]
+        if not is_instance_valid(vnode):
+            continue
+        var tv: Dictionary = transit_vehicles[vi]
+        var rd = roads[int(tv.road)]
+        var vp: Vector2 = _sample_polyline(rd.points,float(tv.t))
+        var vtan := _polyline_tangent(rd.points,float(tv.t))
+        if bool(tv.reverse):
+            vtan*=-1.0
+        vnode.position=_photo_local(vp,center,0.0)
+        vnode.rotation.y=-vtan.angle()+PI*0.5
 
     for key in photo_dynamic_peds.keys():
         var pi: int = int(key)
