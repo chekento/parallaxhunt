@@ -1,6 +1,21 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.11.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.12.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.12.0 — Open-World Depth
+
+- mission overlay is now paged so the full long-form campaign remains readable instead of clipping after the first screen
+- collection progression is split into three pages: overview + city life, all Photo Hunt spots, and vehicles + milestones
+- bottom-left / bottom-right paging zones make the large mobile overlays navigable without tiny controls
+- all rotating city micro-events now open a real two-choice interaction instead of resolving with a single tap
+- choices are remembered per event and can represent simply experiencing an event or actively helping the people running it
+- City Reputation, event discovery and the chosen branch persist in save slots
+- three new campaign chapters integrate street life directly into long-term progression: Urban Pulse, Lokale Hände and Megacity Insider
+- the mission compass can guide the player toward suitable unseen / unsupported live events
+- close-range event audio one-shots differentiate music/show, work/repair and crowd/market encounters
+- district-specific pedestrian accessories add stronger local visual identity in neon, green, industrial, campus, heritage and waterfront areas
+- Canal Rotunda, Civic Prism, Axis Library and Terminal Crown now have bespoke native 3D Photo Hunt geometry instead of generic landmark blocks
+- modal commerce/event windows now lock background movement and duplicate interaction input
 
 ## 1.11.0 — Street Life & District Ambience
 
