@@ -155,3 +155,27 @@
 - further Photo Hunt anchoring of hidden targets to real roofs, façades, vehicles and props
 - map filter controls for live events, incidents, services, photo points and transit
 - profiling social-scene density and bad-weather combinations on Android
+
+
+## Alpha 1.15 — living streets
+- Lightweight passenger counts and boarding/exiting state for buses and trams
+- Visible passenger movement between waiting groups and stopped transit vehicles
+- Animated bus/tram doors while dwelling
+- Denser plaza, market, harbor, campus, expo and nightlife crowd pockets
+- Rain-shelter groups at selected cafés and transit stops
+- Spectators and phone/camera reactions around live events
+- Animated awnings, restaurant steam, moving market canopies and pulsing neon props
+- Real response-vehicle right-of-way logic
+- Nearby AI traffic yields and flashes hazards for approaching response vehicles
+- Response vehicles keep priority through red phases instead of stopping like normal traffic
+- Graphics-quality-aware crowd/event rendering to protect Android performance
+
+### Next quality targets
+- passenger redistribution after boarding/exiting instead of visual-only stop waves
+- shelter-seeking movement for free pedestrians, not just authored shelter groups
+- emergency-response destinations and multi-road priority routing
+- more district-authored plazas, nightlife clusters, waterfront crews and campus scenes
+- reactive shop doors, delivery unloading and café service loops
+- richer event audience behaviors: dispersal, applause, queues and photography
+- more environmental motion: flags, ventilation, traffic gantries and construction machinery
+- map activity filters and optional density controls for lower-end devices
