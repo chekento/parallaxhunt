@@ -1,6 +1,23 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.12.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.13.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.13.0 — Social World
+
+- pedestrians now use explicit social states instead of a single walk/pause loop: walking, road crossing, sitting, chatting, phone use and alert reactions
+- seeded social pairs can pause together and visibly converse instead of every pedestrian behaving independently
+- pedestrians can cross at junctions and player/AI traffic reacts by yielding to active crossings
+- nearby player vehicles can trigger pedestrian alert behavior instead of NPCs ignoring traffic completely
+- district clothing/accessory identity from 1.12 now carries through the richer social states
+- traffic now contains explicit archetypes such as taxi, rideshare, service, maintenance, courier and city-response vehicles
+- service archetypes receive class-aware roof racks, markings, beacons or lightbars rather than relying on random livery only
+- those archetypes also carry into the fixed 3D Photo Hunt traffic scene
+- actively helping at selected live events can unlock short local follow-up jobs with their own compass guidance, world target marker and payout
+- follow-up jobs reuse the normal save/job/progression systems instead of creating a parallel quest implementation
+- Photo Hunt now builds a lightweight static-occluder model from nearby buildings and landmarks
+- hidden Photo Hunt subjects are repositioned toward clear sight lines when necessary
+- the camera target check rejects subjects hidden behind static world masses, preventing captures through buildings
+- the 3D smoke test now verifies that occlusion data is actually built alongside the three search targets
 
 ## 1.12.0 — Open-World Depth
 
