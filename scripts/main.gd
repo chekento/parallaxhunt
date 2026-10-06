@@ -76,6 +76,7 @@ var active_photo_index: int = -1
 var photo_targets: Array = []
 var photo_found: Dictionary = {}
 var photo_scores: Dictionary = {}
+var photo_scores: Dictionary = {}
 var photo_yaw: float = 0.0
 var photo_pitch: float = -0.10
 var photo_fov: float = 68.0
@@ -1873,8 +1874,6 @@ func _photo_spawn_targets(index: int, center: Vector2) -> void:
         photo_world_root.add_child(root)
         _photo_build_target_visual(root,str(t.kind),i)
         t["node"]=root
-        if bool(photo_found.get(str(t.key),false)):
-            root.visible=false
         photo_targets.append(t)
 
 func _photo_build_target_visual(root: Node3D, kind: String, variant: int) -> void:
@@ -1922,35 +1921,6 @@ func _photo_build_target_visual(root: Node3D, kind: String, variant: int) -> voi
         _photo_box("BirdBody",Vector3.ZERO,Vector3(1.3,0.6,1.8),Color("#27343a"),root)
         _photo_box("WingL",Vector3(-1.0,0,0),Vector3(1.6,0.18,0.8),Color("#3e5059"),root)
         _photo_box("WingR",Vector3(1.0,0,0),Vector3(1.6,0.18,0.8),Color("#3e5059"),root)
-
-func _photo_apply_lighting() -> void:
-    if photo_environment==null or photo_sun==null:
-        return
-    var hour: float = world_clock
-    if hour>=20.0 or hour<5.5:
-        photo_environment.background_color=Color("#071422")
-        photo_environment.ambient_light_color=Color("#7287a0")
-        photo_environment.ambient_light_energy=0.34
-        photo_sun.light_color=Color("#9cb6d7")
-        photo_sun.light_energy=0.28
-    elif hour>=17.5:
-        photo_environment.background_color=Color("#d58d73")
-        photo_environment.ambient_light_color=Color("#f0baa0")
-        photo_environment.ambient_light_energy=0.58
-        photo_sun.light_color=Color("#ffd0a0")
-        photo_sun.light_energy=0.78
-    elif hour<8.0:
-        photo_environment.background_color=Color("#9fb8cc")
-        photo_environment.ambient_light_color=Color("#cadde7")
-        photo_environment.ambient_light_energy=0.58
-        photo_sun.light_color=Color("#ffe0ba")
-        photo_sun.light_energy=0.72
-    else:
-        photo_environment.background_color=Color("#9cc5d8")
-        photo_environment.ambient_light_color=Color("#d8e7ec")
-        photo_environment.ambient_light_energy=0.72
-        photo_sun.light_color=Color.WHITE
-        photo_sun.light_energy=1.15
 
 func _start_photo_challenge(index: int) -> void:
     if index<0 or index>=photo_points.size():
@@ -2202,6 +2172,12 @@ func _update_photo_3d_scene(_delta: float) -> void:
             node.position=base+Vector3(sin(time*1.7+float(i))*2.0,sin(time*2.4)*0.8,cos(time*1.3+float(i))*1.4)
         elif str(t.kind)=="symbol":
             node.rotation.y=time*0.45
+        elif str(t.kind)=="bird":
+            var base: Vector3 = Vector3(t.pos)
+            node.position=base+Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2)
+            node.rotation.y=time*0.75
+        elif str(t.kind)=="neoncode":
+            node.scale=Vector3.ONE*(1.0+sin(time*3.0)*0.06)
         elif str(t.kind)=="bird":
             var base: Vector3 = Vector3(t.pos)
             node.position=base+Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2)
@@ -5554,6 +5530,7 @@ func _save_game() -> void:
         "photos":photo_points.map(func(x): return bool(x.taken)),
         "photo_found":photo_found,
         "photo_scores":photo_scores,
+        "photo_scores":photo_scores,
         "scan_collect_count":scan_collect_count,
         "scan_points":scan_points.map(func(x): return bool(x.taken)),
         "visited_districts":visited_districts,
@@ -5616,6 +5593,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
         for i in range(mini(scan_taken.size(),scan_points.size())):
             scan_points[i]["taken"]=bool(scan_taken[i])
     photo_found = Dictionary(d.get("photo_found",{}))
+    photo_scores = Dictionary(d.get("photo_scores",{}))
     photo_scores = Dictionary(d.get("photo_scores",{}))
     var photo_taken = d.get("photos",[])
     if photo_taken is Array:
