@@ -6959,7 +6959,8 @@ func _draw_collection_overlay() -> void:
     var screen := get_viewport_rect().size
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#ffb3e6"),false,2.0)
-    draw_string(ThemeDB.fallback_font,Vector2(72,220),"SAMMLUNG / LANGZEITFORTSCHRITT",HORIZONTAL_ALIGNMENT_LEFT,820,28,Color.WHITE)
+    draw_string(ThemeDB.fallback_font,Vector2(72,220),"SAMMLUNG / LANGZEITFORTSCHRITT",HORIZONTAL_ALIGNMENT_LEFT,620,28,Color.WHITE)
+    draw_string(ThemeDB.fallback_font,Vector2(700,220),"STADTRUF %d/%d" % [city_reputation,city_micro_events.size()],HORIZONTAL_ALIGNMENT_RIGHT,270,18,Color("#ffb66f"))
 
     var y := 285.0
     var sections := [
@@ -7008,12 +7009,18 @@ func _draw_collection_overlay() -> void:
     y+=38
     var milestones := [
         ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Signal Hunter","signals_10"],["Spectrum Archivist","signals_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
-        ["Urban Explorer","districts_15"],["Every District","districts_all"],["Security Runner","hacks_8"],["Security Master","hacks_all"],["Street Trialist","races_3"],["City Circuit","races_all"],["City Professional","jobs_10"],["City Professional II","jobs_25"],["Photo Virtuoso","photos_score"],["Tuning Specialist","tuning_12"]
+        ["Urban Explorer","districts_15"],["Every District","districts_all"],["Security Runner","hacks_8"],["Security Master","hacks_all"],["Street Trialist","races_3"],["City Circuit","races_all"],["City Professional","jobs_10"],["City Professional II","jobs_25"],["Photo Virtuoso","photos_score"],["Tuning Specialist","tuning_12"],
+        ["City Regular","citylife_4"],["Local Pulse","citylife_8"],["Megacity Insider","citylife_all"]
     ]
-    for m in milestones:
+    var milestone_start_y := y
+    for mi in range(milestones.size()):
+        var m = milestones[mi]
         var done: bool = bool(milestones_claimed.get(str(m[1]),false))
-        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %s" % [("✓" if done else "○"),str(m[0])],HORIZONTAL_ALIGNMENT_LEFT,420,14,Color("#8de9aa") if done else Color("#b5c4ca"))
-        y+=29
+        var col_index := mi%2
+        var row_index := int(mi/2)
+        var mx := 92.0+float(col_index)*430.0
+        var my := milestone_start_y+float(row_index)*29.0
+        draw_string(ThemeDB.fallback_font,Vector2(mx,my),"%s %s" % [("✓" if done else "○"),str(m[0])],HORIZONTAL_ALIGNMENT_LEFT,405,14,Color("#8de9aa") if done else Color("#b5c4ca"))
     draw_string(ThemeDB.fallback_font,Vector2(72,2030),"COLLECTION erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
 
 func _total_npc_trust() -> int:
