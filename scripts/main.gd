@@ -122,6 +122,8 @@ var target_world_zoom: float = 1.0
 var map_open: bool = false
 var missions_open: bool = false
 var collection_open: bool = false
+var missions_page: int = 0
+var collection_page: int = 0
 var credits: int = 520
 var energy: float = 100.0
 var inventory: Dictionary = {"scan_cell":0,"energy_drink":0,"transit_pass":0}
@@ -187,7 +189,9 @@ var side_job_sites: Array = []
 var named_npcs: Array = []
 var city_micro_events: Array = []
 var micro_event_seen: Dictionary = {}
+var micro_event_choices: Dictionary = {}
 var city_reputation := 0
+var proximity_event_id := ""
 var caches: Array = []
 var glyphs: Array = []
 var npc_flags: Dictionary = {}
@@ -271,6 +275,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
     _update_sensor(delta)
     _update_ambient_audio(delta)
+    _update_event_proximity_audio()
     if main_menu_active:
         world_clock = fposmod(world_clock + delta * 0.006,24.0)
         queue_redraw()
@@ -318,6 +323,21 @@ func _input(event: InputEvent) -> void:
         return
     if main_menu_active:
         return
+    if missions_open or collection_open:
+        if event is InputEventScreenTouch:
+            var overlay_touch := event as InputEventScreenTouch
+            if overlay_touch.pressed and overlay_touch.position.y>1760.0:
+                var dir := -1 if overlay_touch.position.x<get_viewport_rect().size.x*0.5 else 1
+                if missions_open:
+                    var max_page := maxi(0,int(ceil(float(native_chapters.size())/14.0))-1)
+                    missions_page=clampi(missions_page+dir,0,max_page)
+                else:
+                    collection_page=clampi(collection_page+dir,0,2)
+                _play_sfx("hack_click")
+                queue_redraw()
+            return
+        if event is InputEventScreenDrag:
+            return
     if event is InputEventScreenTouch:
         var t := event as InputEventScreenTouch
         if t.pressed:
@@ -1102,7 +1122,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.11"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.12"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -1952,6 +1972,39 @@ func _photo_make_landmark(l: Dictionary, center: Vector2) -> void:
         _photo_box("CraneHall",base+Vector3(0,5.0,0),Vector3(sz.x,10.0,sz.y),Color("#4b4039"))
         _photo_box("CraneMast",base+Vector3(-sz.x*0.30,h*0.52,0),Vector3(1.8,h,1.8),Color("#806d60"))
         _photo_box("CraneArm",base+Vector3(sz.x*0.05,h,0),Vector3(sz.x*0.72,1.8,1.8),accent)
+    elif kind=="rotunda":
+        var rotunda := CylinderMesh.new()
+        rotunda.top_radius=maxf(5.0,sz.x*0.30)
+        rotunda.bottom_radius=maxf(6.0,sz.x*0.36)
+        rotunda.height=h*0.58
+        var rn:=MeshInstance3D.new()
+        rn.mesh=rotunda
+        rn.position=base+Vector3(0,h*0.29,0)
+        rn.material_override=_photo_material(Color("#315a63"))
+        photo_world_root.add_child(rn)
+        for k in range(10):
+            var a:=float(k)*TAU/10.0
+            _photo_box("RotundaFin",base+Vector3(cos(a)*sz.x*0.38,h*0.34,sin(a)*sz.y*0.38),Vector3(0.32,h*0.48,1.8),accent)
+        _photo_box("RotundaLantern",base+Vector3(0,h*0.72,0),Vector3(sz.x*0.18,h*0.24,sz.y*0.18),Color("#8edbd8"))
+    elif kind=="civic":
+        _photo_box("CivicCore",base+Vector3(0,h*0.48,0),Vector3(sz.x*0.58,h*0.96,sz.y*0.58),Color("#314b5b"))
+        for k in range(4):
+            var fin:=_photo_box("CivicBlade",base+Vector3(float(k-1)*sz.x*0.16,h*(0.42+float(k%2)*0.08),0),Vector3(sz.x*0.11,h*(0.70+float(k%2)*0.18),sz.y*0.74),accent)
+            fin.rotation_degrees.y=float(k-1)*8.0
+        _photo_box("CivicPortal",base+Vector3(0,h*0.22,-sz.y*0.42),Vector3(sz.x*0.30,h*0.28,1.4),Color("#b8e2ef"))
+    elif kind=="library":
+        _photo_box("LibraryPlinth",base+Vector3(0,2.2,0),Vector3(sz.x*1.05,4.4,sz.y*0.95),Color("#39445b"))
+        for k in range(5):
+            var wing:=_photo_box("LibraryWing",base+Vector3(float(k-2)*sz.x*0.16,h*(0.38+float(abs(k-2))*0.045),0),Vector3(sz.x*0.15,h*(0.66-float(abs(k-2))*0.06),sz.y*0.78),Color("#52698c"))
+            wing.rotation_degrees.y=float(k-2)*4.0
+        _photo_box("LibraryAxis",base+Vector3(0,h*0.72,-sz.y*0.20),Vector3(sz.x*0.56,2.0,sz.y*0.20),accent)
+    elif kind=="terminal":
+        _photo_box("TerminalBase",base+Vector3(0,h*0.25,0),Vector3(sz.x,h*0.50,sz.y),Color("#414a51"))
+        _photo_box("TerminalCrown",base+Vector3(0,h*0.67,0),Vector3(sz.x*0.64,h*0.34,sz.y*0.64),Color("#65717a"))
+        for k in range(6):
+            var a:=float(k)*TAU/6.0
+            _photo_box("TerminalSpoke",base+Vector3(cos(a)*sz.x*0.30,h*0.88,sin(a)*sz.y*0.30),Vector3(1.2,h*0.22,1.2),accent)
+        _photo_box("TerminalBeacon",base+Vector3(0,h*1.08,0),Vector3(1.5,h*0.25,1.5),Color("#d9e5ef"))
     else:
         _photo_box("Landmark_%s" % str(l.name),base+Vector3(0,h*0.5,0),Vector3(maxf(8.0,sz.x),h,maxf(8.0,sz.y)),Color(l.accent).darkened(0.42))
         _photo_box("LandmarkCap_%s" % str(l.name),base+Vector3(0,h*1.03,0),Vector3(maxf(6.0,sz.x*0.72),1.0,maxf(6.0,sz.y*0.72)),accent)
@@ -2355,6 +2408,9 @@ func _build_audio() -> void:
     sounds["error"] = _make_chime([190.0,145.0],[0.055,0.09],0.08)
     sounds["impact"] = _make_chime([95.0,72.0],[0.035,0.055],0.11)
     sounds["city_event"] = _make_chime([392.0,523.0,659.0],[0.04,0.05,0.09],0.08)
+    sounds["event_music"] = _make_chime([330.0,440.0,494.0,659.0],[0.08,0.08,0.08,0.14],0.055)
+    sounds["event_work"] = _make_chime([125.0,190.0,145.0],[0.055,0.04,0.075],0.050)
+    sounds["event_crowd"] = _make_chime([260.0,310.0,390.0],[0.045,0.055,0.075],0.038)
 
     ambient_sounds["urban"] = _make_ambient_loop(42.0,2.0,0.052)
     ambient_sounds["heritage"] = _make_ambient_loop(38.0,1.0,0.045)
@@ -2508,6 +2564,33 @@ func _update_ambient_audio(_delta: float) -> void:
             weather_player.volume_db-=9.0
         elif current_vehicle>=0:
             weather_player.volume_db-=4.0
+
+func _update_event_proximity_audio() -> void:
+    if not sound_enabled or main_menu_active or interior_active or photo_mode:
+        proximity_event_id=""
+        return
+    var nearest_label:=""
+    var nearest_kind:=""
+    var nearest_dist:=999999.0
+    for i in range(city_micro_events.size()):
+        var event: Dictionary=city_micro_events[i]
+        if not _micro_event_active(i,event):
+            continue
+        var d:=player_pos.distance_to(Vector2(event.pos))
+        if d<nearest_dist:
+            nearest_dist=d
+            nearest_label=str(event.label)
+            nearest_kind=str(event.type)
+    if nearest_dist<285.0 and nearest_label!="" and nearest_label!=proximity_event_id:
+        proximity_event_id=nearest_label
+        if nearest_kind in ["busker","boardwalk_music","drone_show"]:
+            _play_sfx("event_music")
+        elif nearest_kind in ["maintenance","repair_crew"]:
+            _play_sfx("event_work")
+        else:
+            _play_sfx("event_crowd")
+    elif nearest_dist>420.0:
+        proximity_event_id=""
 
 func _play_sfx(name: String) -> void:
     if not sound_enabled:
@@ -4066,58 +4149,102 @@ func _join_micro_event(index: int) -> void:
     if not _micro_event_active(index,event):
         _notify("Das Ereignis ist gerade vorbei.")
         return
-    var kind := str(event.type)
-    var label := str(event.label)
-    var first_time := not bool(micro_event_seen.get(label,false))
-    var energy_gain := 4.0
-    var flavor := "Du bleibst einen Moment und nimmst die Stimmung der Stadt mit."
-    if kind in ["yoga","run_club"]:
-        energy_gain=14.0
-        flavor="Du machst kurz mit. Bewegung, Rhythmus und ein bisschen Fokus."
-    elif kind=="foodtruck":
-        if credits>=6:
-            credits-=6
-            energy_gain=18.0
-            flavor="Ein schneller Street-Food-Stopp. -6 CR, dafür ordentlich Energie."
-        else:
-            energy_gain=3.0
-            flavor="Du schaust vorbei, aber für einen Snack fehlen gerade die Credits."
+    var kind:=str(event.type)
+    var label:=str(event.label)
+    _open_commerce(label,"LIVE-EVENT · %s\nWie möchtest du dich einbringen?" % current_district)
+    var active_label:="MITMACHEN"
+    var support_label:="UNTERSTÜTZEN"
+    if kind=="foodtruck":
+        active_label="SNACK HOLEN"
+        support_label="BEIM AUSGEBEN HELFEN"
     elif kind in ["busker","boardwalk_music"]:
-        energy_gain=7.0
-        if credits>=3:
-            credits-=3
-            flavor="Du hörst zu und wirfst 3 CR in den Hut."
-        else:
-            flavor="Du bleibst für einen Song. Kostenlos, aber nicht umsonst."
+        active_label="ZUHÖREN"
+        support_label="KÜNSTLER UNTERSTÜTZEN"
     elif kind in ["maintenance","repair_crew"]:
-        energy_gain=2.0
-        flavor="Du hilfst kurz bei der Absicherung. Die Crew merkt sich das."
+        active_label="ZUSCHAUEN"
+        support_label="KURZ MIT ANPACKEN"
     elif kind=="street_market":
-        energy_gain=8.0
-        flavor="Ein Rundgang über den Markt bringt neue Eindrücke und lokale Tipps."
-    elif kind=="drone_show":
-        energy_gain=6.0
-        flavor="Die Drohnenformation legt für einen Moment eine zweite Ebene über die Skyline."
+        active_label="MARKT ERKUNDEN"
+        support_label="AM STAND HELFEN"
     elif kind=="street_art":
-        energy_gain=5.0
-        flavor="Du beobachtest, wie das Mural Schicht für Schicht entsteht."
-    elif kind=="fountain_show":
-        energy_gain=6.0
-        flavor="Licht, Wasser und Perspektive greifen für ein paar Minuten ineinander."
-    elif kind=="campus_group":
-        energy_gain=5.0
-        flavor="Du hörst bei der offenen Runde zu und bekommst neue Stadtgerüchte mit."
+        active_label="MURAL ANSEHEN"
+        support_label="FARBE / MATERIAL HELFEN"
+    elif kind=="drone_show":
+        active_label="SHOW ANSEHEN"
+        support_label="FORMATION SCOUTEN"
+    commerce_actions.add_child(_commerce_button(active_label,_resolve_micro_event.bind(index,"ERLEBT")))
+    commerce_actions.add_child(_commerce_button(support_label,_resolve_micro_event.bind(index,"GEHOLFEN")))
+    commerce_actions.add_child(_commerce_button("WEITERGEHEN",_close_commerce))
 
+func _resolve_micro_event(index: int, choice: String) -> void:
+    if index<0 or index>=city_micro_events.size():
+        return
+    var event: Dictionary=city_micro_events[index]
+    var kind:=str(event.type)
+    var label:=str(event.label)
+    var first_time:=not bool(micro_event_seen.get(label,false))
+    var energy_gain:=5.0
+    var credit_delta:=0
+    var flavor:="Du nimmst dir Zeit für das Stadtleben."
+    if choice=="GEHOLFEN":
+        energy_gain=4.0
+        credit_delta=4
+        flavor="Du hilfst aktiv mit und bekommst ein kleines Dankeschön."
+        if kind in ["busker","boardwalk_music"]:
+            credit_delta=-3 if credits>=3 else 0
+            energy_gain=8.0
+            flavor="Du unterstützt die Musik direkt und bleibst für das Set."
+        elif kind=="foodtruck":
+            energy_gain=12.0
+            credit_delta=5
+            flavor="Du hilfst kurz beim Ausgeben und bekommst dafür einen Snack."
+        elif kind in ["maintenance","repair_crew"]:
+            energy_gain=3.0
+            credit_delta=8
+            flavor="Du hilfst bei Absicherung und Material. Die Crew bedankt sich."
+    else:
+        if kind in ["yoga","run_club"]:
+            energy_gain=14.0
+            flavor="Du machst aktiv mit und kommst mit neuer Energie zurück."
+        elif kind=="foodtruck":
+            if credits>=6:
+                credit_delta=-6
+                energy_gain=18.0
+                flavor="Ein Street-Food-Stopp bringt ordentlich Energie."
+            else:
+                energy_gain=3.0
+                flavor="Du schaust vorbei, aber ein Snack ist gerade nicht drin."
+        elif kind in ["busker","boardwalk_music"]:
+            energy_gain=7.0
+            flavor="Du bleibst für ein komplettes Stück."
+        elif kind=="street_market":
+            energy_gain=8.0
+            flavor="Du erkundest die Stände und hörst lokale Geschichten."
+        elif kind=="drone_show":
+            energy_gain=6.0
+            flavor="Die Drohnenshow legt eine zweite Ebene über die Skyline."
+        elif kind=="street_art":
+            energy_gain=5.0
+            flavor="Du beobachtest, wie das Mural Schicht für Schicht entsteht."
+
+    credits=maxi(0,credits+credit_delta)
     energy=minf(100.0,energy+energy_gain)
+    micro_event_choices[label]=choice
     if first_time:
         micro_event_seen[label]=true
         city_reputation+=1
         credits+=10
         _play_sfx("city_event")
-        _show_reward_popup("STADTLEBEN · %s" % label,"%s\n+10 CR · Stadtruf %d/%d" % [flavor,city_reputation,city_micro_events.size()],Color(event.accent))
+        _show_reward_popup("STADTLEBEN · %s" % label,"%s\n+10 CR Erstentdeckung · Stadtruf %d/%d" % [flavor,city_reputation,city_micro_events.size()],Color(event.accent))
     else:
         _play_sfx("collect")
-        _notify("%s · +%d Energie" % [label,int(energy_gain)])
+        var delta_text:=""
+        if credit_delta>0:
+            delta_text=" · +%d CR" % credit_delta
+        elif credit_delta<0:
+            delta_text=" · %d CR" % credit_delta
+        _notify("%s · +%d Energie%s" % [label,int(energy_gain),delta_text])
+    _close_commerce()
     _save_game()
     _check_milestones()
 
@@ -4625,6 +4752,21 @@ func _draw_pedestrians() -> void:
         if ped.bag:
             var bag_pos := pelvis + side_dir*5.5 + Vector2(0,2)
             draw_rect(Rect2(bag_pos-Vector2(2.5,2.5),Vector2(5,6)),Color("#5f4f47"),true)
+
+        var ped_style:=str(_district_at(pos).get("style","center"))
+        if ped_style=="neon":
+            draw_line(pelvis+Vector2(-4,1),pelvis+Vector2(4,1),Color("#ff80ef"),1.7,true)
+            draw_circle(head+Vector2(4,0),1.5,Color("#67d9ff"))
+        elif ped_style in ["green","garden"]:
+            draw_line(head+Vector2(-4,-6),head+Vector2(4,-6),Color("#8ff0b4"),2.2,true)
+        elif ped_style in ["industry","rail","terminal"]:
+            draw_line(pelvis+Vector2(-4,5),pelvis+Vector2(4,5),Color("#ffd46d"),2.0,true)
+        elif ped_style=="campus":
+            draw_rect(Rect2(pelvis+Vector2(-6,-1),Vector2(4,8)),Color("#6688aa"),true)
+        elif ped_style=="heritage":
+            draw_arc(head+Vector2(0,-3),6.0,PI,TAU,12,Color("#76584b"),2.6,true)
+        elif ped_style in ["canal","harbor","coast"]:
+            draw_line(pelvis+Vector2(-4,0),pelvis+Vector2(4,0),Color("#72d7e6"),1.7,true)
 
         var personal_seed := int(abs(pos.x*0.13+pos.y*0.07))
         if paused and personal_seed%4==0:
@@ -6103,6 +6245,7 @@ func _save_game() -> void:
         "npc_trust":npc_trust,
         "npc_contracts_done":npc_contracts_done,
         "micro_event_seen":micro_event_seen,
+        "micro_event_choices":micro_event_choices,
         "city_reputation":city_reputation,
         "active_npc_contract":_serialize_contract(active_npc_contract),
         "transit_trip_count":transit_trip_count,
@@ -6170,6 +6313,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     npc_trust = Dictionary(d.get("npc_trust",{}))
     npc_contracts_done = Dictionary(d.get("npc_contracts_done",{}))
     micro_event_seen = Dictionary(d.get("micro_event_seen",{}))
+    micro_event_choices = Dictionary(d.get("micro_event_choices",{}))
     city_reputation = int(d.get("city_reputation",micro_event_seen.size()))
     active_npc_contract = _deserialize_contract(Dictionary(d.get("active_npc_contract",{})))
     transit_trip_count = int(d.get("transit_trip_count",0))
@@ -6808,6 +6952,8 @@ func _toggle_collection() -> void:
     if minigame_open or photo_mode:
         return
     collection_open=not collection_open
+    if collection_open:
+        collection_page=0
     map_open=false
     missions_open=false
     move_vec=Vector2.ZERO
@@ -6817,6 +6963,8 @@ func _toggle_missions() -> void:
     if minigame_open or photo_mode:
         return
     missions_open = not missions_open
+    if missions_open:
+        missions_page=clampi(int(native_chapter/14),0,maxi(0,int(ceil(float(native_chapters.size())/14.0))-1))
     map_open = false
     collection_open = false
     move_vec = Vector2.ZERO
@@ -6959,69 +7107,84 @@ func _draw_collection_overlay() -> void:
     var screen := get_viewport_rect().size
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#ffb3e6"),false,2.0)
+    collection_page=clampi(collection_page,0,2)
     draw_string(ThemeDB.fallback_font,Vector2(72,220),"SAMMLUNG / LANGZEITFORTSCHRITT",HORIZONTAL_ALIGNMENT_LEFT,620,28,Color.WHITE)
-    draw_string(ThemeDB.fallback_font,Vector2(700,220),"STADTRUF %d/%d" % [city_reputation,city_micro_events.size()],HORIZONTAL_ALIGNMENT_RIGHT,270,18,Color("#ffb66f"))
+    draw_string(ThemeDB.fallback_font,Vector2(700,220),"SEITE %d/3 · STADTRUF %d/%d" % [collection_page+1,city_reputation,city_micro_events.size()],HORIZONTAL_ALIGNMENT_RIGHT,270,16,Color("#ffb66f"))
 
-    var y := 285.0
-    var sections := [
-        ["PMDD PHOTO HUNT",photo_count,photo_points.size(),Color("#ffb3e6")],
-        ["STREET SIGNALS",scan_collect_count,scan_points.size(),Color("#78d8ff")],
-        ["FAHRZEUGKLASSEN",driven_classes.size(),VEHICLE_CLASSES.size(),Color("#73f3ce")],
-        ["HACKING TERMINALS",_completed_hack_count(),mission_sites.size(),Color("#ffdf75")],
-        ["STADTTEILE",visited_districts.size(),districts.size(),Color("#9ad5ff")],
-        ["ZEITPRÜFUNGEN",race_completed.size(),race_sites.size(),Color("#ffd36b")],
-        ["NPC-VERTRAUEN",_total_npc_trust(),named_npcs.size()*3,Color("#ff9fe8")]
-    ]
-    for sec in sections:
-        draw_string(ThemeDB.fallback_font,Vector2(80,y),str(sec[0]),HORIZONTAL_ALIGNMENT_LEFT,390,18,Color(sec[3]))
-        draw_string(ThemeDB.fallback_font,Vector2(780,y),"%d / %d" % [int(sec[1]),int(sec[2])],HORIZONTAL_ALIGNMENT_RIGHT,190,17,Color.WHITE)
-        var ratio: float = clampf(float(sec[1])/maxf(1.0,float(sec[2])),0.0,1.0)
-        draw_rect(Rect2(80,y+16,890,10),Color(1,1,1,0.08),true)
-        draw_rect(Rect2(80,y+16,890*ratio,10),Color(sec[3].r,sec[3].g,sec[3].b,0.72),true)
-        y+=72
+    if collection_page==0:
+        var y := 300.0
+        var sections := [
+            ["PMDD PHOTO HUNT",photo_count,photo_points.size(),Color("#ffb3e6")],
+            ["STREET SIGNALS",scan_collect_count,scan_points.size(),Color("#78d8ff")],
+            ["FAHRZEUGKLASSEN",driven_classes.size(),VEHICLE_CLASSES.size(),Color("#73f3ce")],
+            ["HACKING TERMINALS",_completed_hack_count(),mission_sites.size(),Color("#ffdf75")],
+            ["STADTTEILE",visited_districts.size(),districts.size(),Color("#9ad5ff")],
+            ["ZEITPRÜFUNGEN",race_completed.size(),race_sites.size(),Color("#ffd36b")],
+            ["NPC-VERTRAUEN",_total_npc_trust(),named_npcs.size()*3,Color("#ff9fe8")],
+            ["STADTLEBEN",micro_event_seen.size(),city_micro_events.size(),Color("#ffb66f")]
+        ]
+        for sec in sections:
+            draw_string(ThemeDB.fallback_font,Vector2(80,y),str(sec[0]),HORIZONTAL_ALIGNMENT_LEFT,390,18,Color(sec[3]))
+            draw_string(ThemeDB.fallback_font,Vector2(780,y),"%d / %d" % [int(sec[1]),int(sec[2])],HORIZONTAL_ALIGNMENT_RIGHT,190,17,Color.WHITE)
+            var ratio: float = clampf(float(sec[1])/maxf(1.0,float(sec[2])),0.0,1.0)
+            draw_rect(Rect2(80,y+16,890,10),Color(1,1,1,0.08),true)
+            draw_rect(Rect2(80,y+16,890*ratio,10),Color(sec[3].r,sec[3].g,sec[3].b,0.72),true)
+            y+=78
+        draw_string(ThemeDB.fallback_font,Vector2(80,y+25),"ENTDECKTE LIVE-EVENTS",HORIZONTAL_ALIGNMENT_LEFT,360,20,Color("#ffb66f"))
+        y+=70
+        for i in range(city_micro_events.size()):
+            var e: Dictionary=city_micro_events[i]
+            var seen:=bool(micro_event_seen.get(str(e.label),false))
+            var choice:=str(micro_event_choices.get(str(e.label),""))
+            draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %s%s" % [("✓" if seen else "○"),str(e.label),(" · "+choice if choice!="" else "")],HORIZONTAL_ALIGNMENT_LEFT,820,14,Color("#8de9aa") if seen else Color("#b8c5cc"))
+            y+=34
 
-    draw_string(ThemeDB.fallback_font,Vector2(80,y+8),"FOTOPOINTS",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffb3e6"))
-    y+=45
-    for i in range(photo_points.size()):
-        var ph: Dictionary = photo_points[i]
-        var done: bool = bool(ph.taken)
-        var spot_score: int = _photo_spot_score(str(ph.id))
-        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %02d · %s · %s · %d/300" % [("✓" if done else "○"),i+1,str(ph.label),str(ph.district),spot_score],HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#8de9aa") if done else Color("#c7d6de"))
-        y+=30
-        if y>1150: break
+    elif collection_page==1:
+        draw_string(ThemeDB.fallback_font,Vector2(80,295),"PMDD PHOTO HUNT · ALLE FOTOPOINTS",HORIZONTAL_ALIGNMENT_LEFT,700,21,Color("#ffb3e6"))
+        var y:=345.0
+        for i in range(photo_points.size()):
+            var ph: Dictionary = photo_points[i]
+            var done: bool = bool(ph.taken)
+            var spot_score: int = _photo_spot_score(str(ph.id))
+            draw_rect(Rect2(78,y-22,900,48),Color(1,1,1,0.025),true)
+            draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %02d · %s" % [("✓" if done else "○"),i+1,str(ph.label)],HORIZONTAL_ALIGNMENT_LEFT,500,14,Color("#8de9aa") if done else Color("#d0dce1"))
+            draw_string(ThemeDB.fallback_font,Vector2(590,y),"%s · %d/300" % [str(ph.district),spot_score],HORIZONTAL_ALIGNMENT_RIGHT,360,13,Color("#ffb3e6"))
+            y+=56
 
-    y=1190
-    draw_string(ThemeDB.fallback_font,Vector2(80,y),"FAHRZEUGKLASSEN & TUNING",HORIZONTAL_ALIGNMENT_LEFT,420,20,Color("#73f3ce"))
-    y+=42
-    for cls in VEHICLE_CLASSES:
-        var seen: bool = bool(driven_classes.get(cls,false))
-        var up: Dictionary = _vehicle_upgrade_state(cls)
-        var rarity := "COMMON"
-        if cls in ["executive","suv","pickup"]: rarity="UNCOMMON"
-        elif cls in ["van","delivery"]: rarity="UTILITY"
-        elif cls=="sport": rarity="RARE"
-        elif cls=="hyper": rarity="ULTRA RARE"
-        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %-10s · %-10s · %-10s · E%d H%d B%d" % [("✓" if seen else "○"),cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(cls,"ROAD")),rarity,int(up.engine),int(up.handling),int(up.brake)],HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#8de9aa") if seen else Color("#c7d6de"))
-        y+=31
+    else:
+        draw_string(ThemeDB.fallback_font,Vector2(80,295),"FAHRZEUGKLASSEN & TUNING",HORIZONTAL_ALIGNMENT_LEFT,420,20,Color("#73f3ce"))
+        var y:=345.0
+        for cls in VEHICLE_CLASSES:
+            var seen: bool = bool(driven_classes.get(cls,false))
+            var up: Dictionary = _vehicle_upgrade_state(cls)
+            var rarity := "COMMON"
+            if cls in ["executive","suv","pickup"]: rarity="UNCOMMON"
+            elif cls in ["van","delivery"]: rarity="UTILITY"
+            elif cls=="sport": rarity="RARE"
+            elif cls=="hyper": rarity="ULTRA RARE"
+            draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %-10s · %-10s · %-10s · E%d H%d B%d" % [("✓" if seen else "○"),cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(cls,"ROAD")),rarity,int(up.engine),int(up.handling),int(up.brake)],HORIZONTAL_ALIGNMENT_LEFT,850,14,Color("#8de9aa") if seen else Color("#c7d6de"))
+            y+=45
+        y+=25
+        draw_string(ThemeDB.fallback_font,Vector2(80,y),"MEILENSTEINE",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffd36b"))
+        y+=42
+        var milestones := [
+            ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Signal Hunter","signals_10"],["Spectrum Archivist","signals_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
+            ["Urban Explorer","districts_15"],["Every District","districts_all"],["Security Runner","hacks_8"],["Security Master","hacks_all"],["Street Trialist","races_3"],["City Circuit","races_all"],["City Professional","jobs_10"],["City Professional II","jobs_25"],["Photo Virtuoso","photos_score"],["Tuning Specialist","tuning_12"],
+            ["City Regular","citylife_4"],["Local Pulse","citylife_8"],["Megacity Insider","citylife_all"]
+        ]
+        var start_y:=y
+        for mi in range(milestones.size()):
+            var m=milestones[mi]
+            var done:=bool(milestones_claimed.get(str(m[1]),false))
+            var col:=mi%2
+            var row:=int(mi/2)
+            var mx:=92.0+float(col)*430.0
+            var my:=start_y+float(row)*38.0
+            draw_string(ThemeDB.fallback_font,Vector2(mx,my),"%s %s" % [("✓" if done else "○"),str(m[0])],HORIZONTAL_ALIGNMENT_LEFT,405,14,Color("#8de9aa") if done else Color("#b5c4ca"))
 
-    y+=12
-    draw_string(ThemeDB.fallback_font,Vector2(80,y),"MEILENSTEINE",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffd36b"))
-    y+=38
-    var milestones := [
-        ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Signal Hunter","signals_10"],["Spectrum Archivist","signals_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
-        ["Urban Explorer","districts_15"],["Every District","districts_all"],["Security Runner","hacks_8"],["Security Master","hacks_all"],["Street Trialist","races_3"],["City Circuit","races_all"],["City Professional","jobs_10"],["City Professional II","jobs_25"],["Photo Virtuoso","photos_score"],["Tuning Specialist","tuning_12"],
-        ["City Regular","citylife_4"],["Local Pulse","citylife_8"],["Megacity Insider","citylife_all"]
-    ]
-    var milestone_start_y := y
-    for mi in range(milestones.size()):
-        var m = milestones[mi]
-        var done: bool = bool(milestones_claimed.get(str(m[1]),false))
-        var col_index := mi%2
-        var row_index := int(mi/2)
-        var mx := 92.0+float(col_index)*430.0
-        var my := milestone_start_y+float(row_index)*29.0
-        draw_string(ThemeDB.fallback_font,Vector2(mx,my),"%s %s" % [("✓" if done else "○"),str(m[0])],HORIZONTAL_ALIGNMENT_LEFT,405,14,Color("#8de9aa") if done else Color("#b5c4ca"))
-    draw_string(ThemeDB.fallback_font,Vector2(72,2030),"COLLECTION erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
+    draw_string(ThemeDB.fallback_font,Vector2(95,1900),"◀  VORHERIGE",HORIZONTAL_ALIGNMENT_LEFT,300,18,Color("#ffb3e6") if collection_page>0 else Color(0.4,0.5,0.55,0.45))
+    draw_string(ThemeDB.fallback_font,Vector2(685,1900),"NÄCHSTE  ▶",HORIZONTAL_ALIGNMENT_RIGHT,300,18,Color("#ffb3e6") if collection_page<2 else Color(0.4,0.5,0.55,0.45))
+    draw_string(ThemeDB.fallback_font,Vector2(72,1960),"Unten links/rechts tippen zum Blättern · COLLECTION erneut zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,15,Color("#91a7b3"))
 
 func _total_npc_trust() -> int:
     var total := 0
@@ -7033,25 +7196,33 @@ func _draw_missions_overlay() -> void:
     var screen := get_viewport_rect().size
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#9ad5ff"),false,2.0)
+    var per_page := 14
+    var page_count := maxi(1,int(ceil(float(native_chapters.size())/float(per_page))))
+    missions_page=clampi(missions_page,0,page_count-1)
     draw_string(ThemeDB.fallback_font,Vector2(72,220),"MISSIONEN",HORIZONTAL_ALIGNMENT_LEFT,600,30,Color.WHITE)
+    draw_string(ThemeDB.fallback_font,Vector2(765,220),"SEITE %d/%d" % [missions_page+1,page_count],HORIZONTAL_ALIGNMENT_RIGHT,205,18,Color("#9ad5ff"))
     draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Score %d · Stadtteile %d/%d · Hacks %d/%d · Rennen %d/%d · Jobs %d" % [photo_count,photo_points.size(),_photo_total_score(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),race_completed.size(),race_sites.size(),jobs_done],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
-    var y := 300.0
-    for i in range(native_chapters.size()):
-        var c: Dictionary = native_chapters[i]
-        var progress := _chapter_progress(c)
-        var goal := int(c.goal)
+
+    var start := missions_page*per_page
+    var finish := mini(native_chapters.size(),start+per_page)
+    var y := 315.0
+    for i in range(start,finish):
+        var chapter: Dictionary = native_chapters[i]
+        var progress := _chapter_progress(chapter)
+        var goal := int(chapter.goal)
         var active := i==native_chapter
         var done := progress>=goal
         var bg := Color(0.14,0.29,0.34,0.58) if active else Color(0.08,0.13,0.16,0.62)
-        draw_rect(Rect2(70,y-24,930,72),bg,true)
-        draw_rect(Rect2(70,y-24,930,72),Color("#73f3ce") if active else Color(1,1,1,0.08),false,1.5)
-        draw_string(ThemeDB.fallback_font,Vector2(86,y),"%02d  %s" % [i+1,str(c.title)],HORIZONTAL_ALIGNMENT_LEFT,620,17,Color("#73f3ce") if active else Color.WHITE)
+        draw_rect(Rect2(70,y-24,930,92),bg,true)
+        draw_rect(Rect2(70,y-24,930,92),Color("#73f3ce") if active else Color(1,1,1,0.08),false,1.5)
+        draw_string(ThemeDB.fallback_font,Vector2(86,y),"%02d  %s" % [i+1,str(chapter.title)],HORIZONTAL_ALIGNMENT_LEFT,620,17,Color("#73f3ce") if active else Color.WHITE)
         draw_string(ThemeDB.fallback_font,Vector2(710,y),("✓" if done else "%d/%d" % [progress,goal]),HORIZONTAL_ALIGNMENT_RIGHT,250,16,Color("#8de9aa") if done else Color("#c7d6de"))
-        draw_string(ThemeDB.fallback_font,Vector2(86,y+25),str(c.desc),HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#aebfc9"))
-        y += 82
-        if y > 1960:
-            break
-    draw_string(ThemeDB.fallback_font,Vector2(72,2030),"MISSIONS erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
+        draw_string(ThemeDB.fallback_font,Vector2(86,y+28),str(chapter.desc),HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#aebfc9"))
+        y += 108
+
+    draw_string(ThemeDB.fallback_font,Vector2(95,1900),"◀  VORHERIGE",HORIZONTAL_ALIGNMENT_LEFT,300,18,Color("#9ad5ff") if missions_page>0 else Color(0.4,0.5,0.55,0.45))
+    draw_string(ThemeDB.fallback_font,Vector2(685,1900),"NÄCHSTE  ▶",HORIZONTAL_ALIGNMENT_RIGHT,300,18,Color("#9ad5ff") if missions_page<page_count-1 else Color(0.4,0.5,0.55,0.45))
+    draw_string(ThemeDB.fallback_font,Vector2(72,1960),"Unten links/rechts tippen zum Blättern · MISSIONS erneut zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,15,Color("#91a7b3"))
 
 func _interact_property(index: int) -> void:
     if index<0 or index>=property_sites.size():
