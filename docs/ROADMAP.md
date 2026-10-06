@@ -67,3 +67,22 @@
 - More interactive micro-events with optional rewards
 - More NPC state changes tied to story and trust
 - Additional authored street sets and bespoke district set-pieces
+
+
+## Alpha 1.11 — street life & district ambience
+- District-specific synthesized ambient sound profiles
+- Separate rain/storm ambience layers
+- Interactive versions of all 12 rotating micro-events
+- Persistent City Reputation and three city-life mastery milestones
+- Stronger district-entry identity messaging
+- Weather-reactive pedestrian umbrellas and richer idle behavior
+- More vehicle visual variants and wet-road spray
+- Two-column milestone presentation for the expanded progression list
+
+### Next quality targets
+- authored ambient one-shots and proximity audio for transit, markets and machinery
+- more micro-event interaction branches and occasional chained side objectives
+- district-specific pedestrian clothing/accessory pools
+- more bespoke vehicle silhouettes and service/emergency archetypes
+- richer landmark-specific 3D Photo Hunt geometry and occlusion
+- scrollable or paged long-form collection / mission overlays
