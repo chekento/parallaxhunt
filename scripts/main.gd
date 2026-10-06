@@ -83,6 +83,8 @@ var photo_drag_touch: int = -1
 var photo_drag_last := Vector2.ZERO
 var photo_viewport: SubViewport
 var photo_view_rect: TextureRect
+var photo_ui_layer: CanvasLayer
+var photo_crosshair: Label
 var photo_world_root: Node3D
 var photo_camera: Camera3D
 var photo_target_label: Label
@@ -93,6 +95,7 @@ var photo_hint_button: Button
 var photo_zoom_in_button: Button
 var photo_zoom_out_button: Button
 var photo_dynamic_cars: Dictionary = {}
+var photo_dynamic_peds: Dictionary = {}
 var scan_points: Array = []
 var scan_collect_count: int = 0
 var visited_districts: Dictionary = {}
@@ -1446,8 +1449,9 @@ func _haptic(duration_ms: int = 45) -> void:
         Input.vibrate_handheld(duration_ms)
 
 func _build_photo_3d_system() -> void:
+    var screen_size := get_viewport_rect().size
     photo_viewport=SubViewport.new()
-    photo_viewport.size=Vector2i(1080,2340)
+    photo_viewport.size=Vector2i(maxi(640,int(screen_size.x)),maxi(960,int(screen_size.y)))
     photo_viewport.render_target_update_mode=SubViewport.UPDATE_ALWAYS
     photo_viewport.transparent_bg=false
     add_child(photo_viewport)
@@ -1481,16 +1485,34 @@ func _build_photo_3d_system() -> void:
 
     photo_view_rect=TextureRect.new()
     photo_view_rect.position=Vector2.ZERO
-    photo_view_rect.size=Vector2(1080,2340)
+    photo_view_rect.size=screen_size
     photo_view_rect.texture=photo_viewport.get_texture()
     photo_view_rect.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
     photo_view_rect.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
     photo_view_rect.visible=false
     photo_view_rect.mouse_filter=Control.MOUSE_FILTER_IGNORE
     var layer := CanvasLayer.new()
-    layer.layer=10
+    layer.layer=30
     add_child(layer)
     layer.add_child(photo_view_rect)
+
+    photo_ui_layer=CanvasLayer.new()
+    photo_ui_layer.layer=40
+    add_child(photo_ui_layer)
+    for ctrl in [photo_target_label,photo_status_label,photo_shutter_button,photo_exit_button,photo_hint_button,photo_zoom_in_button,photo_zoom_out_button]:
+        ctrl.reparent(photo_ui_layer)
+
+    photo_crosshair=Label.new()
+    photo_crosshair.text="＋"
+    photo_crosshair.position=screen_size*0.5-Vector2(38,42)
+    photo_crosshair.size=Vector2(76,76)
+    photo_crosshair.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+    photo_crosshair.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
+    photo_crosshair.add_theme_font_size_override("font_size",42)
+    photo_crosshair.modulate=Color(1,1,1,0.82)
+    photo_crosshair.visible=false
+    photo_crosshair.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    photo_ui_layer.add_child(photo_crosshair)
 
 func _photo_clear_3d_scene() -> void:
     if photo_world_root==null:
@@ -1500,6 +1522,7 @@ func _photo_clear_3d_scene() -> void:
             continue
         child.queue_free()
     photo_dynamic_cars.clear()
+    photo_dynamic_peds.clear()
     photo_targets.clear()
 
 func _photo_material(color: Color, metallic: float = 0.0, roughness: float = 0.72) -> StandardMaterial3D:
@@ -1625,6 +1648,38 @@ func _photo_build_scene(index: int) -> void:
         if traffic_count>30:
             break
 
+    # Moving pedestrians are mirrored as simple 3D characters.
+    var ped_count: int = 0
+    for pi in range(pedestrians.size()):
+        var ped: Dictionary = pedestrians[pi]
+        var rd = roads[int(ped.road)]
+        var pp: Vector2 = _sample_polyline(rd.points,float(ped.t))
+        var tan := _polyline_tangent(rd.points,float(ped.t))
+        if bool(ped.reverse):
+            tan*=-1.0
+        var normal := Vector2(-tan.y,tan.x)
+        pp += normal*(float(rd.width)*0.5+18.0)*float(ped.side)
+        if pp.distance_to(center)>radius:
+            continue
+        var ped_root := Node3D.new()
+        ped_root.name="Ped_%d" % pi
+        photo_world_root.add_child(ped_root)
+        _photo_box("Body",Vector3(0,1.7,0),Vector3(0.8,2.0,0.6),Color(ped.color),ped_root)
+        var head_mesh := SphereMesh.new()
+        head_mesh.radius=0.48
+        head_mesh.height=0.96
+        var head_node := MeshInstance3D.new()
+        head_node.mesh=head_mesh
+        head_node.position=Vector3(0,3.1,0)
+        head_node.material_override=_photo_material(Color(ped.skin))
+        ped_root.add_child(head_node)
+        ped_root.position=_photo_local(pp,center,0.0)
+        ped_root.rotation.y=-tan.angle()+PI*0.5
+        photo_dynamic_peds[pi]=ped_root
+        ped_count+=1
+        if ped_count>22:
+            break
+
     _photo_spawn_targets(index,center)
 
 func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls: String, color: Color, center: Vector2, parent: Node3D = null) -> Node3D:
@@ -1685,6 +1740,8 @@ func _photo_spawn_targets(index: int, center: Vector2) -> void:
         photo_world_root.add_child(root)
         _photo_build_target_visual(root,str(t.kind),i)
         t["node"]=root
+        if bool(photo_found.get(str(t.key),false)):
+            root.visible=false
         photo_targets.append(t)
 
 func _photo_build_target_visual(root: Node3D, kind: String, variant: int) -> void:
@@ -1738,7 +1795,8 @@ func _start_photo_challenge(index: int) -> void:
         return
     active_photo_index=index
     photo_mode=true
-    photo_yaw=0.0
+    var initial_dir: Vector2 = Vector2(photo_points[index].dir).normalized()
+    photo_yaw=atan2(-initial_dir.x,-initial_dir.y)
     photo_pitch=-0.08
     photo_fov=68.0
     photo_drag_touch=-1
@@ -1751,6 +1809,14 @@ func _start_photo_challenge(index: int) -> void:
     photo_view_rect.visible=true
     _photo_update_camera()
     _photo_refresh_labels()
+    var already_complete := true
+    for t in photo_targets:
+        if not bool(photo_found.get(str(t.key),false)):
+            already_complete=false
+            break
+    if already_complete:
+        _complete_photo_challenge()
+        return
     _play_sfx("mission")
     _show_reward_popup("PHOTO CHALLENGE",str(photo_points[index].label)+"\nFinde und fotografiere alle versteckten Motive.",Color("#ffb3e6"))
 
@@ -1765,6 +1831,8 @@ func _exit_photo_mode() -> void:
 
 func _photo_show_ui(show: bool) -> void:
     photo_target_label.visible=show
+    if photo_crosshair!=null:
+        photo_crosshair.visible=show
     photo_status_label.visible=show
     photo_shutter_button.visible=show
     photo_exit_button.visible=show
@@ -1840,6 +1908,7 @@ func _photo_shutter() -> void:
     var score: int = int(60.0+framing*30.0+zoom_bonus*10.0)
     photo_found[key]=true
     photo_scores[key]=maxi(score,int(photo_scores.get(key,0)))
+    _save_game()
     _show_reward_popup("MOTIV GEFUNDEN","%s · %d/100" % [str(target.label),score],Color("#ffb3e6"))
     node.visible=false
     _photo_refresh_labels()
@@ -1866,6 +1935,8 @@ func _photo_refresh_labels() -> void:
         score_sum+=int(photo_scores.get(str(t.key),0))
     photo_target_label.text="%s\nMotive %d / %d · Score %d/300" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size(),score_sum]
     photo_status_label.text=("Noch suchen: "+", ".join(remaining)) if not remaining.is_empty() else "Alle Motive gefunden."
+    if photo_crosshair!=null:
+        photo_crosshair.modulate=Color("#73f3ce") if not _photo_center_target().is_empty() else Color(1,1,1,0.82)
 
 func _photo_hint() -> void:
     if not photo_mode:
@@ -1909,6 +1980,25 @@ func _update_photo_3d_scene(_delta: float) -> void:
         var wp: Vector2 = Vector2(tf.pos)
         node.position=_photo_local(wp,center,0.0)
         node.rotation.y=-Vector2(tf.tangent).angle()+PI*0.5
+
+    for key in photo_dynamic_peds.keys():
+        var pi: int = int(key)
+        if pi<0 or pi>=pedestrians.size():
+            continue
+        var pnode: Node3D = photo_dynamic_peds[key]
+        if not is_instance_valid(pnode):
+            continue
+        var ped: Dictionary = pedestrians[pi]
+        var rd = roads[int(ped.road)]
+        var pp: Vector2 = _sample_polyline(rd.points,float(ped.t))
+        var tan := _polyline_tangent(rd.points,float(ped.t))
+        if bool(ped.reverse):
+            tan*=-1.0
+        var normal := Vector2(-tan.y,tan.x)
+        pp += normal*(float(rd.width)*0.5+18.0)*float(ped.side)
+        pnode.position=_photo_local(pp,center,0.0)
+        pnode.rotation.y=-tan.angle()+PI*0.5
+        pnode.position.y=abs(sin(float(ped.phase)))*0.12
 
     # Add a subtle animation to photo targets.
     var time := Time.get_ticks_msec()/1000.0
