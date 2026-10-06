@@ -4417,6 +4417,9 @@ func _interact() -> void:
         _enter_interior("OpenAI HQ","openai_hq",Color("#f2f7f7"),player_pos)
         _advance_native_chapter()
         return
+    elif n.type == "hospital":
+        _enter_interior("Parallax Stadtklinikum","hospital",Color("#8fe7d7"),player_pos)
+        return
     elif n.type == "vertical":
         _enter_vertical(int(n.index))
         return
@@ -4623,11 +4626,14 @@ func _nearest_interactable() -> Dictionary:
             best = {"type":"storefront","index":si,"action":"ENTER"}
             bd = ds
     for l in landmarks:
-        if str(l.kind) == "openai_hq":
+        if str(l.kind) in ["openai_hq","hospital"]:
             var entrance: Vector2 = Vector2(l.pos) + Vector2(0,float(l.size.y)*0.5+48.0)
             var dl := player_pos.distance_to(entrance)
             if dl < 105.0 and dl < bd:
-                best = {"type":"openai_hq","action":"ENTER OPENAI HQ"}
+                if str(l.kind)=="hospital":
+                    best = {"type":"hospital","action":"STADTKLINIKUM"}
+                else:
+                    best = {"type":"openai_hq","action":"ENTER OPENAI HQ"}
                 bd = dl
     return best
 
@@ -6654,6 +6660,8 @@ func _toggle_interior_floor() -> void:
 func _interior_feature_pos() -> Vector2:
     if interior_kind == "openai_hq":
         return Vector2(interior_size.x*0.5,210 if interior_floor==0 else 285)
+    if interior_kind == "hospital":
+        return Vector2(interior_size.x*0.50,220 if interior_floor==0 else 275)
     if interior_kind in ["garage","workshop"]:
         return Vector2(interior_size.x*0.68,250)
     if interior_kind in ["restaurant","cafe"]:
@@ -6663,6 +6671,8 @@ func _interior_feature_pos() -> Vector2:
 func _interior_feature_message() -> String:
     if interior_kind == "openai_hq":
         return "Visitor lab display: multimodal research visualization active."
+    if interior_kind == "hospital":
+        return "Triage aktiv · Notaufnahme, Diagnostik und Beobachtung sind betriebsbereit."
     if interior_kind == "roof":
         return "Dach-Relay synchronisieren."
     if interior_kind == "sublevel":
@@ -6695,7 +6705,7 @@ func _draw_interior_scene() -> void:
     draw_line(origin+Vector2(650,90),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
     draw_line(origin+Vector2(250,470),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
     # Elevator / stairs for multi-level interiors.
-    if interior_kind in ["openai_hq","home","shop","restaurant","cafe"]:
+    if interior_kind in ["openai_hq","home","shop","restaurant","cafe","hospital"]:
         var lift := origin+_interior_elevator_pos()
         draw_rect(Rect2(lift-Vector2(32,24),Vector2(64,48)),Color(0.07,0.11,0.14,0.94),true)
         draw_rect(Rect2(lift-Vector2(32,24),Vector2(64,48)),Color(accent.r,accent.g,accent.b,0.48),false,2.0)
@@ -6712,6 +6722,8 @@ func _draw_interior_scene() -> void:
     draw_string(ThemeDB.fallback_font,exitp+Vector2(-32,-6),"EXIT",HORIZONTAL_ALIGNMENT_CENTER,64,12,Color.WHITE)
     if interior_kind == "openai_hq":
         _draw_openai_interior(origin,accent)
+    elif interior_kind == "hospital":
+        _draw_hospital_interior(origin,accent)
     elif interior_kind == "roof":
         _draw_roof_interior(origin,accent)
     elif interior_kind == "sublevel":
@@ -6787,6 +6799,8 @@ func _draw_interior_people(origin: Vector2) -> void:
         positions=[Vector2(335,250),Vector2(520,300),Vector2(700,220)]
     elif interior_kind=="openai_hq":
         positions=[Vector2(145,205),Vector2(330,330),Vector2(450,330),Vector2(570,330),Vector2(700,350)]
+    elif interior_kind=="hospital":
+        positions=[Vector2(155,205),Vector2(315,320),Vector2(430,320),Vector2(560,320),Vector2(710,230),Vector2(720,390)]
     elif interior_kind=="shop":
         positions=[Vector2(680,230),Vector2(340,355)]
     elif interior_kind=="home":
@@ -6807,6 +6821,8 @@ func _draw_interior_room_labels(origin: Vector2) -> void:
     var labels: Array = []
     if interior_kind=="openai_hq":
         labels=[["LOBBY",Vector2(70,105)],["VISITOR LAB",Vector2(350,105)],["RESEARCH PODS",Vector2(330,455)]]
+    elif interior_kind=="hospital":
+        labels=[["NOTAUFNAHME",Vector2(70,105)],["TRIAGE",Vector2(350,105)],["BEHANDLUNG",Vector2(650,105)],["BEOBACHTUNG",Vector2(330,455)]]
     elif interior_kind in ["garage","workshop"]:
         labels=[["SERVICE BAY",Vector2(300,105)],["TOOLS",Vector2(665,105)],["DIAGNOSTICS",Vector2(635,430)]]
     elif interior_kind in ["restaurant","cafe"]:
@@ -6817,6 +6833,34 @@ func _draw_interior_room_labels(origin: Vector2) -> void:
         labels=[["LIVING",Vector2(300,105)],["GARAGE",Vector2(665,105)],["PRIVATE",Vector2(320,445)]]
     for item in labels:
         draw_string(ThemeDB.fallback_font,origin+Vector2(item[1]),str(item[0]),HORIZONTAL_ALIGNMENT_LEFT,160,11,Color(0.72,0.84,0.88,0.62))
+
+func _draw_hospital_interior(origin: Vector2, accent: Color) -> void:
+    if interior_floor==0:
+        draw_rect(Rect2(origin+Vector2(285,92),Vector2(330,95)),Color("#dce8e7"),true)
+        draw_rect(Rect2(origin+Vector2(285,92),Vector2(330,95)),Color(accent.r,accent.g,accent.b,0.45),false,2.0)
+        draw_string(ThemeDB.fallback_font,origin+Vector2(360,122),"TRIAGE / REZEPTION",HORIZONTAL_ALIGNMENT_CENTER,180,13,Color("#24434a"))
+        var feature:=origin+_interior_feature_pos()
+        draw_circle(feature,40,Color(accent.r,accent.g,accent.b,0.08))
+        draw_rect(Rect2(feature-Vector2(7,28),Vector2(14,56)),Color("#3abf9f"),true)
+        draw_rect(Rect2(feature-Vector2(28,7),Vector2(56,14)),Color("#3abf9f"),true)
+        for k in range(4):
+            var seat:=origin+Vector2(320+float(k)*90,360)
+            draw_rect(Rect2(seat-Vector2(25,11),Vector2(50,22)),Color("#3b4c52"),true)
+            draw_line(seat+Vector2(-20,11),seat+Vector2(-20,22),Color("#617078"),2.0,true)
+            draw_line(seat+Vector2(20,11),seat+Vector2(20,22),Color("#617078"),2.0,true)
+        draw_rect(Rect2(origin+Vector2(70,145),Vector2(135,70)),Color("#213238"),true)
+        draw_string(ThemeDB.fallback_font,origin+Vector2(92,168),"NOTAUFNAHME",HORIZONTAL_ALIGNMENT_CENTER,92,11,Color("#dffbf4"))
+    else:
+        for bay in range(3):
+            var x:=310+float(bay)*150
+            draw_rect(Rect2(origin+Vector2(x-55,145),Vector2(110,180)),Color("#1d2b30"),true)
+            draw_rect(Rect2(origin+Vector2(x-55,145),Vector2(110,180)),Color(accent.r,accent.g,accent.b,0.26),false,2.0)
+            draw_rect(Rect2(origin+Vector2(x-38,245),Vector2(76,26)),Color("#dbe6e5"),true)
+            draw_line(origin+Vector2(x-38,271),origin+Vector2(x-38,292),Color("#75868b"),2.0,true)
+            draw_line(origin+Vector2(x+38,271),origin+Vector2(x+38,292),Color("#75868b"),2.0,true)
+            draw_circle(origin+Vector2(x+34,190),10,Color("#263940"))
+            draw_line(origin+Vector2(x+34,190),origin+Vector2(x+34,215),Color("#6bd5c0"),2.0,true)
+        draw_string(ThemeDB.fallback_font,origin+Vector2(350,390),"BEOBACHTUNG / DIAGNOSTIK",HORIZONTAL_ALIGNMENT_CENTER,240,13,Color("#dffbf4"))
 
 func _draw_openai_interior(origin: Vector2, accent: Color) -> void:
     if interior_floor==0:
@@ -7885,6 +7929,10 @@ func _use_interior_feature() -> void:
         _open_garage_menu()
     elif interior_kind=="home":
         _open_home_garage_menu()
+    elif interior_kind=="hospital":
+        energy=100.0
+        _play_sfx("collect")
+        _notify("Triage abgeschlossen · Energie vollständig regeneriert.")
     else:
         _play_sfx("collect")
         _notify(_interior_feature_message())
