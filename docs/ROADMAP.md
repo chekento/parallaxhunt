@@ -179,3 +179,27 @@
 - richer event audience behaviors: dispersal, applause, queues and photography
 - more environmental motion: flags, ventilation, traffic gantries and construction machinery
 - map activity filters and optional density controls for lower-end devices
+
+
+## Alpha 1.16 — city behavior
+- Per-stop waiting, arrivals and board/exit counts
+- Rush-hour and district-sensitive transit demand growth
+- Capacity-aware passenger redistribution between real stop queues and vehicles
+- Waiting-group visuals driven by actual stop demand
+- Free-pedestrian rain/storm shelter seeking
+- Shelter state persists until conditions improve
+- BFS-based multi-road response routes across the real junction graph
+- Route-aware response turns and automatic destination refresh
+- District-authored work shifts, campus edges, nightlife clusters and park picnics
+- Animated civic/harbor flags and industrial/data ventilation stacks
+- Mobile-oriented deterministic implementation without pathfinding/navmesh overhead
+
+### Next quality targets
+- transfer passengers between lines and model destination demand rather than only local boarding capacity
+- shelter seeking that can switch roads when the closest safe cover is not on the current corridor
+- incident-specific response destinations and multi-vehicle dispatch waves
+- more bespoke district scenes with object interaction rather than only authored animation
+- animated shop doors, delivery unloading, loading docks and café service loops
+- traffic density / crowd density controls in settings
+- performance telemetry for lower-end devices and dense weather/event combinations
+- stronger Photo Hunt anchoring to live world props and incident scenes
