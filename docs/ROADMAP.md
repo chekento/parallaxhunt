@@ -86,3 +86,25 @@
 - more bespoke vehicle silhouettes and service/emergency archetypes
 - richer landmark-specific 3D Photo Hunt geometry and occlusion
 - scrollable or paged long-form collection / mission overlays
+
+
+## Alpha 1.12 — open-world depth
+- Paged mission overlay for the expanded campaign
+- Three-page collection / long-term progression UI
+- Branching two-choice interactions for all rotating city micro-events
+- Persistent event choices and deeper City Reputation integration
+- Three new campaign chapters: Urban Pulse, Lokale Hände and Megacity Insider
+- Compass routing toward relevant live events during city-life chapters
+- Proximity event audio cues
+- District-specific pedestrian accessories and local visual identity
+- Bespoke 3D Photo Hunt geometry for Canal Rotunda, Civic Prism, Axis Library and Terminal Crown
+- Modal UI input lock for event/shop/workshop interactions
+
+### Next quality targets
+- more bespoke character silhouettes and animations, including sitting, chatting and crossing reactions
+- optional chained objectives that can emerge from live events
+- richer service/emergency vehicle archetypes and district-specific traffic mixes
+- authored transit, market and machinery audio cues with distance falloff
+- more landmark-specific Photo Hunt geometry and stronger occlusion-aware target placement
+- richer map filters and activity discovery layers
+- further mobile performance profiling on dense districts and bad-weather scenes
