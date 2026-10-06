@@ -574,6 +574,13 @@ func _build_native_gameplay_data() -> void:
         {"title":"Hack Replay","desc":"Wiederhole fünf Hacking-Terminals für Bonus-Credits.","kind":"hack_replays","goal":5},
         {"title":"Street Trials","desc":"Gewinne drei unterschiedliche Zeitprüfungen.","kind":"races","goal":3},
         {"title":"Tuning-Projekt","desc":"Kaufe drei Werkstatt-Upgrades für deine Fahrzeugklassen.","kind":"upgrades","goal":3},
+        {"title":"Signal Sweep","desc":"Scanne alle 25 Street Signals der Megacity.","kind":"scan_collect","goal":25},
+        {"title":"Photo Virtuoso","desc":"Erreiche insgesamt 4500 Framing-Punkte in den festen 3D-Foto-Challenges.","kind":"photo_score","goal":4500},
+        {"title":"City Circuit","desc":"Gewinne alle sechs Zeitprüfungen mindestens einmal.","kind":"races","goal":6},
+        {"title":"Security Master","desc":"Löse alle zwölf Hacking-Terminals.","kind":"hack_count","goal":12},
+        {"title":"District Complete","desc":"Besuche alle 25 Stadtteile.","kind":"districts","goal":25},
+        {"title":"Tuning Specialist","desc":"Investiere in zwölf Fahrzeug-Upgrades.","kind":"upgrades","goal":12},
+        {"title":"City Professional II","desc":"Schließe 25 Stadtaufträge ab.","kind":"jobs","goal":25},
         {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
     ]
     if shop_stock.is_empty():
@@ -723,8 +730,8 @@ func _generate_city() -> void:
             if district.style in ["glass", "center", "neon"]:
                 h += rng.randf_range(45, 165)
             var massing: String = ["slab","tower","terrace","courtyard"][rng.randi_range(0,3)]
-            var facade_mode: String = ["windows","striped","balconies","mixed"][rng.randi_range(0,3)]
-            var roof_mode: String = ["flat","utility","garden","pitched","solar"][rng.randi_range(0,4)]
+            var facade_mode: String = ["windows","striped","balconies","mixed","grid","arches","ribs","living"][rng.randi_range(0,7)]
+            var roof_mode: String = ["flat","utility","garden","pitched","solar","antenna","terrace"][rng.randi_range(0,6)]
             buildings.append({"rect":rect, "height":h, "wall":district.wall, "roof":district.roof, "accent":district.accent, "style":district.style, "seed":rng.randi(), "floors":maxi(2, int(h / 28.0)), "massing":massing, "facade":facade_mode, "roof_mode":roof_mode})
         var tree_count := 80 if district.style in ["green", "garden"] else 26
         for _j in range(tree_count):
@@ -901,6 +908,22 @@ func _generate_visual_props() -> void:
         var tg2 := _polyline_tangent(rd4.points,tt4)
         var nn2 := Vector2(-tg2.y,tg2.x)
         street_props.append({"type":"sign","pos":pp2-nn2*(float(rd4.width)*0.5+30.0),"rot":tg2.angle(),"tint":Color("#a8d8ec")})
+    # Extra street-life dressing for a less procedural, more game-like city.
+    var extra_types := ["planter","utility_box","cafe_table","construction_cone","hydrant"]
+    for i in range(54):
+        var eroad = roads[rng.randi_range(0,roads.size()-1)]
+        var et := rng.randf_range(0.06,0.94)
+        var ep := _sample_polyline(eroad.points,et)
+        var etan := _polyline_tangent(eroad.points,et)
+        var enorm := Vector2(-etan.y,etan.x)
+        var eside := -1.0 if i%2==0 else 1.0
+        var etype: String = str(extra_types[i%extra_types.size()])
+        street_props.append({
+            "type":etype,
+            "pos":ep+enorm*eside*(float(eroad.width)*0.5+45.0+rng.randf_range(0.0,34.0)),
+            "rot":etan.angle(),
+            "tint":_district_at(ep).get("accent",Color("#9ad5ff"))
+        })
     # Marked roadside parking bays on selected urban roads.
     for ri in range(mini(18,roads.size())):
         if ri%3==2:
@@ -1052,7 +1075,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.8"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.9"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -1589,6 +1612,8 @@ func _photo_material(color: Color, metallic: float = 0.0, roughness: float = 0.7
     mat.albedo_color=color
     mat.metallic=metallic
     mat.roughness=roughness
+    if color.a < 0.995:
+        mat.transparency=BaseMaterial3D.TRANSPARENCY_ALPHA
     return mat
 
 func _photo_box(name_text: String, pos: Vector3, size: Vector3, color: Color, parent: Node3D = photo_world_root) -> MeshInstance3D:
@@ -1654,6 +1679,9 @@ func _photo_build_scene(index: int) -> void:
         var size := Vector3(rect.size.x*0.10,h,rect.size.y*0.10)
         var body := _photo_box("Building_%d" % bi,local,size,Color(b.wall))
         var roof := _photo_box("Roof_%d" % bi,local+Vector3(0,h*0.52,0),Vector3(size.x*0.94,0.35,size.z*0.94),Color(b.roof))
+        var detail_limit: int = 18 if graphics_quality>=2 else 10
+        if built < detail_limit:
+            _photo_add_building_details(b,local,size,h,bi)
         built+=1
         if built>55:
             break
@@ -1766,6 +1794,47 @@ func _photo_build_scene(index: int) -> void:
 
     _photo_spawn_targets(index,center)
 
+func _photo_add_building_details(b: Dictionary, local: Vector3, size: Vector3, h: float, index: int) -> void:
+    var rows: int = clampi(int(h/3.2),2,5)
+    var cols_x: int = clampi(int(size.x/5.2),2,5)
+    var cols_z: int = clampi(int(size.z/5.2),2,5)
+    var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
+    var night_factor := 1.0-daylight
+    var seed_value: int = int(b.get("seed",index))
+    for row in range(rows):
+        var fy := (float(row)+0.75)/float(rows+0.5)
+        var y := local.y-h*0.42+fy*h*0.76
+        for col in range(cols_x):
+            if (seed_value+row*7+col*13)%5==0:
+                continue
+            var fx := (float(col)+0.5)/float(cols_x)-0.5
+            var x := local.x+fx*size.x*0.78
+            var warm: bool = (seed_value+row*11+col*17)%4==0
+            var pane := Color("#83c7da")
+            pane.a=0.50
+            if warm:
+                pane=Color(1.0,0.76,0.38,0.30+night_factor*0.58)
+            _photo_box("WinF_%d_%d_%d" % [index,row,col],Vector3(x,y,local.z-size.z*0.505),Vector3(maxf(0.65,size.x/float(cols_x)*0.46),0.72,0.12),pane)
+            _photo_box("WinB_%d_%d_%d" % [index,row,col],Vector3(x,y,local.z+size.z*0.505),Vector3(maxf(0.65,size.x/float(cols_x)*0.46),0.72,0.12),pane)
+        if row<4:
+            for col in range(cols_z):
+                if (seed_value+row*5+col*19)%6==0:
+                    continue
+                var fz := (float(col)+0.5)/float(cols_z)-0.5
+                var z := local.z+fz*size.z*0.76
+                var pane_side := Color("#75b9ce")
+                pane_side.a=0.42+night_factor*0.12
+                _photo_box("WinL_%d_%d_%d" % [index,row,col],Vector3(local.x-size.x*0.505,y,z),Vector3(0.12,0.70,maxf(0.62,size.z/float(cols_z)*0.42)),pane_side)
+                _photo_box("WinR_%d_%d_%d" % [index,row,col],Vector3(local.x+size.x*0.505,y,z),Vector3(0.12,0.70,maxf(0.62,size.z/float(cols_z)*0.42)),pane_side)
+    var facade: String = str(b.get("facade","windows"))
+    if facade in ["living","balconies"]:
+        _photo_box("FacadeGreen_%d" % index,Vector3(local.x,local.y-h*0.16,local.z-size.z*0.54),Vector3(size.x*0.62,0.34,0.48),Color("#4d8c5e"))
+    elif facade=="ribs":
+        for rib in range(-2,3):
+            _photo_box("FacadeRib_%d_%d" % [index,rib],Vector3(local.x+float(rib)*size.x*0.16,local.y,local.z-size.z*0.54),Vector3(0.22,h*0.86,0.32),Color(b.accent))
+    if str(b.get("roof_mode","flat"))=="antenna":
+        _photo_box("RoofMast_%d" % index,Vector3(local.x,local.y+h*0.62,local.z),Vector3(0.28,h*0.24,0.28),Color("#c3d0d5"))
+
 func _photo_make_landmark(l: Dictionary, center: Vector2) -> void:
     var lp: Vector2 = Vector2(l.pos)
     var kind: String = str(l.kind)
@@ -1846,6 +1915,16 @@ func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls:
     if cls in ["sport","hyper"]:
         body.scale.y=0.72
         cabin.scale.y=0.72
+    for axle in [-0.30,0.30]:
+        for side_sign in [-1.0,1.0]:
+            _photo_box(name_text+"_Wheel",Vector3(sz.x*float(axle),0.62,sz.y*0.54*float(side_sign)),Vector3(0.78,0.54,0.30),Color("#11171a"),root)
+    for side_sign in [-1.0,1.0]:
+        _photo_box(name_text+"_Head",Vector3(sz.x*0.50,1.18,sz.y*0.28*float(side_sign)),Vector3(0.14,0.28,0.38),Color("#ffe8a8"),root)
+        _photo_box(name_text+"_Tail",Vector3(-sz.x*0.50,1.16,sz.y*0.28*float(side_sign)),Vector3(0.14,0.26,0.34),Color("#ff5f65"),root)
+    if cls in ["sport","hyper"]:
+        _photo_box(name_text+"_Spoiler",Vector3(-sz.x*0.40,1.82,0),Vector3(0.22,0.18,sz.y*0.82),Color("#1b2428"),root)
+    elif cls=="pickup":
+        _photo_box(name_text+"_Bed",Vector3(-sz.x*0.28,1.35,0),Vector3(sz.x*0.34,0.35,sz.y*0.82),color.darkened(0.18),root)
     root.position=_photo_local(world_pos,center,0.0)
     root.rotation.y=-heading+PI*0.5
     return root
@@ -2740,7 +2819,9 @@ func _update_ui() -> void:
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
     elif not active_job.is_empty():
-        detail_label.text = "Stadtauftrag: %s · %d CR · Ziel auf Karte/Kompass." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0))]
+        var job_target := Vector2(active_job.get("target",Vector2.ZERO))
+        var job_distance := int(player_pos.distance_to(job_target)/10.0) if job_target!=Vector2.ZERO else 0
+        detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance]
     else:
         detail_label.text = "Links bewegen · rechts Perspektive · MAP/MISSIONS für Übersicht."
     var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
@@ -2751,7 +2832,9 @@ func _update_ui() -> void:
         mode = "Driving · %s · %s · %d km/h" % [drive_cls.capitalize(),group,speed_kmh]
     elif transit_riding >= 0 and transit_riding < transit_vehicles.size():
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
-    status_label.text = "%s · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,world_zoom,credits,int(energy),jobs_done]
+    var clock_h := int(floor(world_clock))
+    var clock_m := int(floor((world_clock-float(clock_h))*60.0))
+    status_label.text = "%s · %s · %02d:%02d · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,world_zoom,credits,int(energy),jobs_done]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
     interact_button.text = "INTERACT" if near.is_empty() else str(near.get("action","INTERACT"))
@@ -3182,9 +3265,39 @@ func _draw_roads() -> void:
             var t := float(k)/100.0
             var wp := _sample_polyline(pts,t)
             var tan := _polyline_tangent(pts,t)
-            var c := _project(wp,1.0)
-            draw_line(c-tan*14.0,c+tan*14.0,Color(0.92,0.89,0.72,0.48),3.0,true)
+            var cpos := _project(wp,1.0)
+            draw_line(cpos-tan*14.0,cpos+tan*14.0,Color(0.92,0.89,0.72,0.48),3.0,true)
+        _draw_road_surface_details(road)
     _draw_junction_overlays()
+
+func _draw_road_surface_details(road: Dictionary) -> void:
+    if graphics_quality<=0:
+        return
+    var pts: PackedVector2Array = road.points
+    var step: int = 19 if graphics_quality==1 else 13
+    for k in range(9,96,step):
+        var t := float(k)/100.0
+        var wp := _sample_polyline(pts,t)
+        if player_pos.distance_to(wp)>1900.0:
+            continue
+        var tan := _polyline_tangent(pts,t)
+        var normal := Vector2(-tan.y,tan.x)
+        var detail := _project(wp+normal*float(road.width)*0.17,1.2)
+        var variant := (k+int(road.width))%4
+        if variant==0:
+            draw_circle(detail,8.0,Color(0.08,0.11,0.13,0.52))
+            draw_arc(detail,6.5,0,TAU,14,Color(0.62,0.68,0.70,0.22),1.2,true)
+            draw_line(detail-tan*4.5,detail+tan*4.5,Color(0.55,0.60,0.62,0.18),1.0)
+        elif variant==1:
+            draw_line(detail-normal*8.0,detail+normal*8.0,Color(0.05,0.07,0.08,0.36),4.0,true)
+            for g in [-5.0,0.0,5.0]:
+                draw_line(detail-normal*7.0+tan*g,detail+normal*7.0+tan*g,Color(0.52,0.58,0.60,0.14),1.0)
+        elif variant==2:
+            var patch := PackedVector2Array([detail+Vector2(-10,-5),detail+Vector2(7,-8),detail+Vector2(12,4),detail+Vector2(-6,8)])
+            draw_colored_polygon(patch,Color(0.08,0.10,0.11,0.24))
+        else:
+            var edge := _project(wp-normal*float(road.width)*0.40,1.0)
+            draw_circle(edge,2.2,Color(0.90,0.78,0.48,0.40))
 
 func _draw_junction_overlays() -> void:
     for j in junctions:
@@ -3290,6 +3403,8 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
         cols = 3
     var face_alpha := clampf(height_vec.length()/70.0,0.0,1.0)
     var facade := str(b.get("facade","windows"))
+    var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
+    var night_factor := 1.0-daylight
     var window_color := Color("#ffdca0") if b.style in ["heritage","harbor","terminal"] else Color("#9cddff")
     if b.style == "neon":
         window_color = b.accent.lightened(0.12)
@@ -3307,18 +3422,40 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
             var center := _quad_bilerp(a,bb,c,d,u,v0)
             var along := (bb-a).normalized() * clampf(face_len / float(cols) * 0.18,5.0,10.0)
             var up := (d-a).normalized() * 3.5
+            var pane_color: Color = window_color
+            if (int(b.seed)+row*11+col*17+edge*5)%5==0:
+                pane_color=Color(1.0,0.78,0.43,0.18+night_factor*0.52)
             if facade == "striped":
-                draw_line(center-along,center+along,window_color,2.8)
+                draw_line(center-along,center+along,pane_color,2.8)
             elif facade == "balconies":
-                var balcony_color := Color(window_color.r,window_color.g,window_color.b,0.10)
+                var balcony_color := Color(pane_color.r,pane_color.g,pane_color.b,0.10+night_factor*0.08)
                 var bp := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
                 draw_colored_polygon(bp,balcony_color)
                 draw_line(center-along*1.15+up,center+along*1.15+up,Color(1,1,1,0.12),1.1)
+            elif facade == "grid":
+                var gp := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
+                draw_colored_polygon(gp,pane_color)
+                draw_line(center-up,center+up,Color(0.88,0.96,1.0,0.12),1.0)
+                draw_line(center-along,center+along,Color(0.88,0.96,1.0,0.10),1.0)
+            elif facade == "arches":
+                var ap := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
+                draw_colored_polygon(ap,pane_color)
+                draw_arc(center-up*0.55,along.length()*0.62,PI,TAU,10,Color(pane_color.r,pane_color.g,pane_color.b,0.72),1.3,true)
+            elif facade == "ribs":
+                draw_line(center-up*1.2,center+up*1.2,pane_color,3.0)
+            elif facade == "living":
+                var lp := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
+                draw_colored_polygon(lp,pane_color)
+                draw_line(center-along*0.95+up*1.25,center+along*0.95+up*1.25,Color(0.38,0.75,0.43,0.48),2.4)
             else:
                 var wpoly := PackedVector2Array([center-along-up,center+along-up,center+along+up,center-along+up])
-                draw_colored_polygon(wpoly,window_color)
+                draw_colored_polygon(wpoly,pane_color)
                 if facade == "mixed" and (row+col+edge+int(b.seed)) % 3 == 0:
                     draw_line(center-along*0.8,center+along*0.8,Color(1,1,1,0.12),1.0)
+    if facade=="ribs":
+        for u_i in range(1,6):
+            var uu := float(u_i)/6.0
+            draw_line(a.lerp(bb,uu),d.lerp(c,uu),Color(b.accent.r,b.accent.g,b.accent.b,0.16),2.2)
     if b.style == "heritage":
         var sill := a.lerp(d,0.18)
         draw_line(sill,bb.lerp(c,0.18),Color("#e5b889"),2.0)
@@ -3327,8 +3464,11 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
         for u_i in range(1,4):
             var uu := float(u_i)/4.0
             draw_line(a.lerp(bb,uu),d.lerp(c,uu),Color(0.65,0.90,1.0,0.10+face_alpha*0.08),1.5)
+        if night_factor>0.35:
+            draw_line(a.lerp(d,0.42),bb.lerp(c,0.42),Color(0.42,0.82,1.0,0.08+night_factor*0.12),2.0)
     elif b.style == "neon":
-        draw_line(a.lerp(d,0.55),bb.lerp(c,0.55),Color(b.accent.r,b.accent.g,b.accent.b,0.55),2.5)
+        var pulse := 0.70+0.30*sin(Time.get_ticks_msec()/520.0+float(int(b.seed)%31))
+        draw_line(a.lerp(d,0.55),bb.lerp(c,0.55),Color(b.accent.r,b.accent.g,b.accent.b,0.40+0.22*pulse),2.5)
     elif b.style in ["green","garden"]:
         draw_line(a.lerp(d,0.32),bb.lerp(c,0.32),Color(0.48,0.83,0.55,0.34),3.0)
 
@@ -3354,6 +3494,15 @@ func _draw_roof_detail(b: Dictionary, top: Array) -> void:
         draw_circle(center+Vector2(-12,0),9,Color(0.28,0.58,0.34,0.75))
         draw_circle(center+Vector2(11,2),8,Color(0.35,0.68,0.40,0.72))
         draw_rect(Rect2(center+Vector2(-4,-12),Vector2(8,24)),Color(0.58,0.44,0.29,0.55),true)
+    if roof_mode == "antenna":
+        draw_line(center,center+Vector2(0,-34),Color("#b8c7cd"),2.2,true)
+        draw_line(center+Vector2(0,-18),center+Vector2(13,-12),Color(b.accent.r,b.accent.g,b.accent.b,0.48),1.5,true)
+        draw_circle(center+Vector2(0,-35),3.0,Color(b.accent.r,b.accent.g,b.accent.b,0.72))
+    elif roof_mode == "terrace":
+        draw_rect(Rect2(center-Vector2(21,12),Vector2(42,24)),Color(0.08,0.13,0.15,0.42),true)
+        draw_rect(Rect2(center-Vector2(21,12),Vector2(42,24)),Color(1,1,1,0.12),false,1.2)
+        draw_circle(center+Vector2(-11,0),5,Color(0.31,0.62,0.38,0.78))
+        draw_circle(center+Vector2(12,2),4,Color(0.42,0.70,0.43,0.70))
     if style == "harbor":
         draw_rect(Rect2(center-Vector2(18,7),Vector2(36,14)),Color(0.16,0.20,0.22,0.85),true)
         draw_line(center+Vector2(15,-3),center+Vector2(15,-22),Color("#ffb66f"),2.0)
@@ -3907,6 +4056,38 @@ func _draw_street_props() -> void:
             draw_line(sg,sg+Vector2(0,-22),Color("#68757c"),2.5,true)
             draw_circle(sg+Vector2(0,-28),8,Color("#244858"))
             draw_arc(sg+Vector2(0,-28),8,0,TAU,16,Color(p.tint.r,p.tint.g,p.tint.b,0.8),2.0,true)
+        elif p.type == "planter":
+            var pl := _project(p.pos,4)
+            draw_rect(Rect2(pl-Vector2(14,6),Vector2(28,12)),Color("#604d3d"),true)
+            draw_rect(Rect2(pl-Vector2(14,6),Vector2(28,12)),Color(1,1,1,0.12),false,1.0)
+            draw_circle(pl+Vector2(-7,-8),7,Color("#4d8f5b"))
+            draw_circle(pl+Vector2(5,-10),8,Color("#63a66c"))
+            draw_circle(pl+Vector2(10,-5),5,Color(p.tint.r,p.tint.g,p.tint.b,0.55))
+        elif p.type == "utility_box":
+            var ub := _project(p.pos,10)
+            draw_rect(Rect2(ub-Vector2(10,13),Vector2(20,26)),Color("#435159"),true)
+            draw_rect(Rect2(ub-Vector2(10,13),Vector2(20,26)),Color(p.tint.r,p.tint.g,p.tint.b,0.34),false,1.4)
+            draw_line(ub+Vector2(-6,-4),ub+Vector2(6,-4),Color(1,1,1,0.16),1.0)
+            draw_circle(ub+Vector2(5,6),1.8,Color("#ffd36b"))
+        elif p.type == "cafe_table":
+            var ct := _project(p.pos,5)
+            draw_circle(ct,10,Color("#6f5a48"))
+            draw_circle(ct,11,Color(1,1,1,0.12),false,1.0)
+            draw_line(ct,ct+Vector2(0,12),Color("#4d5960"),2.0)
+            for a in [0.0,PI*0.5,PI,PI*1.5]:
+                var dir := Vector2.from_angle(float(a))
+                draw_circle(ct+dir*20,6,Color("#37434a"))
+        elif p.type == "construction_cone":
+            var co := _project(p.pos,6)
+            var cone := PackedVector2Array([co+Vector2(-7,8),co+Vector2(7,8),co+Vector2(3,-9),co+Vector2(-3,-9)])
+            draw_colored_polygon(cone,Color("#e77e36"))
+            draw_line(co+Vector2(-5,2),co+Vector2(5,2),Color("#f7e7cf"),2.5)
+            draw_line(co+Vector2(-10,9),co+Vector2(10,9),Color("#374148"),3.0)
+        elif p.type == "hydrant":
+            var hy := _project(p.pos,7)
+            draw_rect(Rect2(hy-Vector2(5,8),Vector2(10,16)),Color("#bb4d4e"),true)
+            draw_circle(hy+Vector2(0,-9),6,Color("#d45f5f"))
+            draw_line(hy+Vector2(-9,-1),hy+Vector2(9,-1),Color("#8f3c3d"),3.0,true)
         elif p.type == "wind_turbine":
             _draw_world_prop_wind(p)
         elif p.type == "runway_light":
@@ -5837,7 +6018,7 @@ func _open_jobboard(index: int) -> void:
     if index<0 or index>=side_job_sites.size():
         return
     var source: Vector2 = Vector2(side_job_sites[index].pos)
-    var type_roll: int = (jobs_done+index+rng.randi_range(0,4))%5
+    var type_roll: int = (jobs_done+index+rng.randi_range(0,6))%7
     if type_roll==0:
         var targets := [Vector2(23800,1600),Vector2(13200,6150),Vector2(7900,12600),Vector2(18400,9100),Vector2(4200,15100),Vector2(23200,15100)]
         var target: Vector2 = targets[rng.randi_range(0,targets.size()-1)]
@@ -5847,19 +6028,32 @@ func _open_jobboard(index: int) -> void:
     elif type_roll==1:
         var photo_target := _next_photo_target()
         if photo_target==Vector2.ZERO:
-            photo_target=Vector2(9000,3560)
-        active_job={"kind":"photo","title":"PMDD-Fotosurvey","target":photo_target,"start":photo_count,"goal":1,"pay":95}
+            var replay_target := _next_hack_replay_target()
+            active_job={"kind":"hack_replay","title":"Media Security Audit","target":replay_target,"start":hack_replays,"goal":1,"pay":108}
+        else:
+            active_job={"kind":"photo","title":"PMDD-Fotosurvey","target":photo_target,"start":photo_count,"goal":1,"pay":95}
     elif type_roll==2:
         var hack_target := _next_hack_replay_target()
         active_job={"kind":"hack_replay","title":"Security Regression Test","target":hack_target,"start":hack_replays,"goal":1,"pay":105}
     elif type_roll==3:
         active_job={"kind":"transit","title":"ÖPNV Qualitätscheck","target":_nearest_transit_stop_pos(source),"start":transit_trip_count,"goal":1,"pay":75}
-    else:
+    elif type_roll==4:
         var unvisited := _next_unvisited_district_center()
         if unvisited==Vector2.ZERO:
-            unvisited=Vector2(18400,9100)
+            var fallback_district: Dictionary = districts[(jobs_done+index)%districts.size()]
+            unvisited=Vector2((fallback_district.rect as Rect2).get_center())
         active_job={"kind":"district","title":"District Survey","target":unvisited,"goal":1,"pay":90}
+    elif type_roll==5:
+        var signal_target := _next_signal_job_target()
+        if signal_target==Vector2.ZERO:
+            var replay_target := _next_hack_replay_target()
+            active_job={"kind":"hack_replay","title":"Fallback Security Audit","target":replay_target,"start":hack_replays,"goal":1,"pay":110}
+        else:
+            active_job={"kind":"signal","title":"Street-Signal Survey","target":signal_target,"start":scan_collect_count,"goal":1,"pay":88}
+    else:
+        active_job={"kind":"race","title":"Timed Mobility Audit","target":_next_race_job_target(),"start":race_wins,"goal":1,"pay":128}
     _play_sfx("mission")
+    _show_reward_popup("STADTAUFTRAG",str(active_job.title)+"\nBelohnung: %d CR" % int(active_job.pay),Color("#8de9aa"))
     _notify("%s angenommen · %d CR" % [str(active_job.title),int(active_job.pay)])
     _save_game()
 
@@ -5891,6 +6085,20 @@ func _next_hack_replay_target() -> Vector2:
             return Vector2(m.pos)
     return Vector2.ZERO
 
+func _next_signal_job_target() -> Vector2:
+    for sp in scan_points:
+        if not bool(sp.taken):
+            return Vector2(sp.pos)
+    return Vector2.ZERO
+
+func _next_race_job_target() -> Vector2:
+    for rr in race_sites:
+        if not bool(race_completed.get(str(rr.id),false)):
+            return Vector2(rr.pos)
+    if race_sites.is_empty():
+        return Vector2.ZERO
+    return Vector2(race_sites[(jobs_done+race_wins)%race_sites.size()].pos)
+
 func _nearest_transit_stop_pos(from: Vector2) -> Vector2:
     var best: float = INF
     var out := Vector2.ZERO
@@ -5916,7 +6124,7 @@ func _check_active_job_progress() -> void:
     var done: bool = false
     if kind=="photo":
         done=(photo_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
-        if not done:
+        if not done and photo_count<photo_points.size():
             active_job["target"]=_next_photo_target()
     elif kind=="hack_replay":
         done=(hack_replays-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
@@ -5926,6 +6134,14 @@ func _check_active_job_progress() -> void:
         done=(transit_trip_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
     elif kind=="district":
         done=player_pos.distance_to(Vector2(active_job.get("target",Vector2.ZERO)))<260.0
+    elif kind=="signal":
+        done=(scan_collect_count-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
+        if not done:
+            active_job["target"]=_next_signal_job_target()
+    elif kind=="race":
+        done=(race_wins-int(active_job.get("start",0)))>=int(active_job.get("goal",1))
+        if not done and active_race.is_empty():
+            active_job["target"]=_next_race_job_target()
     if done:
         _complete_side_job()
 
@@ -6076,12 +6292,18 @@ func _check_milestones() -> void:
         ["signals_10",scan_collect_count>=10,90,"Signal Hunter"],
         ["signals_all",scan_collect_count>=scan_points.size() and scan_points.size()>0,220,"Spectrum Archivist"],
         ["photos_all",photo_count>=photo_points.size() and photo_points.size()>0,260,"Photo Master"],
+        ["photos_score",_photo_total_score()>=4500,300,"Photo Virtuoso"],
         ["cars_5",driven_classes.size()>=5,75,"Class Explorer"],
         ["cars_all",driven_classes.size()>=VEHICLE_CLASSES.size(),220,"Full Garage"],
         ["districts_15",visited_districts.size()>=15,85,"Urban Explorer"],
+        ["districts_all",visited_districts.size()>=districts.size() and districts.size()>0,220,"Every District"],
         ["hacks_8",_completed_hack_count()>=8,90,"Security Runner"],
+        ["hacks_all",_completed_hack_count()>=mission_sites.size() and mission_sites.size()>0,230,"Security Master"],
         ["races_3",race_completed.size()>=3,110,"Street Trialist"],
-        ["jobs_10",jobs_done>=10,120,"City Professional"]
+        ["races_all",race_completed.size()>=race_sites.size() and race_sites.size()>0,240,"City Circuit"],
+        ["jobs_10",jobs_done>=10,120,"City Professional"],
+        ["jobs_25",jobs_done>=25,260,"City Professional II"],
+        ["tuning_12",_total_upgrade_count()>=12,210,"Tuning Specialist"]
     ]
     for m in milestones:
         var id := str(m[0])
@@ -6103,6 +6325,10 @@ func _current_objective_pos() -> Vector2:
     var contract_target := _npc_contract_target()
     if contract_target!=Vector2.ZERO:
         return contract_target
+    if not active_job.is_empty():
+        var job_target := Vector2(active_job.get("target",Vector2.ZERO))
+        if job_target!=Vector2.ZERO:
+            return job_target
     if native_chapters.is_empty():
         return Vector2.ZERO
     var c: Dictionary = native_chapters[mini(native_chapter,native_chapters.size()-1)]
@@ -6318,6 +6544,7 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="property": return 1 if owned_property!="" else 0
     if kind=="stored_car": return 1 if owned_cars.size()>0 else 0
     if kind=="photo": return mini(photo_count,int(c.goal))
+    if kind=="photo_score": return mini(_photo_total_score(),int(c.goal))
     if kind=="vehicles": return mini(driven_classes.size(),int(c.goal))
     if kind=="districts": return mini(visited_districts.size(),int(c.goal))
     if kind=="hack_count": return mini(_completed_hack_count(),int(c.goal))
@@ -6328,6 +6555,12 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="races": return mini(race_completed.size(),int(c.goal))
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
     return 1
+
+func _photo_total_score() -> int:
+    var total := 0
+    for key in photo_scores.keys():
+        total+=int(photo_scores[key])
+    return total
 
 func _photo_spot_score(id: String) -> int:
     var total := 0
@@ -6388,7 +6621,7 @@ func _draw_collection_overlay() -> void:
     y+=38
     var milestones := [
         ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Signal Hunter","signals_10"],["Spectrum Archivist","signals_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
-        ["Urban Explorer","districts_15"],["Security Runner","hacks_8"],["Street Trialist","races_3"],["City Professional","jobs_10"]
+        ["Urban Explorer","districts_15"],["Every District","districts_all"],["Security Runner","hacks_8"],["Security Master","hacks_all"],["Street Trialist","races_3"],["City Circuit","races_all"],["City Professional","jobs_10"],["City Professional II","jobs_25"],["Photo Virtuoso","photos_score"],["Tuning Specialist","tuning_12"]
     ]
     for m in milestones:
         var done: bool = bool(milestones_claimed.get(str(m[1]),false))
@@ -6407,7 +6640,7 @@ func _draw_missions_overlay() -> void:
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#9ad5ff"),false,2.0)
     draw_string(ThemeDB.fallback_font,Vector2(72,220),"MISSIONEN",HORIZONTAL_ALIGNMENT_LEFT,600,30,Color.WHITE)
-    draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Fahrzeuge %d/%d · Stadtteile %d/%d · Hacks %d/%d · Rennen %d · Tuning %d" % [photo_count,photo_points.size(),driven_classes.size(),VEHICLE_CLASSES.size(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),race_wins,_total_upgrade_count()],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
+    draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Score %d · Stadtteile %d/%d · Hacks %d/%d · Rennen %d/%d · Jobs %d" % [photo_count,photo_points.size(),_photo_total_score(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),race_completed.size(),race_sites.size(),jobs_done],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
     var y := 300.0
     for i in range(native_chapters.size()):
         var c: Dictionary = native_chapters[i]
@@ -6461,11 +6694,31 @@ func _advance_native_chapter() -> void:
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
     var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
-    var night_alpha := lerpf(0.28,0.04,daylight)
+    var night_alpha := lerpf(0.30,0.035,daylight)
     draw_rect(Rect2(Vector2.ZERO,size),Color(0.025,0.055,0.12,night_alpha))
-    var edge_alpha := 0.12
-    draw_rect(Rect2(0,0,size.x,70),Color(0,0,0,edge_alpha))
-    draw_rect(Rect2(0,size.y-90,size.x,90),Color(0,0,0,edge_alpha))
+    var dusk := maxf(0.0,1.0-abs(world_clock-19.25)/2.25)
+    var dawn := maxf(0.0,1.0-abs(world_clock-6.25)/1.65)
+    var warm := maxf(dusk,dawn)
+    if warm>0.0:
+        draw_rect(Rect2(Vector2.ZERO,size),Color(0.42,0.18,0.07,0.035*warm))
+    if scan_time>0.0 and not interior_active:
+        var scan_strength := clampf(scan_time/1.8,0.0,1.0)
+        var radius := lerpf(70.0,minf(size.x,size.y)*0.46,1.0-scan_strength)
+        draw_arc(size*0.5,radius,0,TAU,72,Color(0.35,0.95,0.86,0.13*scan_strength),3.0,true)
+        draw_arc(size*0.5,radius+18.0,0,TAU,72,Color(0.35,0.75,1.0,0.07*scan_strength),1.5,true)
+    if current_vehicle>=0 and abs(vehicle_velocity)>float(VEHICLE_SPEEDS.get(str(parked_cars[current_vehicle]["class"]),420.0))*0.62:
+        var speed_strength := clampf(abs(vehicle_velocity)/maxf(1.0,float(VEHICLE_SPEEDS.get(str(parked_cars[current_vehicle]["class"]),420.0)))-0.55,0.0,0.45)
+        for i in range(12):
+            var yy := fposmod(float(i*181)+float(Time.get_ticks_msec())*0.055,size.y)
+            var left_side := i%2==0
+            var x0 := 22.0 if left_side else size.x-22.0
+            var dir := 1.0 if left_side else -1.0
+            draw_line(Vector2(x0,yy),Vector2(x0+dir*(32.0+float(i%4)*9.0),yy-12.0),Color(0.72,0.90,1.0,0.10+speed_strength*0.20),2.0,true)
+    var edge_alpha := 0.13
+    draw_rect(Rect2(0,0,size.x,72),Color(0,0,0,edge_alpha))
+    draw_rect(Rect2(0,size.y-92,size.x,92),Color(0,0,0,edge_alpha))
+    draw_rect(Rect2(0,0,18,size.y),Color(0,0,0,0.06))
+    draw_rect(Rect2(size.x-18,0,18,size.y),Color(0,0,0,0.06))
 
 func _draw_touch_controls() -> void:
     var size := get_viewport_rect().size
