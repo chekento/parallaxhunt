@@ -6388,6 +6388,18 @@ func _current_objective_pos() -> Vector2:
         if not property_sites.is_empty(): return Vector2(property_sites[0].pos)
     return Vector2.ZERO
 
+func _current_objective_label() -> String:
+    if not active_race.is_empty():
+        var rr: Dictionary = race_sites[int(active_race.index)]
+        return "RENNEN · %s" % str(rr.name)
+    if not active_npc_contract.is_empty():
+        return "VERTRAUEN · %s" % str(active_npc_contract.get("npc","NPC"))
+    if not active_job.is_empty():
+        return "JOB · %s" % str(active_job.get("title","Stadtauftrag"))
+    if native_chapters.is_empty():
+        return "ERKUNDUNG"
+    return str(native_chapters[mini(native_chapter,native_chapters.size()-1)].title)
+
 func _draw_mission_compass() -> void:
     if main_menu_active or map_open or missions_open or interior_active:
         return
@@ -6405,8 +6417,16 @@ func _draw_mission_compass() -> void:
     var arrow := PackedVector2Array([Vector2(0,-18),Vector2(12,12),Vector2(0,7),Vector2(-12,12)])
     for i in range(arrow.size()):
         arrow[i]=arrow[i].rotated(angle)+center
-    draw_colored_polygon(arrow,Color("#73f3ce"))
-    draw_string(ThemeDB.fallback_font,center+Vector2(-90,38),"%d m · %s" % [int(distance/10.0),str(native_chapters[native_chapter].title)],HORIZONTAL_ALIGNMENT_CENTER,180,13,Color("#d9f5ef"))
+    var accent := Color("#73f3ce")
+    if not active_race.is_empty():
+        accent=Color("#ffd36b")
+    elif not active_job.is_empty():
+        accent=Color("#8de9aa")
+    elif not active_npc_contract.is_empty():
+        accent=Color("#ff9fe8")
+    draw_colored_polygon(arrow,accent)
+    var objective_label := _current_objective_label()
+    draw_string(ThemeDB.fallback_font,center+Vector2(-190,38),"%d m · %s" % [int(distance/10.0),objective_label],HORIZONTAL_ALIGNMENT_CENTER,380,13,Color("#d9f5ef"))
 
 func _toggle_map() -> void:
     if minigame_open or photo_mode:
