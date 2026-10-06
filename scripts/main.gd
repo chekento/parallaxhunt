@@ -3112,7 +3112,7 @@ func _crossing_vehicle_near(p: Dictionary, threshold: float = 85.0) -> bool:
     for car in traffic:
         if int(car.road)!=road_index:
             continue
-        var dt:=abs(float(car.t)-pt)
+        var dt: float=absf(float(car.t)-pt)
         dt=minf(dt,1.0-dt)
         if dt<0.020:
             var tr:=_traffic_world_transform(car)
@@ -3128,7 +3128,7 @@ func _traffic_has_crossing_hazard(car: Dictionary) -> bool:
         return false
     var car_t:=float(car.t)
     for cross_t in Array(active_crossings_by_road[road_index]):
-        var dt:=abs(float(cross_t)-car_t)
+        var dt: float=absf(float(cross_t)-car_t)
         dt=minf(dt,1.0-dt)
         if dt<0.018:
             return true
@@ -4408,14 +4408,14 @@ func _join_micro_event(index: int) -> void:
 func _event_followup_target(index: int, source: Vector2) -> Vector2:
     if junctions.is_empty():
         return Vector2.ZERO
-    var start:=abs(index*17+int(source.x/100.0)+int(source.y/100.0))%junctions.size()
-    var fallback:=Vector2.ZERO
+    var start: int=absi(index*17+int(source.x/100.0)+int(source.y/100.0))%junctions.size()
+    var fallback: Vector2=Vector2.ZERO
     for step in range(junctions.size()):
         var j: Dictionary=junctions[(start+step*7)%junctions.size()]
         if bool(j.get("bridge",false)):
             continue
-        var p:=Vector2(j.pos)
-        var dist:=source.distance_to(p)
+        var p: Vector2=Vector2(j.pos)
+        var dist: float=source.distance_to(p)
         if dist>900.0 and dist<5200.0:
             return p
         if fallback==Vector2.ZERO and dist>650.0:
