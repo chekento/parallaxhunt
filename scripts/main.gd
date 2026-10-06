@@ -64,6 +64,12 @@ var player_pos := Vector2(5200, 4200)
 var player_heading := 0.0
 var current_vehicle := -1
 var vehicle_velocity := 0.0
+var hospital_transition: float = 0.0
+var hospital_transition_total: float = 4.8
+var accident_cooldown: float = 0.0
+var accident_count: int = 0
+var last_accident_speed: float = 0.0
+var response_dispatch_slot: int = -1
 var view_touch := Vector2.ZERO
 var sensor_view := Vector2.ZERO
 var view_amount := Vector2.ZERO
@@ -264,6 +270,7 @@ func _ready() -> void:
     _generate_transit()
     _build_transit_stops()
     _build_social_setpieces()
+    _update_response_dispatches(true)
     _generate_collectibles()
     _build_ui()
     _build_photo_3d_system()
@@ -285,6 +292,11 @@ func _process(delta: float) -> void:
         world_clock = fposmod(world_clock + delta * 0.006,24.0)
         queue_redraw()
         return
+    accident_cooldown=maxf(0.0,accident_cooldown-delta)
+    if hospital_transition>0.0:
+        _update_hospital_transition(delta)
+        queue_redraw()
+        return
     if photo_mode:
         target_world_zoom = 1.0
     elif interior_active:
@@ -296,7 +308,9 @@ func _process(delta: float) -> void:
     world_zoom = lerpf(world_zoom,target_world_zoom,minf(1.0,delta*4.5))
     _update_player(delta)
     if not interior_active:
+        _update_response_dispatches()
         _update_traffic(delta)
+        _check_player_traffic_accident()
         _update_pedestrians(delta)
         _update_transit(delta)
     if photo_mode:
@@ -327,6 +341,8 @@ func _input(event: InputEvent) -> void:
         _input_photo_mode(event)
         return
     if main_menu_active:
+        return
+    if hospital_transition>0.0:
         return
     if commerce_panel.visible:
         move_vec=Vector2.ZERO
@@ -535,8 +551,21 @@ func _build_landmarks() -> void:
         {"name":"Garden Conservatory","district":"Gärten","pos":Vector2(3300,13500),"size":Vector2(640,520),"h":125.0,"kind":"conservatory","accent":Color("#9be993")},
         {"name":"Axis Library","district":"Universität","pos":Vector2(9300,13200),"size":Vector2(700,520),"h":175.0,"kind":"library","accent":Color("#b0c8ff")},
         {"name":"Astra Observatory","district":"Observatorium","pos":Vector2(15600,13650),"size":Vector2(620,540),"h":245.0,"kind":"observatory","accent":Color("#c3a6ff")},
-        {"name":"Terminal Crown","district":"Terminal East","pos":Vector2(22200,13900),"size":Vector2(820,520),"h":165.0,"kind":"terminal","accent":Color("#d9e5ef")}
+        {"name":"Terminal Crown","district":"Terminal East","pos":Vector2(22200,13900),"size":Vector2(820,520),"h":165.0,"kind":"terminal","accent":Color("#d9e5ef")},
+        {"name":"Parallax Stadtklinikum","district":"Bioquartier","pos":Vector2(14400,11950),"size":Vector2(820,560),"h":155.0,"kind":"hospital","accent":Color("#8fe7d7")}
     ]
+
+func _hospital_world_pos() -> Vector2:
+    for l in landmarks:
+        if str(l.get("kind",""))=="hospital":
+            return Vector2(l.pos)
+    return Vector2(14400,11950)
+
+func _hospital_spawn_pos() -> Vector2:
+    for l in landmarks:
+        if str(l.get("kind",""))=="hospital":
+            return Vector2(l.pos)+Vector2(0,float(Vector2(l.size).y)*0.5+105.0)
+    return _hospital_world_pos()+Vector2(0,385)
 
 func _landmark_rect(l: Dictionary) -> Rect2:
     return Rect2(l.pos - l.size * 0.5, l.size)
@@ -810,6 +839,9 @@ func _generate_city() -> void:
         var cls: String = _random_vehicle_class(true)
         parked_cars.append({"pos":p + normal * rng.randf_range(45,70), "class":cls, "heading":tangent.angle(), "color":_car_color(cls), "occupied":false})
 
+func _is_emergency_archetype(archetype: String) -> bool:
+    return archetype in ["response","ambulance"]
+
 func _vehicle_class_for_district(style: String) -> String:
     var pool: Array = ["micro","hatch","sedan","sedan","suv","van"]
     if style in ["heritage","garden","green","campus"]:
@@ -882,6 +914,23 @@ func _generate_traffic() -> void:
             "turn_anim":0.0,
             "turn_from":Vector2.ZERO,
             "turn_to":Vector2.ZERO
+        })
+    var hospital_pos:=_hospital_world_pos()
+    var hospital_road:=_nearest_road_index(hospital_pos)
+    for e in range(4):
+        var eroad: int=hospital_road if e<2 else (hospital_road+3+e*4)%roads.size()
+        var epos: Vector2=hospital_pos if eroad==hospital_road else _sample_polyline(roads[eroad].points,0.18+float(e)*0.12)
+        var et: float=_nearest_road_t_to_point(eroad,epos)
+        var earch: String="ambulance" if e<2 else "response"
+        var ecls: String="van" if earch=="ambulance" else "suv"
+        traffic.append({
+            "road":eroad,"t":et,"speed":0.020,"cruise":0.046 if earch=="ambulance" else 0.050,
+            "class":ecls,"archetype":earch,"response_route":_new_response_route(eroad),"response_route_index":0,
+            "response_target":Vector2.ZERO,"response_target_kind":"","response_target_id":"","response_dwell":0.0,
+            "emergency_id":e,"color":Color("#f1f6f6") if earch=="ambulance" else Color("#d7e2e8"),
+            "reverse":false,"lane":0,"wait":0.0,"turn_cooldown":0.0,"parking":false,"park_timer":0.0,
+            "lateral":0.0,"lane_change":0.0,"lane_from":0,"lane_to":0,"indicator":0,"turn_anim":0.0,
+            "turn_from":Vector2.ZERO,"turn_to":Vector2.ZERO
         })
     _generate_smart_agents()
 
@@ -1327,7 +1376,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.16"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.17"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2127,7 +2176,15 @@ func _photo_make_landmark(l: Dictionary, center: Vector2) -> void:
     var base := _photo_local(lp,center,0.0)
     var accent: Color = Color(l.accent)
 
-    if kind=="openai_hq":
+    if kind=="hospital":
+        _photo_box("HospitalMain",base+Vector3(0,h*0.46,0),Vector3(sz.x*0.92,h*0.92,sz.y*0.82),Color("#d5e2e3"))
+        _photo_box("HospitalER",base+Vector3(0,h*0.16,-sz.y*0.49),Vector3(sz.x*0.48,h*0.24,sz.y*0.18),Color("#31535a"))
+        _photo_box("HospitalCrossV",base+Vector3(0,h*0.92,-sz.y*0.43),Vector3(1.4,h*0.18,0.8),Color("#3abf9f"))
+        _photo_box("HospitalCrossH",base+Vector3(0,h*0.92,-sz.y*0.43),Vector3(sz.x*0.13,1.4,0.8),Color("#3abf9f"))
+        for y in range(2,7):
+            for x in range(-3,4):
+                _photo_box("HospitalWindow",base+Vector3(float(x)*sz.x*0.11,h*float(y)/8.0,-sz.y*0.415),Vector3(sz.x*0.065,0.20,0.12),Color("#78b4c0"))
+    elif kind=="openai_hq":
         var left := _photo_box("OpenAI_Left",base+Vector3(-sz.x*0.23,h*0.50,0),Vector3(sz.x*0.42,h,sz.y*0.78),Color("#35505c"))
         var right := _photo_box("OpenAI_Right",base+Vector3(sz.x*0.23,h*0.50,0),Vector3(sz.x*0.42,h,sz.y*0.78),Color("#3b5965"))
         _photo_box("OpenAI_Skybridge",base+Vector3(0,h*0.58,0),Vector3(sz.x*0.28,2.7,sz.y*0.30),Color("#9acbd7"))
@@ -2242,7 +2299,12 @@ func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls:
         _photo_box(name_text+"_Spoiler",Vector3(-sz.x*0.40,1.82,0),Vector3(0.22,0.18,sz.y*0.82),Color("#1b2428"),root)
     elif cls=="pickup":
         _photo_box(name_text+"_Bed",Vector3(-sz.x*0.28,1.35,0),Vector3(sz.x*0.34,0.35,sz.y*0.82),color.darkened(0.18),root)
-    if archetype=="response":
+    if archetype=="ambulance":
+        _photo_box(name_text+"_AmbStripe",Vector3(0,1.35,sz.y*0.51),Vector3(sz.x*0.74,0.24,0.12),Color("#48bfa9"),root)
+        _photo_box(name_text+"_AmbLightbar",Vector3(0,2.78,0),Vector3(1.9,0.18,0.42),Color("#5b6870"),root)
+        _photo_box(name_text+"_AmbRed",Vector3(-0.50,2.90,0),Vector3(0.58,0.16,0.34),Color("#ff4057"),root)
+        _photo_box(name_text+"_AmbBlue",Vector3(0.50,2.90,0),Vector3(0.58,0.16,0.34),Color("#55aaff"),root)
+    elif archetype=="response":
         _photo_box(name_text+"_Lightbar",Vector3(0,2.72,0),Vector3(1.8,0.18,0.42),Color("#6f7b80"),root)
         _photo_box(name_text+"_Red",Vector3(-0.48,2.84,0),Vector3(0.55,0.16,0.34),Color("#ff4057"),root)
         _photo_box(name_text+"_Blue",Vector3(0.48,2.84,0),Vector3(0.55,0.16,0.34),Color("#55aaff"),root)
@@ -2883,6 +2945,96 @@ func _update_sensor(delta: float) -> void:
             return
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
+func _traffic_world_speed(car: Dictionary) -> float:
+    var road_index:=int(car.road)
+    if road_index<0 or road_index>=roads.size():
+        return 0.0
+    var t:=float(car.t)
+    var direction: float=-1.0 if bool(car.reverse) else 1.0
+    var p1:=_sample_polyline(roads[road_index].points,t)
+    var p2:=_sample_polyline(roads[road_index].points,clampf(t+0.001*direction,0.0,1.0))
+    return p1.distance_to(p2)*abs(float(car.speed))/0.001
+
+func _check_player_traffic_accident() -> void:
+    if accident_cooldown>0.0 or hospital_transition>0.0:
+        return
+    if current_vehicle>=0 or transit_riding>=0 or interior_active or photo_mode:
+        return
+    for car in traffic:
+        var tr:=_traffic_world_transform(car)
+        if player_pos.distance_to(Vector2(tr.pos))>22.0:
+            continue
+        var speed_world: float=_traffic_world_speed(car)
+        if speed_world<78.0:
+            continue
+        _trigger_player_accident(speed_world,str(car.get("archetype","")))
+        return
+
+func _trigger_player_accident(speed_world: float, archetype: String) -> void:
+    hospital_transition=hospital_transition_total
+    accident_cooldown=7.0
+    accident_count+=1
+    last_accident_speed=speed_world
+    move_vec=Vector2.ZERO
+    vehicle_velocity=0.0
+    camera_shake_strength=9.0
+    camera_shake_phase=0.0
+    _play_sfx("impact")
+    _haptic(140)
+    _notify("Unfall · Rettungsdienst wurde alarmiert.")
+
+func _update_hospital_transition(delta: float) -> void:
+    hospital_transition=maxf(0.0,hospital_transition-delta)
+    camera_shake_strength=move_toward(camera_shake_strength,0.0,delta*3.0)
+    if hospital_transition<=0.0:
+        _finish_hospital_respawn()
+
+func _finish_hospital_respawn() -> void:
+    if current_vehicle>=0 and current_vehicle<parked_cars.size():
+        parked_cars[current_vehicle]["occupied"]=false
+    current_vehicle=-1
+    transit_riding=-1
+    interior_active=false
+    photo_mode=false
+    vehicle_velocity=0.0
+    player_pos=_hospital_spawn_pos()
+    camera_pos=player_pos
+    player_heading=-PI*0.5
+    energy=maxf(75.0,energy)
+    _notify("Stadtklinikum · Behandlung abgeschlossen. Achte beim Überqueren auf den Verkehr.")
+    _save_game()
+
+func _draw_hospital_cutscene() -> void:
+    if hospital_transition<=0.0:
+        return
+    var screen:=get_viewport_rect().size
+    var progress:=1.0-clampf(hospital_transition/hospital_transition_total,0.0,1.0)
+    var fade:=clampf(sin(progress*PI)*1.25,0.0,1.0)
+    draw_rect(Rect2(Vector2.ZERO,screen),Color(0.015,0.028,0.035,0.78+fade*0.16),true)
+    var stage_text:="UNFALL · RETTUNGSDIENST ALARMIERT"
+    var sub_text:="Der Verkehr stoppt. Hilfe ist unterwegs."
+    if progress>0.34:
+        stage_text="KRANKENWAGEN · TRANSPORT ZUM STADTKLINIKUM"
+        sub_text="Kurze Fahrt durch die Stadt …"
+    if progress>0.72:
+        stage_text="PARALLAX STADTKLINIKUM · NOTAUFNAHME"
+        sub_text="Du wirst versorgt und kannst gleich weiterspielen."
+    var center:=screen*0.5
+    draw_string(ThemeDB.fallback_font,center+Vector2(-430,-110),stage_text,HORIZONTAL_ALIGNMENT_CENTER,860,28,Color("#eafafa"))
+    draw_string(ThemeDB.fallback_font,center+Vector2(-390,-62),sub_text,HORIZONTAL_ALIGNMENT_CENTER,780,17,Color("#a9c7ce"))
+    var amb:=center+Vector2(0,45)
+    draw_rect(Rect2(amb-Vector2(76,28),Vector2(152,56)),Color("#edf5f4"),true)
+    draw_rect(Rect2(amb-Vector2(76,28),Vector2(152,56)),Color("#48bfa9"),false,3.0)
+    draw_rect(Rect2(amb+Vector2(-10,-16),Vector2(20,32)),Color("#48bfa9"),true)
+    draw_rect(Rect2(amb+Vector2(-28,-6),Vector2(56,12)),Color("#48bfa9"),true)
+    draw_circle(amb+Vector2(-50,34),13,Color("#182126"))
+    draw_circle(amb+Vector2(50,34),13,Color("#182126"))
+    var flash:=int(Time.get_ticks_msec()/180)%2==0
+    draw_circle(amb+Vector2(-15,-35),6,Color("#ff4057") if flash else Color("#32404a"))
+    draw_circle(amb+Vector2(15,-35),6,Color("#55aaff") if not flash else Color("#32404a"))
+    draw_rect(Rect2(center+Vector2(-280,135),Vector2(560,8)),Color(1,1,1,0.10),true)
+    draw_rect(Rect2(center+Vector2(-280,135),Vector2(560*progress,8)),Color("#73f3ce"),true)
+
 func _update_player(delta: float) -> void:
     if photo_mode:
         move_vec=Vector2.ZERO
@@ -3105,8 +3257,60 @@ func _response_route_next_road(car: Dictionary, junction: Dictionary) -> int:
         return next_road
     return -1
 
+func _active_response_incident_indices() -> Array:
+    var result: Array=[]
+    for i in range(response_incidents.size()):
+        if _incident_active(i):
+            result.append(i)
+    return result
+
+func _assign_emergency_target(car: Dictionary, target_pos: Vector2, target_kind: String, target_id: String) -> Dictionary:
+    var start_road: int=int(car.road)
+    var goal_road: int=_nearest_road_index(target_pos)
+    car["response_target"]=target_pos
+    car["response_target_kind"]=target_kind
+    car["response_target_id"]=target_id
+    car["response_route"]=_build_road_route(start_road,goal_road)
+    car["response_route_index"]=0
+    car["response_dwell"]=0.0
+    return car
+
+func _retask_emergency_car(car: Dictionary, index: int) -> Dictionary:
+    var archetype:=str(car.get("archetype",""))
+    var current_kind:=str(car.get("response_target_kind",""))
+    if archetype=="ambulance" and current_kind=="incident":
+        return _assign_emergency_target(car,_hospital_world_pos(),"hospital","hospital")
+    var active:=_active_response_incident_indices()
+    if not active.is_empty():
+        var incident_index: int=int(active[index%active.size()])
+        var incident: Dictionary=response_incidents[incident_index]
+        return _assign_emergency_target(car,Vector2(incident.pos),"incident",str(incident.id))
+    return _assign_emergency_target(car,_hospital_world_pos(),"hospital","hospital")
+
+func _update_response_dispatches(force: bool = false) -> void:
+    if response_incidents.is_empty():
+        return
+    var slot: int=int(floor(world_clock*1.35))
+    if not force and slot==response_dispatch_slot:
+        return
+    response_dispatch_slot=slot
+    var active:=_active_response_incident_indices()
+    var emergency_order:=0
+    for i in range(traffic.size()):
+        var car: Dictionary=traffic[i]
+        if not _is_emergency_archetype(str(car.get("archetype",""))):
+            continue
+        if active.is_empty():
+            car=_assign_emergency_target(car,_hospital_world_pos(),"hospital","hospital")
+        else:
+            var incident_index: int=int(active[emergency_order%active.size()])
+            var incident: Dictionary=response_incidents[incident_index]
+            car=_assign_emergency_target(car,Vector2(incident.pos),"incident",str(incident.id))
+        traffic[i]=car
+        emergency_order+=1
+
 func _response_priority_pressure(index: int, car: Dictionary) -> float:
-    if str(car.get("archetype",""))=="response":
+    if _is_emergency_archetype(str(car.get("archetype",""))):
         return 0.0
     var road_index:=int(car.road)
     var car_t:=float(car.t)
@@ -3115,7 +3319,7 @@ func _response_priority_pressure(index: int, car: Dictionary) -> float:
         if k==index:
             continue
         var other: Dictionary=traffic[k]
-        if str(other.get("archetype",""))!="response":
+        if not _is_emergency_archetype(str(other.get("archetype",""))):
             continue
         if int(other.road)!=road_index or bool(other.reverse)!=reverse:
             continue
@@ -3136,14 +3340,28 @@ func _update_traffic(delta: float) -> void:
             c["indicator"]=0
         var direction: float = -1.0 if bool(c.reverse) else 1.0
         var target_speed: float = float(c.cruise)
-        var response_priority:=str(c.get("archetype",""))=="response"
+        var response_priority:=_is_emergency_archetype(str(c.get("archetype","")))
         if response_priority:
             target_speed*=1.22
             var route: Array=Array(c.get("response_route",[]))
             var route_index: int=int(c.get("response_route_index",0))
-            if route.is_empty() or route_index>=route.size()-1 or int(route[route_index])!=int(c.road):
-                c["response_route"]=_new_response_route(int(c.road))
+            if route.is_empty() or route_index>=route.size() or int(route[mini(route_index,route.size()-1)])!=int(c.road):
+                var target_pos:=Vector2(c.get("response_target",Vector2.ZERO))
+                if target_pos!=Vector2.ZERO:
+                    c["response_route"]=_build_road_route(int(c.road),_nearest_road_index(target_pos))
+                else:
+                    c["response_route"]=_new_response_route(int(c.road))
                 c["response_route_index"]=0
+            var emergency_target:=Vector2(c.get("response_target",Vector2.ZERO))
+            var emergency_dwell: float=float(c.get("response_dwell",0.0))
+            if emergency_dwell>0.0:
+                c["response_dwell"]=maxf(0.0,emergency_dwell-delta)
+                target_speed=0.0
+                if float(c.response_dwell)<=0.0:
+                    c=_retask_emergency_car(c,i)
+            elif emergency_target!=Vector2.ZERO and Vector2(_traffic_world_transform(c).pos).distance_to(emergency_target)<125.0:
+                c["response_dwell"]=5.5 if str(c.get("archetype",""))=="ambulance" else 4.0
+                target_speed=0.0
         var response_pressure:=_response_priority_pressure(i,c)
         c["response_yield"]=response_pressure>0.0
         if response_pressure>0.0:
@@ -3184,6 +3402,21 @@ func _update_traffic(delta: float) -> void:
                 target_speed=0.0
             elif player_gap<92.0:
                 target_speed*=0.45
+
+        if current_vehicle<0 and transit_riding<0 and not interior_active:
+            var foot_tr:=_traffic_world_transform(c)
+            var foot_car_pos:=Vector2(foot_tr.pos)
+            var foot_gap: float=foot_car_pos.distance_to(player_pos)
+            if foot_gap<105.0:
+                var to_player:=player_pos-foot_car_pos
+                var closing:=Vector2(foot_tr.tangent).dot(to_player.normalized()) if to_player.length()>0.001 else 1.0
+                if closing>0.15:
+                    if foot_gap<30.0:
+                        target_speed*=0.10
+                    elif foot_gap<65.0:
+                        target_speed*=0.32
+                    else:
+                        target_speed*=0.68
 
         var ped_yield:=_traffic_has_crossing_hazard(c)
         c["ped_yield"]=ped_yield
@@ -4190,6 +4423,8 @@ func _draw() -> void:
         _draw_missions_overlay()
     elif collection_open:
         _draw_collection_overlay()
+    if hospital_transition>0.0:
+        _draw_hospital_cutscene()
 
 func _draw_district_ground() -> void:
     for d in districts:
@@ -4635,9 +4870,31 @@ func _draw_landmarks() -> void:
             _draw_landmark_library(base,top,accent)
         elif kind == "observatory":
             _draw_landmark_observatory(base,top,accent)
+        elif kind == "hospital":
+            _draw_landmark_hospital(base,top,accent,l.size)
         else:
             _draw_landmark_terminal(base,top,accent)
         draw_string(ThemeDB.fallback_font,base+Vector2(-110,52),str(l.name),HORIZONTAL_ALIGNMENT_CENTER,220,16,Color(0.93,0.98,1.0,0.80))
+
+func _draw_landmark_hospital(base: Vector2, top: Vector2, accent: Color, size: Vector2) -> void:
+    var body:=PackedVector2Array([base+Vector2(-110,34),base+Vector2(110,34),top+Vector2(82,14),top+Vector2(-82,14)])
+    draw_colored_polygon(body,Color("#d5e2e3"))
+    draw_polyline(PackedVector2Array([body[0],body[1],body[2],body[3],body[0]]),Color(accent.r,accent.g,accent.b,0.72),2.2,true)
+    for row in range(1,5):
+        var yy:=lerpf(top.y+30.0,base.y+12.0,float(row)/5.0)
+        for col in range(-3,4):
+            var x:=base.x+float(col)*24.0
+            draw_rect(Rect2(Vector2(x-7,yy-5),Vector2(14,10)),Color("#6fa6b1"),true)
+    draw_rect(Rect2(base+Vector2(-38,14),Vector2(76,38)),Color("#24434a"),true)
+    draw_rect(Rect2(base+Vector2(-38,14),Vector2(76,38)),accent,false,2.0)
+    draw_rect(Rect2(top+Vector2(-28,-10),Vector2(56,22)),Color("#f2f7f7"),true)
+    draw_rect(Rect2(top+Vector2(-5,-23),Vector2(10,48)),Color("#3abf9f"),true)
+    draw_rect(Rect2(top+Vector2(-19,-9),Vector2(38,10)),Color("#3abf9f"),true)
+    draw_string(ThemeDB.fallback_font,base+Vector2(-80,58),"NOTAUFNAHME",HORIZONTAL_ALIGNMENT_CENTER,160,12,Color("#dffbf4"))
+    var ambulance_bay:=base+Vector2(145,30)
+    draw_rect(Rect2(ambulance_bay-Vector2(38,16),Vector2(76,32)),Color(0.08,0.14,0.16,0.90),true)
+    draw_rect(Rect2(ambulance_bay-Vector2(38,16),Vector2(76,32)),accent,false,1.5)
+    draw_string(ThemeDB.fallback_font,ambulance_bay+Vector2(-30,-7),"RETTUNG",HORIZONTAL_ALIGNMENT_CENTER,60,10,Color.WHITE)
 
 func _draw_landmark_openai(l: Dictionary, base: Vector2, top: Vector2, accent: Color) -> void:
     # Stylized in-game interpretation: twin glass volumes joined by a luminous skybridge.
@@ -5944,6 +6201,16 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
             draw_line(center-f*sz.x*.18+side*sz.y*.32,center+f*sz.x*.18+side*sz.y*.32,Color("#20282c"),2.6,true)
         if archetype=="maintenance":
             draw_circle(center+f*1.0-Vector2(0,sz.y*.64),3.0,Color("#ffb12d") if int(Time.get_ticks_msec()/330)%2==0 else Color("#6f5224"))
+    elif archetype=="ambulance":
+        draw_line(center-f*sz.x*.34-side*sz.y*.47,center+f*sz.x*.34-side*sz.y*.47,Color("#48bfa9"),3.0,true)
+        draw_line(center-f*sz.x*.34+side*sz.y*.47,center+f*sz.x*.34+side*sz.y*.47,Color("#48bfa9"),3.0,true)
+        var amb_flash:=int(Time.get_ticks_msec()/150)%2==0 and not parked
+        draw_rect(Rect2(center+f*3.0-Vector2(9,sz.y*.67),Vector2(18,4)),Color("#53636a"),true)
+        draw_circle(center+f*3.0-side*5.0-Vector2(0,sz.y*.65),2.6,Color("#ff4057") if amb_flash else Color("#5b3138"))
+        draw_circle(center+f*3.0+side*5.0-Vector2(0,sz.y*.65),2.6,Color("#55aaff") if not amb_flash else Color("#304760"))
+        draw_rect(Rect2(center+f*sz.x*.12-side*4.0-Vector2(5,5),Vector2(10,10)),Color("#f4faf9"),true)
+        draw_line(center+f*sz.x*.12+Vector2(0,-6),center+f*sz.x*.12+Vector2(0,6),Color("#3abf9f"),2.2,true)
+        draw_line(center+f*sz.x*.12+Vector2(-6,0),center+f*sz.x*.12+Vector2(6,0),Color("#3abf9f"),2.2,true)
     elif archetype=="response":
         var flash:=int(Time.get_ticks_msec()/180)%2==0 and not parked
         draw_rect(Rect2(center+f*2.0-Vector2(8,sz.y*.65),Vector2(16,4)),Color("#46545d"),true)
@@ -7140,6 +7407,7 @@ func _save_game() -> void:
         "player":[player_pos.x,player_pos.y],
         "credits":credits,
         "energy":energy,
+        "accident_count":accident_count,
         "owned_property":owned_property,
         "owned_cars":owned_cars,
         "current_paint":current_paint,
@@ -7202,6 +7470,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
         player_pos = Vector2(float(d.player[0]),float(d.player[1]))
     credits = int(d.get("credits",credits))
     energy = float(d.get("energy",energy))
+    accident_count = int(d.get("accident_count",0))
     owned_property = str(d.get("owned_property",""))
     owned_cars = Array(d.get("owned_cars",[]))
     current_paint = str(d.get("current_paint",""))
@@ -7923,7 +8192,8 @@ func _draw_map_overlay() -> void:
             pts.append(_map_point(wp,map_rect))
         draw_polyline(pts,Color(0.75,0.80,0.78,0.16),2.0,true)
     for l in landmarks:
-        _draw_map_marker(_map_point(Vector2(l.pos),map_rect),Color(l.accent),"★")
+        var lm_icon:="✚" if str(l.kind)=="hospital" else "★"
+        _draw_map_marker(_map_point(Vector2(l.pos),map_rect),Color(l.accent),lm_icon)
     for npc in named_npcs:
         _draw_map_marker(_map_point(Vector2(npc.pos),map_rect),Color(npc.accent),"N")
     for ph in photo_points:
@@ -7967,6 +8237,7 @@ func _draw_map_overlay() -> void:
     y += 44
     var legend := [
         ["★","Sehenswürdigkeit / Landmark",Color("#9ad5ff")],
+        ["✚","Parallax Stadtklinikum / Notaufnahme",Color("#8fe7d7")],
         ["N","Benannter NPC / Kontakt",Color("#c7f2e7")],
         ["◎","PMDD Photo Point",Color("#ffb3e6")],
         ["R","Zeitprüfung / Fahrchallenge",Color("#ffd36b")],
