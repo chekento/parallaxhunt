@@ -1,6 +1,20 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.15.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.16.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.16.0 — City Behavior
+
+- transit stops now keep their own waiting, arrival and last-boarded / last-exited counts instead of using only decorative passenger waves
+- stop demand grows over the in-game day and reacts to rush-hour windows plus district identity
+- buses and trams board from the actual waiting pool, respect capacity and redistribute passengers per stop
+- transit waiting groups now visually reflect real stop demand and display the actual boarding / exiting counts during dwell
+- free pedestrians can interrupt their normal routine in rain or storms and actively seek a nearby authored shelter
+- sheltered pedestrians remain under cover until conditions improve instead of carrying the same umbrella behavior everywhere
+- response vehicles now receive BFS-generated multi-road routes across the real road graph
+- routed response vehicles only turn at junctions that advance their assigned route and automatically receive a new destination when a route is complete
+- district-authored social scenes add harbor / industrial work shifts, campus edges, nightlife clusters and park picnics beyond generic crowd pockets
+- animated flags and ventilation stacks add more environmental motion to civic, campus, harbor, industrial, rail, terminal and data districts
+- all new systems reuse the existing deterministic road, junction and social-scene data to stay lightweight on Android
 
 ## 1.15.0 — Living Streets
 
