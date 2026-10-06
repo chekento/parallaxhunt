@@ -55,6 +55,8 @@ var transit_vehicles: Array = []
 var fragments: Array = []
 var secrets: Array = []
 var camera_pos := Vector2.ZERO
+var camera_shake_strength: float = 0.0
+var camera_shake_phase: float = 0.0
 var player_pos := Vector2(5200, 4200)
 var player_heading := 0.0
 var current_vehicle := -1
@@ -283,6 +285,8 @@ func _process(delta: float) -> void:
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
     photo_flash_alpha=maxf(0.0,photo_flash_alpha-delta*2.8)
+    camera_shake_strength=move_toward(camera_shake_strength,0.0,delta*18.0)
+    camera_shake_phase=fposmod(camera_shake_phase+delta*48.0,TAU*8.0)
     autosave_timer += delta
     if autosave_timer >= 12.0:
         autosave_timer = 0.0
@@ -2424,6 +2428,7 @@ func _update_player(delta: float) -> void:
             var impact_speed: float = abs(vehicle_velocity)
             vehicle_velocity*=-0.06
             _play_sfx("impact")
+            camera_shake_strength=maxf(camera_shake_strength,clampf(impact_speed/42.0,1.8,7.5))
             _haptic(75 if impact_speed>170.0 else 35)
             if impact_speed>170.0:
                 _notify("Kollision · Geschwindigkeit reduzieren")
@@ -6768,7 +6773,10 @@ func _draw_peek_meter() -> void:
 func _project(world: Vector2, z: float = 0.0) -> Vector2:
     var screen_center := get_viewport_rect().size * 0.5
     var par := view_amount * z * parallax_strength * 0.72
-    return (world - camera_pos + par) * world_zoom + screen_center
+    var shake := Vector2.ZERO
+    if camera_shake_strength>0.01:
+        shake=Vector2(sin(camera_shake_phase*1.7),cos(camera_shake_phase*2.3))*camera_shake_strength
+    return (world - camera_pos + par) * world_zoom + screen_center + shake
 
 func _district_at(p: Vector2) -> Dictionary:
     for d in districts:
