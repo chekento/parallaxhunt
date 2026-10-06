@@ -1,6 +1,23 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.7.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.8.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.8.0 — Fixed 3D Photo Hunt
+
+- 25 fixed Photo Challenge locations across the megacity
+- activating a Photo Spot freezes player/vehicle movement completely
+- the normal 2D/PMDD world is replaced by a dedicated native Godot 3D SubViewport
+- nearby roads, sidewalks, procedural buildings, landmark architecture and vegetation are rebuilt locally in 3D
+- moving traffic, buses, trams and pedestrians continue moving inside the photo scene
+- district-specific hidden subjects include PMDD symbols, drones, rare cars, roof cats, neon codes, antennas, window reflections and birds
+- drag-to-look camera, zoom controls, centered camera reticle and target lock feedback
+- photo framing score up to 100 per subject / 300 per spot
+- quality bonuses and persistent per-subject best scores
+- completed Photo Spots can be replayed to improve scores without duplicating first-clear rewards
+- partial subject progress is saved if a challenge is left early
+- day, dusk and night lighting are reflected in the 3D photo scene
+- visible shutter flash and photo-specific reward popups
+- landmark-specific 3D silhouettes including OpenAI HQ twin volumes + skybridge, Clock Tower, Solar Beacon, Observatory, Glasshouse, Theatre and Harbor Crane Hall
 
 ## 1.7.0 — Gameplay, Collection & Variety
 
