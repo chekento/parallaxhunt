@@ -614,6 +614,9 @@ func _build_native_gameplay_data() -> void:
         {"title":"District Complete","desc":"Besuche alle 25 Stadtteile.","kind":"districts","goal":25},
         {"title":"Tuning Specialist","desc":"Investiere in zwölf Fahrzeug-Upgrades.","kind":"upgrades","goal":12},
         {"title":"City Professional II","desc":"Schließe 25 Stadtaufträge ab.","kind":"jobs","goal":25},
+        {"title":"Urban Pulse","desc":"Entdecke vier unterschiedliche Live-Events und erlebe die Stadt abseits der Missionen.","kind":"citylife","goal":4},
+        {"title":"Lokale Hände","desc":"Unterstütze bei vier unterschiedlichen Live-Events aktiv die Menschen vor Ort.","kind":"cityhelp","goal":4},
+        {"title":"Megacity Insider","desc":"Entdecke alle zwölf wechselnden Live-Events der Stadt.","kind":"citylife","goal":12},
         {"title":"Freies Stadtleben","desc":"Erkunde POIs, Innenräume, Fahrzeuge und Nebenaktivitäten.","kind":"free","goal":1}
     ]
     if shop_stock.is_empty():
@@ -4247,6 +4250,7 @@ func _resolve_micro_event(index: int, choice: String) -> void:
     _close_commerce()
     _save_game()
     _check_milestones()
+    _advance_native_chapter()
 
 func _npc_context_line(npc: Dictionary) -> String:
     var id := str(npc.id)
@@ -6897,6 +6901,10 @@ func _current_objective_pos() -> Vector2:
             if str(st.kind) in ["garage","workshop"]: return Vector2(st.pos)
     elif kind in ["property","stored_car"]:
         if not property_sites.is_empty(): return Vector2(property_sites[0].pos)
+    elif kind=="citylife":
+        return _next_citylife_target(false)
+    elif kind=="cityhelp":
+        return _next_citylife_target(true)
     return Vector2.ZERO
 
 func _current_objective_label() -> String:
@@ -7063,6 +7071,33 @@ func _completed_hack_count() -> int:
             count+=1
     return count
 
+func _micro_event_help_count() -> int:
+    var count:=0
+    for value in micro_event_choices.values():
+        if str(value)=="GEHOLFEN":
+            count+=1
+    return count
+
+func _next_citylife_target(help_only: bool = false) -> Vector2:
+    var fallback:=Vector2.ZERO
+    var fallback_dist:=999999.0
+    for i in range(city_micro_events.size()):
+        var event: Dictionary=city_micro_events[i]
+        var label:=str(event.label)
+        var qualifies:=not bool(micro_event_seen.get(label,false))
+        if help_only:
+            qualifies=str(micro_event_choices.get(label,""))!="GEHOLFEN"
+        if not qualifies:
+            continue
+        var pos:=Vector2(event.pos)
+        var dist:=player_pos.distance_to(pos)
+        if _micro_event_active(i,event) and dist<fallback_dist:
+            return pos
+        if dist<fallback_dist:
+            fallback=pos
+            fallback_dist=dist
+    return fallback
+
 func _chapter_progress(c: Dictionary) -> int:
     var kind := str(c.kind)
     if kind=="frag": return mini(mission_fragments,int(c.goal))
@@ -7089,6 +7124,8 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="hack_replays": return mini(hack_replays,int(c.goal))
     if kind=="races": return mini(race_completed.size(),int(c.goal))
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
+    if kind=="citylife": return mini(micro_event_seen.size(),int(c.goal))
+    if kind=="cityhelp": return mini(_micro_event_help_count(),int(c.goal))
     return 1
 
 func _photo_total_score() -> int:
