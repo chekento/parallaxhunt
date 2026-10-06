@@ -805,15 +805,34 @@ func _generate_city() -> void:
         var cls: String = _random_vehicle_class(true)
         parked_cars.append({"pos":p + normal * rng.randf_range(45,70), "class":cls, "heading":tangent.angle(), "color":_car_color(cls), "occupied":false})
 
+func _vehicle_class_for_district(style: String) -> String:
+    var pool: Array = ["micro","hatch","sedan","sedan","suv","van"]
+    if style in ["heritage","garden","green","campus"]:
+        pool=["micro","micro","hatch","hatch","sedan","van","delivery"]
+    elif style in ["harbor","industry","rail","terminal"]:
+        pool=["pickup","pickup","van","delivery","delivery","suv","sedan"]
+    elif style in ["glass","center","neon","astro"]:
+        pool=["sedan","executive","executive","suv","sport","hatch"]
+        if rng.randf()<0.035:
+            return "hyper"
+    elif style in ["air","ring","coast"]:
+        pool=["sedan","suv","pickup","sport","van","hatch"]
+    elif style in ["solar","data","wind"]:
+        pool=["hatch","sedan","executive","delivery","suv","sport"]
+    return str(pool[rng.randi_range(0,pool.size()-1)])
+
 func _generate_traffic() -> void:
     traffic.clear()
     for i in range(155):
         var road_index := rng.randi_range(0, roads.size()-1)
-        var cls: String = _random_vehicle_class(true)
+        var t_value:=rng.randf()
+        var spawn_pos:=_sample_polyline(roads[road_index].points,t_value)
+        var spawn_style:=str(_district_at(spawn_pos).get("style","center"))
+        var cls: String = _vehicle_class_for_district(spawn_style)
         var reverse := rng.randf()<0.5
         traffic.append({
             "road":road_index,
-            "t":rng.randf(),
+            "t":t_value,
             "speed":rng.randf_range(0.020,0.044),
             "cruise":rng.randf_range(0.024,0.050),
             "class":cls,
@@ -7023,6 +7042,11 @@ func _draw_map_overlay() -> void:
         _draw_map_marker(_map_point(Vector2(vs.pos),map_rect),Color(vs.accent),"↑" if str(vs.kind)=="roof" else "↓")
     for j in side_job_sites:
         _draw_map_marker(_map_point(Vector2(j.pos),map_rect),Color("#8de9aa"),"J")
+    for ei in range(city_micro_events.size()):
+        var event: Dictionary=city_micro_events[ei]
+        if _micro_event_active(ei,event):
+            var event_col: Color=Color(event.accent)
+            _draw_map_marker(_map_point(Vector2(event.pos),map_rect),event_col,"●")
     for ts in transit_stops:
         _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
     if not active_job.is_empty():
@@ -7051,6 +7075,7 @@ func _draw_map_overlay() -> void:
         ["↑","Dachzugang / Relay",Color("#9bdcff")],
         ["↓","Sublevel / Untergrundknoten",Color("#ffb66f")],
         ["J","Nebenjob-Board",Color("#8de9aa")],
+        ["●","Aktives Live-Event",Color("#ffb66f")],
         ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
         ["◆","Persönlicher NPC-Auftrag",Color("#ff9fe8")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
@@ -7060,8 +7085,12 @@ func _draw_map_overlay() -> void:
         draw_string(ThemeDB.fallback_font,Vector2(76,y-10),str(row[0]),HORIZONTAL_ALIGNMENT_CENTER,12,11,Color("#101820"))
         draw_string(ThemeDB.fallback_font,Vector2(112,y),str(row[1]),HORIZONTAL_ALIGNMENT_LEFT,700,17,Color.WHITE)
         y += 38
-    draw_string(ThemeDB.fallback_font,Vector2(70,1275),"Stadtteile: %d · Landmarken: %d · betretbare POIs: %d" % [districts.size(),landmarks.size(),storefronts.size()],HORIZONTAL_ALIGNMENT_LEFT,900,17,Color("#c7d6de"))
-    draw_string(ThemeDB.fallback_font,Vector2(70,1320),"MAP erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
+    var active_events:=0
+    for ei in range(city_micro_events.size()):
+        if _micro_event_active(ei,city_micro_events[ei]):
+            active_events+=1
+    draw_string(ThemeDB.fallback_font,Vector2(70,1315),"Stadtteile: %d · Landmarken: %d · POIs: %d · Live jetzt: %d" % [districts.size(),landmarks.size(),storefronts.size(),active_events],HORIZONTAL_ALIGNMENT_LEFT,900,17,Color("#c7d6de"))
+    draw_string(ThemeDB.fallback_font,Vector2(70,1360),"MAP erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
 
 func _draw_map_marker(p: Vector2, color: Color, glyph: String) -> void:
     draw_circle(p,7,color)
