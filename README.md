@@ -16,6 +16,8 @@
 - district-specific pedestrian accessories add stronger local visual identity in neon, green, industrial, campus, heritage and waterfront areas
 - Canal Rotunda, Civic Prism, Axis Library and Terminal Crown now have bespoke native 3D Photo Hunt geometry instead of generic landmark blocks
 - modal commerce/event windows now lock background movement and duplicate interaction input
+- active live events are shown on the city map with a dedicated legend marker and live count
+- traffic composition now varies by district identity: industrial/harbor areas favor utility vehicles, glass/neon areas skew executive/performance, while campus/green zones favor smaller city cars
 
 ## 1.11.0 — Street Life & District Ambience
 
