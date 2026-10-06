@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<defs>
+ <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#31383d"/><stop offset="1" stop-color="#20272b"/></linearGradient>
+ <filter id="n"><feTurbulence type="fractalNoise" baseFrequency=".65" numOctaves="2" seed="17"/><feColorMatrix values=".15 0 0 0 .02 0 .15 0 0 .02 0 0 .15 0 .02 0 0 0 .22 0"/></filter>
+</defs>
+<rect width="256" height="256" fill="url(#g)"/>
+<rect width="256" height="256" filter="url(#n)" opacity=".7"/>
+<g fill="none" stroke-linecap="round">
+ <path d="M-10 85C40 72 63 92 111 78S199 55 266 70" stroke="#11181b" stroke-width="4" opacity=".35"/>
+ <path d="M22 201c37-14 64 5 102-6s71-18 121-6" stroke="#50585d" stroke-width="2" opacity=".28"/>
+ <path d="M69 18l-7 35 11 16-5 29" stroke="#141b1e" stroke-width="2" opacity=".55"/>
+ <path d="M183 122l-19 21 8 15-12 28" stroke="#141b1e" stroke-width="2" opacity=".45"/>
+</g>
+<g fill="#758087" opacity=".18"><circle cx="25" cy="42" r="2"/><circle cx="142" cy="38" r="1.7"/><circle cx="214" cy="211" r="2.2"/><circle cx="96" cy="157" r="1.5"/><circle cx="193" cy="74" r="1.4"/></g>
+<ellipse cx="197" cy="166" rx="39" ry="13" fill="#6d8b96" opacity=".08"/>
+<path d="M165 164h66" stroke="#c7e5ef" stroke-width="1.2" opacity=".12"/>
+</svg>
