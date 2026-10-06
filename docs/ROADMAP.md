@@ -99,6 +99,8 @@
 - District-specific pedestrian accessories and local visual identity
 - Bespoke 3D Photo Hunt geometry for Canal Rotunda, Civic Prism, Axis Library and Terminal Crown
 - Modal UI input lock for event/shop/workshop interactions
+- Active live-event markers and live count on the city map
+- District-specific traffic-class mixes for stronger neighborhood identity
 
 ### Next quality targets
 - more bespoke character silhouettes and animations, including sitting, chatting and crossing reactions
