@@ -287,3 +287,26 @@
 - device-side calibration test screen for headtracking direction, gain and deadzone
 - graphics-density / tile-detail controls for lower-end Android devices
 - performance profiling at 2.15x on-foot zoom during rain, crowds and emergency scenes
+
+
+## Alpha 1.20 — modular city vertical slice
+- First high-detail modular visual slice around the downtown start area
+- Live SVG texture modules for cinematic asphalt, sidewalk slabs, palms, neon signs and rooftop equipment
+- Textured road and sidewalk passes inside the slice
+- Palm-lined boulevard composition and stronger street-level warm-climate identity
+- Modular rooftop machinery and façade-mounted neon modules
+- Stronger comic outlines, roof insets and silhouette separation
+- Storefront scaling and lighting tuned for the closer pedestrian zoom
+- Existing procedural palm rendering upgraded for denser comic silhouettes
+- Visual slice built on the existing Godot 2.5D / PMDD projection rather than migrating engines
+- Android export, runtime smoke and Photo Hunt smoke validate the modular SVG pipeline
+
+### Next quality targets
+- expand the modular asset pack into multiple façade families, storefront awnings, traffic-light clusters, street furniture and roof sets
+- build a second authored slice for harbor / marina identity and compare it against downtown
+- convert more generic procedural props into reusable textured modules
+- district-specific curb, paving, lane-marking and façade material libraries
+- stronger authored intersection composition and street-corner density
+- dynamic shadow / light pools for palms, signs and street furniture
+- camera-based face / head-pose tracking as a separate native CV task; gyro+gravity remains the current working fallback
+- profile SVG asset density and close pedestrian zoom on lower-end Android hardware
