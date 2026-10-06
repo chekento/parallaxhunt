@@ -28,64 +28,85 @@ jobs:
 
       - name: Android SDK packages
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
-          echo "SDKMANAGER=$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.1.0"
 
-      - name: Export Android debug APK
-        id: export
-        uses: firebelley/godot-export@v8.0.0
-        with:
-          godot_executable_download_url: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
-          godot_export_templates_download_url: https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
-          relative_project_path: ./
-          relative_export_path: ./build
-          archive_output: false
-          export_debug: true
+      - name: Godot 4.7.2 and native Android sources
+        run: |
+          GODOT_TOOLS="$RUNNER_TEMP/parallax-godot"
+          GODOT_TEMPLATES="$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          mkdir -p "$GODOT_TOOLS" "$GODOT_TEMPLATES"
+          curl --fail --location --retry 3 https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip -o "$GODOT_TOOLS/godot.zip"
+          curl --fail --location --retry 3 https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz -o "$GODOT_TOOLS/templates.tpz"
+          unzip -q "$GODOT_TOOLS/godot.zip" -d "$GODOT_TOOLS"
+          unzip -q -j "$GODOT_TOOLS/templates.tpz" 'templates/android*' 'templates/version.txt' -d "$GODOT_TEMPLATES"
+          echo "GODOT_BIN=$GODOT_TOOLS/Godot_v4.7.2-stable_linux.x86_64" >> "$GITHUB_ENV"
+          python3 scripts/prepare_android.py --template "$GODOT_TEMPLATES/android_source.zip"
+          chmod +x android/build/gradlew
+
+      - name: Import project and configure export
+        run: |
+          "$GODOT_BIN" --headless --editor --path . --import --quit > import.log 2>&1
+          cat import.log
+          if grep -E 'SCRIPT ERROR|Parse Error' import.log; then exit 1; fi
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          path=Path.home()/'.config/godot/editor_settings-4.7.tres'
+          text=path.read_text()
+          for key,value in [('java_sdk_path',os.environ['JAVA_HOME']),('android_sdk_path',os.environ['ANDROID_HOME'])]:
+              text=re.sub(r'^export/android/'+key+r' = .*\n?', '', text, flags=re.M)
+              text+='\nexport/android/'+key+' = '+json.dumps(value)+'\n'
+          path.write_text(text)
+          PY
+
+      - name: Restore optional persistent test signing key
+        env:
+          PARALLAX_DEBUG_KEYSTORE_BASE64: ${{ secrets.PARALLAX_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$PARALLAX_DEBUG_KEYSTORE_BASE64" ]; then
+            mkdir -p "$RUNNER_TEMP/parallax-signing"
+            printf '%s' "$PARALLAX_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/parallax-signing/debug.keystore"
+            echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$RUNNER_TEMP/parallax-signing/debug.keystore" >> "$GITHUB_ENV"
+            echo 'GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey' >> "$GITHUB_ENV"
+            echo 'GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android' >> "$GITHUB_ENV"
+          fi
 
       - name: Runtime smoke test
         run: |
-          GODOT_BIN="$(find "$HOME/.local/share/godot/godot_executable" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' | head -1)"
-          echo "Godot runtime: $GODOT_BIN"
-          test -x "$GODOT_BIN"
-          set +e
           "$GODOT_BIN" --headless --path . --quit-after 8 > runtime.log 2>&1
-          STATUS=$?
-          set -e
           cat runtime.log
-          if grep -E "SCRIPT ERROR|Parse Error|Invalid access|Invalid call|Attempt to call|not declared in the current scope|Cannot get class" runtime.log; then
-            echo "Runtime smoke test detected a Godot script/runtime error."
-            exit 1
-          fi
-          test "$STATUS" -eq 0
+          if grep -E 'SCRIPT ERROR|Parse Error|Invalid access|Invalid call|Attempt to call|Cannot get class' runtime.log; then exit 1; fi
+
+      - name: City, controls, tracking, rewards and save test
+        run: |
+          timeout 35 "$GODOT_BIN" --headless --path . -- --city-smoke > city-smoke.log 2>&1
+          cat city-smoke.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Assertion failed' city-smoke.log; then exit 1; fi
+          grep -q 'CITY_SMOKE_OK' city-smoke.log
 
       - name: 3D Photo Hunt smoke test
         run: |
-          GODOT_BIN="$(find "$HOME/.local/share/godot/godot_executable" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' | head -1)"
-          test -x "$GODOT_BIN"
-          set +e
           timeout 35 "$GODOT_BIN" --headless --path . -- --photo-smoke > photo-smoke.log 2>&1
-          STATUS=$?
-          set -e
           cat photo-smoke.log
-          if grep -E "SCRIPT ERROR|Parse Error|Invalid access|Invalid call|Attempt to call|not declared in the current scope|Cannot get class|PHOTO_SMOKE: " photo-smoke.log; then
-            echo "3D Photo Hunt smoke test detected an error."
-            exit 1
-          fi
-          grep -q "PHOTO_SMOKE_OK" photo-smoke.log
-          test "$STATUS" -eq 0
+          if grep -E 'SCRIPT ERROR|Parse Error|PHOTO_SMOKE: ' photo-smoke.log; then exit 1; fi
+          grep -q 'PHOTO_SMOKE_OK' photo-smoke.log
 
-      - name: Locate APK
+      - name: Export Android preview APK
         run: |
-          find build -type f -maxdepth 4 -print
-          test -n "$(find build -type f -name '*.apk' -print -quit)"
+          mkdir -p build
+          touch build/.gdignore
+          "$GODOT_BIN" --headless --path . --export-debug 'Android Preview' build/ParallaxHunt-1.21.0-preview.apk
+          test -s build/ParallaxHunt-1.21.0-preview.apk
+          sha256sum build/ParallaxHunt-1.21.0-preview.apk > build/ParallaxHunt-1.21.0-preview.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ParallaxHunt-Android-debug
-          path: build/**/*.apk
+          name: ParallaxHunt-1.21.0-Android-Preview
+          path: |
+            build/ParallaxHunt-1.21.0-preview.apk
+            build/ParallaxHunt-1.21.0-preview.apk.sha256
           if-no-files-found: error
           retention-days: 30

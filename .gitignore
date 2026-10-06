@@ -1,6 +1,10 @@
 .godot/
+android/
 .import/
 build/
 *.apk
 *.aab
+*.import
 android/build/
+*.keystore
+signing/

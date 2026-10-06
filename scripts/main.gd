@@ -1,5 +1,6 @@
 extends Node2D
 
+const CityArt = preload("res://scripts/city_art.gd")
 const WORLD_SIZE := Vector2(26000.0, 18000.0)
 const WALK_SPEED := 165.0
 const VEHICLE_CLASSES := ["micro","hatch","sedan","executive","suv","pickup","van","delivery","sport","hyper"]
@@ -54,6 +55,7 @@ var traffic: Array = []
 var smart_agents: Array = []
 var street_lights: Array = []
 var street_props: Array = []
+var street_ensembles: Array = []
 var landmarks: Array = []
 var storefronts: Array = []
 var vegetation_props: Array = []
@@ -75,7 +77,7 @@ var secrets: Array = []
 var camera_pos := Vector2.ZERO
 var camera_shake_strength: float = 0.0
 var camera_shake_phase: float = 0.0
-var player_pos := Vector2(5200, 4200)
+var player_pos := Vector2(5100, 4220)
 var player_heading := 0.0
 var current_vehicle := -1
 var vehicle_velocity := 0.0
@@ -88,7 +90,7 @@ var response_dispatch_slot: int = -1
 var view_touch := Vector2.ZERO
 var sensor_view := Vector2.ZERO
 var view_amount := Vector2.ZERO
-var default_view_bias := Vector2(0.0,-0.24)
+var default_view_bias := Vector2(0.0,-0.18)
 var headtrack_gravity_zero := Vector3.ZERO
 var headtrack_integrated := Vector2.ZERO
 var headtrack_calibrated: bool = false
@@ -133,6 +135,7 @@ var photo_zoom_out_button: Button
 var photo_dynamic_cars: Dictionary = {}
 var photo_dynamic_peds: Dictionary = {}
 var photo_dynamic_transit: Dictionary = {}
+var photo_facade_materials: Dictionary = {}
 var scan_points: Array = []
 var scan_collect_count: int = 0
 var visited_districts: Dictionary = {}
@@ -188,6 +191,21 @@ var main_menu_active: bool = true
 var selected_save_slot: int = 1
 var new_game_mode: bool = false
 var sound_enabled: bool = true
+var camera_tracking_enabled: bool = false
+var camera_tracker: Object
+var camera_head_view := Vector2.ZERO
+var camera_head_depth: float = 0.0
+var camera_head_zero := Vector3.ZERO
+var camera_pose_zero := Vector2.ZERO
+var camera_head_calibrated: bool = false
+var camera_head_last_ms: int = 0
+var camera_tracking_state: String = "aus"
+var camera_option_button: Button
+var tracking_label: Label
+var hud_details_visible: bool = false
+var minigame_finishing: bool = false
+var ui_refresh_timer: float = 0.0
+var desktop_look_drag: bool = false
 var sensor_gain: float = 1.0
 var driving_assist: bool = true
 var haptics_enabled: bool = true
@@ -285,6 +303,12 @@ func _ready() -> void:
     _build_story_content()
     _load_options()
     _generate_city()
+    # Legacy procedural masses could cover observation points. Keep the real
+    # fixed camera position and its approach clear in both street and photo views.
+    buildings=buildings.filter(func(b): return not photo_points.any(func(ph): return Rect2(b.rect).grow(75).has_point(Vector2(ph.pos))))
+    trees=trees.filter(func(t): return not _point_on_road(Vector2(t.pos)))
+    CityArt.add_street_blocks(self)
+    texture_repeat=CanvasItem.TEXTURE_REPEAT_ENABLED
     _generate_traffic()
     _generate_visual_props()
     _generate_storefronts()
@@ -293,6 +317,7 @@ func _ready() -> void:
     _build_social_setpieces()
     _update_response_dispatches(true)
     _generate_collectibles()
+    _seed_neighborhood_start()
     _build_ui()
     _build_photo_3d_system()
     _build_audio()
@@ -302,11 +327,18 @@ func _ready() -> void:
     _refresh_main_menu()
     _update_ui()
     queue_redraw()
+    if "--city-smoke" in OS.get_cmdline_user_args():
+        call_deferred("_run_city_smoke_test")
+    if "--art-capture" in OS.get_cmdline_user_args():
+        call_deferred("_run_art_capture")
     if "--photo-smoke" in OS.get_cmdline_user_args():
         call_deferred("_run_photo_smoke_test")
 
 func _process(delta: float) -> void:
+    delta=minf(delta,0.10)
     _update_sensor(delta)
+    if move_touch<0 and OS.get_name()!="Android" and not photo_mode:
+        move_vec=Vector2(float(Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)),float(Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP))).limit_length(1.0)
     _update_ambient_audio(delta)
     _update_event_proximity_audio()
     if main_menu_active:
@@ -323,11 +355,11 @@ func _process(delta: float) -> void:
     elif interior_active:
         target_world_zoom = 1.0
     elif current_vehicle >= 0:
-        target_world_zoom = 0.82
+        target_world_zoom = lerpf(1.35,1.05,clampf(absf(vehicle_velocity)/610.0,0.0,1.0))
     elif transit_riding >= 0:
-        target_world_zoom = 0.92
+        target_world_zoom = 1.30
     else:
-        target_world_zoom = 2.15
+        target_world_zoom = 2.65
     world_zoom = lerpf(world_zoom,target_world_zoom,minf(1.0,delta*4.5))
     _update_player(delta)
     if not interior_active:
@@ -353,20 +385,37 @@ func _process(delta: float) -> void:
         passive_bias=Vector2(0.0,-0.12)
     elif transit_riding>=0:
         passive_bias=Vector2(0.0,-0.15)
-    var view_target: Vector2=(passive_bias+sensor_view*0.92+view_touch*0.98).limit_length(1.0)
+    var active_head: Vector2 = camera_head_view if camera_tracking_enabled and Time.get_ticks_msec()-camera_head_last_ms<700 else sensor_view
+    var view_target: Vector2=(passive_bias+active_head*0.92+view_touch*0.98).limit_length(1.0)
     view_amount = view_amount.lerp(view_target,minf(1.0,delta*8.5))
     if not interior_active:
-        camera_pos = camera_pos.lerp(player_pos, minf(1.0, delta * (4.0 if current_vehicle >= 0 else 7.0)))
+        var lead: Vector2=Vector2.from_angle(player_heading)*clampf(vehicle_velocity*0.22,-36.0,120.0) if current_vehicle>=0 else move_vec*30.0
+        camera_pos = camera_pos.lerp(player_pos+lead, 1.0-exp(-delta*(4.5 if current_vehicle>=0 else 7.0)))
         _update_secrets()
         _update_district()
         _check_npc_contract()
         _check_active_job_progress()
         _update_active_race(delta)
         _check_milestones()
-    _update_ui()
+    ui_refresh_timer+=delta
+    if ui_refresh_timer>=0.12:
+        ui_refresh_timer=0.0
+        _update_ui()
     queue_redraw()
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_RIGHT:
+        desktop_look_drag=event.pressed
+        look_origin=event.position
+        if not event.pressed:
+            view_touch=Vector2.ZERO
+    elif event is InputEventMouseMotion and desktop_look_drag:
+        if photo_mode:
+            photo_yaw=wrapf(photo_yaw-event.relative.x*0.0045,-PI,PI)
+            photo_pitch=clampf(photo_pitch-event.relative.y*0.0038,-0.72,0.48)
+            _photo_update_camera()
+        else:
+            view_touch=((event.position-look_origin)/165.0).limit_length(1.0)
     if photo_mode:
         _input_photo_mode(event)
         return
@@ -431,7 +480,16 @@ func _input(event: InputEvent) -> void:
             var raw_look := Vector2(delta_look.x,delta_look.y).limit_length(165.0)/165.0
             view_touch = Vector2.ZERO if raw_look.length()<0.075 else raw_look
     elif event is InputEventKey and event.pressed:
-        if event.is_action_pressed("interact"):
+        if event.physical_keycode==KEY_ESCAPE:
+            if map_open or missions_open or collection_open:
+                map_open=false
+                missions_open=false
+                collection_open=false
+            else:
+                _return_to_main_menu()
+        elif event.physical_keycode==KEY_C:
+            _recenter_headtracking()
+        elif event.is_action_pressed("interact"):
             _interact()
         elif event.is_action_pressed("scan"):
             _scan()
@@ -1510,7 +1568,8 @@ func _build_ui() -> void:
 
     var mission_panel := PanelContainer.new()
     mission_panel.position = Vector2(20, 38)
-    mission_panel.custom_minimum_size = Vector2(430, 150)
+    mission_panel.custom_minimum_size = Vector2(655, 122)
+    mission_panel.mouse_filter=Control.MOUSE_FILTER_IGNORE
     var sb := StyleBoxFlat.new()
     sb.bg_color = Color(0.025,0.075,0.105,0.91)
     sb.border_color = Color(0.35,0.85,0.75,0.22)
@@ -1524,7 +1583,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.20"
+    title.text = "PARALLAX HUNT · 1.21"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -1533,15 +1592,38 @@ func _build_ui() -> void:
     mission_label.add_theme_font_size_override("font_size", 30)
     vb.add_child(mission_label)
     detail_label = Label.new()
-    detail_label.text = "Collect fragments and reveal perspective caches."
+    detail_label.text = "Echo-Signale bergen und Perspektivverstecke entdecken."
+    detail_label.visible=hud_details_visible
     detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     detail_label.add_theme_font_size_override("font_size", 20)
     detail_label.modulate = Color("#c7d6de")
     vb.add_child(detail_label)
     layer.add_child(mission_panel)
+    var hud_button=Button.new()
+    hud_button.text="INFO"
+    hud_button.position=Vector2(525,42)
+    hud_button.size=Vector2(122,72)
+    hud_button.pressed.connect(func():
+        hud_details_visible=not hud_details_visible
+        detail_label.visible=hud_details_visible)
+    layer.add_child(hud_button)
+    tracking_label=Label.new()
+    tracking_label.position=Vector2(24,300)
+    tracking_label.add_theme_font_size_override("font_size",20)
+    tracking_label.modulate=Color("#9cb9c4")
+    layer.add_child(tracking_label)
+    var recenter_button=Button.new()
+    recenter_button.text="◎"
+    recenter_button.tooltip_text="Perspektive zentrieren"
+    recenter_button.position=Vector2(952,300)
+    recenter_button.size=Vector2(90,76)
+    recenter_button.pressed.connect(_recenter_headtracking)
+    layer.add_child(recenter_button)
 
     status_label = Label.new()
     status_label.position = Vector2(20, 205)
+    status_label.size=Vector2(1035,90)
+    status_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     status_label.add_theme_font_size_override("font_size", 21)
     status_label.modulate = Color("#d9e9ef")
     layer.add_child(status_label)
@@ -1593,7 +1675,7 @@ func _build_ui() -> void:
     layer.add_child(pause_button)
 
     var map_button := Button.new()
-    map_button.text = "MAP"
+    map_button.text = "KARTE"
     map_button.position = Vector2(770,42)
     map_button.size = Vector2(125,72)
     map_button.add_theme_font_size_override("font_size",22)
@@ -1601,7 +1683,7 @@ func _build_ui() -> void:
     layer.add_child(map_button)
 
     var mission_button := Button.new()
-    mission_button.text = "MISSIONS"
+    mission_button.text = "AUFTRÄGE"
     mission_button.position = Vector2(905,42)
     mission_button.size = Vector2(150,72)
     mission_button.add_theme_font_size_override("font_size",19)
@@ -1609,7 +1691,7 @@ func _build_ui() -> void:
     layer.add_child(mission_button)
 
     var collection_button := Button.new()
-    collection_button.text = "COLLECTION"
+    collection_button.text = "SAMMLUNG"
     collection_button.position = Vector2(610,2060)
     collection_button.size = Vector2(200,110)
     collection_button.add_theme_font_size_override("font_size",18)
@@ -1636,7 +1718,7 @@ func _build_ui() -> void:
     layer.add_child(photo_status_label)
 
     photo_shutter_button = Button.new()
-    photo_shutter_button.text="📷 FOTO"
+    photo_shutter_button.text="FOTO"
     photo_shutter_button.position=Vector2(400,1910)
     photo_shutter_button.size=Vector2(280,120)
     photo_shutter_button.add_theme_font_size_override("font_size",27)
@@ -1661,7 +1743,7 @@ func _build_ui() -> void:
     layer.add_child(photo_hint_button)
 
     photo_zoom_in_button = Button.new()
-    photo_zoom_in_button.text="＋"
+    photo_zoom_in_button.text="+"
     photo_zoom_in_button.position=Vector2(890,1680)
     photo_zoom_in_button.size=Vector2(110,100)
     photo_zoom_in_button.add_theme_font_size_override("font_size",30)
@@ -1903,6 +1985,10 @@ func _build_ui() -> void:
     sensor_option_button.custom_minimum_size = Vector2(0,62)
     sensor_option_button.pressed.connect(_cycle_sensor_option)
     options_box.add_child(sensor_option_button)
+    camera_option_button=Button.new()
+    camera_option_button.custom_minimum_size=Vector2(0,62)
+    camera_option_button.pressed.connect(_toggle_camera_tracking)
+    options_box.add_child(camera_option_button)
     drive_option_button = Button.new()
     drive_option_button.custom_minimum_size = Vector2(0,62)
     drive_option_button.pressed.connect(_cycle_drive_assist)
@@ -1919,12 +2005,229 @@ func _build_ui() -> void:
     hint.modulate = Color("#8fa7b2")
     mvb.add_child(hint)
     layer.add_child(main_menu_panel)
+    _apply_game_theme(layer)
+
+func _apply_game_theme(node: Node) -> void:
+    if node is Button:
+        var normal:=StyleBoxFlat.new()
+        normal.bg_color=Color(0.025,0.050,0.072,0.95)
+        normal.border_color=Color(0.50,0.66,0.72,0.40)
+        normal.set_border_width_all(2)
+        normal.set_corner_radius_all(14)
+        normal.content_margin_left=16
+        normal.content_margin_right=16
+        normal.content_margin_top=9
+        normal.content_margin_bottom=9
+        var pressed: StyleBoxFlat=normal.duplicate()
+        pressed.bg_color=Color("#24675f")
+        pressed.border_color=Color("#73f3ce")
+        var hover: StyleBoxFlat=normal.duplicate()
+        hover.bg_color=Color("#1c3749")
+        hover.border_color=Color("#a7cbd2")
+        node.add_theme_stylebox_override("normal",normal)
+        node.add_theme_stylebox_override("pressed",pressed)
+        node.add_theme_stylebox_override("hover",hover)
+        node.add_theme_color_override("font_color",Color("#e4ece9"))
+        node.add_theme_font_size_override("font_size",maxi(23,node.get_theme_font_size("font_size")))
+    for child in node.get_children():
+        _apply_game_theme(child)
 
 func _haptic(duration_ms: int = 45) -> void:
     if not haptics_enabled:
         return
     if OS.get_name()=="Android":
         Input.vibrate_handheld(duration_ms)
+
+func _polyline_length(points: PackedVector2Array) -> float:
+    var total: float=0.0
+    for i in range(points.size()-1):
+        total+=points[i].distance_to(points[i+1])
+    return total
+
+func _seed_neighborhood_start() -> void:
+    # A walkable first minute, with the same permanent collectible IDs and vehicle indices.
+    var nearby: Array[Vector2]=[Vector2(5120,4140),Vector2(5150,4320),Vector2(5190,4480),Vector2(4940,4490),Vector2(4860,4380)]
+    for i in range(mini(nearby.size(),fragments.size())):
+        var candidate:=nearby[i]
+        for n in range(16):
+            if not _point_blocked(candidate,14):
+                break
+            candidate=nearby[i]+Vector2.from_angle(float(n)*TAU/16.0)*65
+        if not _point_blocked(candidate,14):
+            fragments[i]["pos"]=candidate
+    for entry in [{"pos":Vector2(5090,4390),"class":"hatch","heading":-PI*0.5,"color":Color("#e3b456"),"occupied":false},{"pos":Vector2(7400,4515),"class":"sport","heading":0.0,"color":Color("#e24c4c"),"occupied":false}]:
+        if not _point_blocked(Vector2(entry.pos),20):
+            parked_cars.append(entry)
+    mission_sites.append({"id":"centerWarmup","name":"Boulevard Signal Terminal","pos":Vector2(5200,4380),"game":"wire","reward":"Boulevard Key","difficulty":1})
+    side_job_sites.append({"id":"jobs_boulevard","name":"Boulevard Jobboard","pos":Vector2(5200,4500)})
+    # Reuse existing simulation actors for a populated first neighborhood;
+    # the global actor count and persistent vehicle indices do not grow.
+    var local_road:=_nearest_road_index(player_pos)
+    var length:=_polyline_length(roads[local_road].points)
+    var start_t:=_nearest_road_t_to_point(local_road,player_pos)
+    for k in range(12):
+        var index:=pedestrians.size()-1-k
+        var ped: Dictionary=pedestrians[index]
+        var direction:=1.0 if k%2==0 else -1.0
+        ped["road"]=local_road
+        ped["t"]=clampf(start_t+float(k-6)*61.0/length,0.02,0.98)
+        ped["target_t"]=clampf(float(ped.t)+direction*760.0/length,0.02,0.98)
+        ped["reverse"]=direction<0
+        ped["side"]=-1.0 if k%3==0 else 1.0
+        ped["speed"]=(28.0+float(k%4)*4.0)/length
+        ped["state"]="walk"
+        ped["pause"]=0.0
+        ped["social_partner"]=-1
+        pedestrians[index]=ped
+    var car_count:=0
+    for index in range(traffic.size()-1,-1,-1):
+        var car: Dictionary=traffic[index]
+        if _is_emergency_archetype(str(car.archetype)):
+            continue
+        car["road"]=local_road
+        car["t"]=clampf(start_t+float(car_count-1)*280.0/length,0.02,0.98)
+        car["reverse"]=car_count%2==0
+        car["speed"]=120.0/length
+        car["cruise"]=135.0/length
+        traffic[index]=car
+        car_count+=1
+        if car_count>=3:
+            break
+
+func _on_tracking_status(message: String) -> void:
+    camera_tracking_state=message
+    _refresh_option_labels()
+
+func _on_camera_head_pose(x: float, y: float, face_size: float, yaw: float, pitch: float) -> void:
+    if not camera_tracking_enabled:
+        return
+    var pose:=Vector3(x,y,face_size)
+    if not camera_head_calibrated:
+        camera_head_zero=pose
+        camera_pose_zero=Vector2(yaw,pitch)
+        camera_head_calibrated=true
+    var displacement:=pose-camera_head_zero
+    var turn:=Vector2(yaw,pitch)-camera_pose_zero
+    var target:=Vector2(displacement.x*2.4+turn.x/140.0,-displacement.y*2.4-turn.y/140.0)*sensor_gain
+    var now:=Time.get_ticks_msec()
+    var dt:=clampf(float(now-camera_head_last_ms)/1000.0,0.025,0.16)
+    var smoothing:=1.0-exp(-dt*10.0)
+    camera_head_view=camera_head_view.lerp(target.limit_length(0.85),smoothing)
+    camera_head_depth=lerpf(camera_head_depth,clampf(displacement.z*2.5,-0.5,0.5),smoothing)
+    camera_head_last_ms=now
+    camera_tracking_state="Gesicht erkannt"
+
+func _toggle_camera_tracking() -> void:
+    camera_tracking_enabled=not camera_tracking_enabled
+    camera_head_calibrated=false
+    camera_head_last_ms=0
+    camera_head_view=Vector2.ZERO
+    if camera_tracker!=null:
+        camera_tracker.call("startTracking" if camera_tracking_enabled else "stopTracking")
+        camera_tracking_state="Gesicht suchen" if camera_tracking_enabled else "aus"
+    elif camera_tracking_enabled:
+        camera_tracking_state="nicht verfügbar"
+    _save_options()
+    _refresh_option_labels()
+
+func _notification(what: int) -> void:
+    if what==NOTIFICATION_APPLICATION_PAUSED:
+        if camera_tracker!=null:
+            camera_tracker.call("stopTracking")
+        if not main_menu_active:
+            _save_game()
+    elif what==NOTIFICATION_APPLICATION_RESUMED:
+        _recenter_headtracking()
+        if camera_tracking_enabled and camera_tracker!=null:
+            camera_tracker.call("startTracking")
+
+func _restore_collectible_flags(items: Array, flags: Variant, field: String, legacy_count: int) -> void:
+    if flags is Array and not flags.is_empty():
+        for i in range(mini(items.size(),flags.size())):
+            items[i][field]=bool(flags[i])
+    elif legacy_count>0:
+        # Old saves stored totals only. Preserve them instead of granting the same rewards again.
+        for i in range(mini(items.size(),legacy_count)):
+            items[i][field]=true
+
+func _run_city_smoke_test() -> void:
+    main_menu_active=false
+    main_menu_panel.visible=false
+    selected_save_slot=3
+    var original_pos:=player_pos
+    assert(buildings.any(func(b): return bool(b.get("street_block",false))),"Authored street blocks missing")
+    assert(street_ensembles.all(func(s): return CityArt.frontage_is_clear(self,Vector2(s.pos))),"Street furniture must stay off carriageways")
+    assert(photo_points.all(func(ph): return not _point_blocked(Vector2(ph.pos),14)),"Photo observation points must be accessible")
+    for i in range(5):
+        assert(player_pos.distance_to(Vector2(fragments[i].pos))<500 and not _point_blocked(Vector2(fragments[i].pos),14),"Starter signals must be nearby and walkable")
+    world_zoom=2.65
+    camera_pos=player_pos
+    view_amount=default_view_bias
+    var delta_z:=_project(player_pos,100)-_project(player_pos)
+    assert(delta_z.y<-100,"Buildings must show depth without a touch")
+    move_vec=Vector2(1,0)
+    var start:=player_pos
+    _update_player(0.05)
+    assert(player_pos!=start,"Player spawn must be walkable")
+    move_vec=Vector2.ZERO
+    var before_photo:=player_pos
+    _start_photo_challenge(0)
+    move_vec=Vector2(1,1)
+    _update_player(0.2)
+    assert(player_pos==before_photo,"Photo challenge must lock movement")
+    assert(photo_viewport.render_target_update_mode==SubViewport.UPDATE_ALWAYS)
+    _exit_photo_mode()
+    assert(photo_viewport.render_target_update_mode==SubViewport.UPDATE_DISABLED)
+    camera_tracking_enabled=true
+    _on_camera_head_pose(0,0,0.3,0,0)
+    _on_camera_head_pose(0.15,-0.1,0.38,12,5)
+    assert(camera_head_view.x>0 and camera_head_depth>0,"Camera tracking must react to actual head position")
+    camera_tracking_enabled=false
+    camera_head_view=Vector2.ZERO
+    var before_credits:=credits
+    _start_minigame(mission_sites[0])
+    _finish_minigame()
+    _finish_minigame()
+    assert(credits==before_credits+35,"Hack must grant exactly one reward")
+    await get_tree().create_timer(0.8).timeout
+    fragments[2]["taken"]=true
+    photo_found["test"]=true
+    micro_event_seen["test"]=true
+    _save_game()
+    fragments[2]["taken"]=false
+    _load_game(3)
+    assert(bool(fragments[2].taken),"Collectibles must survive a save/load")
+    _reset_game_state()
+    assert(photo_found.is_empty() and micro_event_seen.is_empty(),"New games must clear old progress")
+    player_pos=original_pos
+    print("CITY_SMOKE_OK · %d buildings · %d street blocks · %d chapters · tracking / photo / rewards / saves" % [buildings.size(),buildings.filter(func(b): return bool(b.get("street_block",false))).size(),native_chapters.size()])
+    get_tree().quit()
+
+func _run_art_capture() -> void:
+    main_menu_active=false
+    main_menu_panel.visible=false
+    camera_pos=player_pos
+    world_zoom=2.65
+    target_world_zoom=2.65
+    view_amount=default_view_bias
+    await get_tree().create_timer(1.5).timeout
+    await RenderingServer.frame_post_draw
+    get_viewport().get_texture().get_image().save_png("res://build/city-foot.png")
+    player_pos=Vector2(7450,4450)
+    camera_pos=player_pos
+    world_zoom=1.35
+    current_vehicle=0
+    await get_tree().create_timer(0.8).timeout
+    await RenderingServer.frame_post_draw
+    get_viewport().get_texture().get_image().save_png("res://build/city-drive.png")
+    player_pos=Vector2(photo_points[0].pos)
+    camera_pos=player_pos
+    _start_photo_challenge(0)
+    await get_tree().create_timer(0.8).timeout
+    await RenderingServer.frame_post_draw
+    get_viewport().get_texture().get_image().save_png("res://build/photo-hunt.png")
+    _exit_photo_mode()
+    get_tree().quit()
 
 func _run_photo_smoke_test() -> void:
     main_menu_active=false
@@ -1946,13 +2249,41 @@ func _run_photo_smoke_test() -> void:
     print("PHOTO_SMOKE_OK targets=",photo_targets.size()," cars=",photo_dynamic_cars.size()," peds=",photo_dynamic_peds.size())
     _exit_photo_mode()
     await get_tree().process_frame
+    selected_save_slot=3
+    var verified_spots:=0
+    for index in range(photo_points.size()):
+        _start_photo_challenge(index)
+        await get_tree().process_frame
+        var road_count:=0
+        for child in photo_world_root.get_children():
+            if child.name.begins_with("Road_") and not child.is_queued_for_deletion():
+                road_count+=1
+        if road_count==0:
+            push_error("PHOTO_SMOKE: local roads missing at "+str(photo_points[index].id))
+            get_tree().quit(43)
+            return
+        for target in photo_targets:
+            if _photo_position_occluded(target.node.global_position):
+                push_error("PHOTO_SMOKE: unreachable subject at "+str(photo_points[index].id))
+                get_tree().quit(44)
+                return
+        if index==0:
+            var target: Dictionary=photo_targets[0]
+            photo_camera.look_at(target.node.global_position,Vector3.UP)
+            _photo_shutter()
+            assert(bool(photo_found.get(target.key,false)),"A visible centered photo subject must be collectible")
+        _exit_photo_mode()
+        await get_tree().process_frame
+        verified_spots+=1
+    print("PHOTO_SITES_OK · %d fixed spots · roads / visible subjects / shutter" % verified_spots)
+    await get_tree().create_timer(1.6).timeout
     get_tree().quit(0)
 
 func _build_photo_3d_system() -> void:
     var screen_size := get_viewport_rect().size
     photo_viewport=SubViewport.new()
     photo_viewport.size=Vector2i(maxi(640,int(screen_size.x)),maxi(960,int(screen_size.y)))
-    photo_viewport.render_target_update_mode=SubViewport.UPDATE_ALWAYS
+    photo_viewport.render_target_update_mode=SubViewport.UPDATE_DISABLED
     photo_viewport.transparent_bg=false
     add_child(photo_viewport)
 
@@ -2014,7 +2345,7 @@ func _build_photo_3d_system() -> void:
         ctrl.reparent(photo_ui_layer)
 
     photo_crosshair=Label.new()
-    photo_crosshair.text="＋"
+    photo_crosshair.text="+"
     photo_crosshair.position=screen_size*0.5-Vector2(38,42)
     photo_crosshair.size=Vector2(76,76)
     photo_crosshair.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
@@ -2094,6 +2425,26 @@ func _photo_box(name_text: String, pos: Vector3, size: Vector3, color: Color, pa
 func _photo_local(world: Vector2, center: Vector2, y: float = 0.0) -> Vector3:
     return Vector3((world.x-center.x)*0.10,y,(world.y-center.y)*0.10)
 
+func _photo_clip_road(a: Vector2, b: Vector2, center: Vector2, radius: float) -> PackedVector2Array:
+    # Long city roads often have their midpoint outside the local photo scene.
+    # Clip the actual segment against the scene bounds instead of dropping it.
+    var bounds:=Rect2(center-Vector2.ONE*radius,Vector2.ONE*radius*2)
+    var direction:=b-a
+    var first:=0.0
+    var last:=1.0
+    for axis in range(2):
+        if absf(direction[axis])<0.0001:
+            if a[axis]<bounds.position[axis] or a[axis]>bounds.end[axis]:
+                return PackedVector2Array()
+        else:
+            var near_t: float=(bounds.position[axis]-a[axis])/direction[axis]
+            var far_t: float=(bounds.end[axis]-a[axis])/direction[axis]
+            first=maxf(first,minf(near_t,far_t))
+            last=minf(last,maxf(near_t,far_t))
+            if first>last:
+                return PackedVector2Array()
+    return PackedVector2Array([a.lerp(b,first),a.lerp(b,last)])
+
 func _photo_build_scene(index: int) -> void:
     _photo_clear_3d_scene()
     var ph: Dictionary = photo_points[index]
@@ -2113,11 +2464,11 @@ func _photo_build_scene(index: int) -> void:
         var road = roads[ri]
         var pts: PackedVector2Array = road.points
         for k in range(pts.size()-1):
-            var a: Vector2 = pts[k]
-            var b: Vector2 = pts[k+1]
-            var mid: Vector2 = (a+b)*0.5
-            if mid.distance_to(center)>radius+650.0:
+            var segment:=_photo_clip_road(pts[k],pts[k+1],center,radius)
+            if segment.is_empty():
                 continue
+            var a: Vector2 = segment[0]
+            var b: Vector2 = segment[1]
             var la := _photo_local(a,center,0.0)
             var lb := _photo_local(b,center,0.0)
             var delta := lb-la
@@ -2128,6 +2479,13 @@ func _photo_build_scene(index: int) -> void:
             if photo_weather in ["rain","storm"]:
                 road_color=Color("#1f292f")
             var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.14,0),Vector3(float(road.width)*0.10,0.16,length),road_color)
+            if graphics_quality>0:
+                var asphalt:=StandardMaterial3D.new()
+                asphalt.albedo_texture=CityArt.ASPHALT
+                asphalt.albedo_color=Color(0.64,0.70,0.81)
+                asphalt.uv1_scale=Vector3(float(road.width)*0.10/16.0,length/16.0,1)
+                asphalt.roughness=0.96
+                slab.material_override=asphalt
             slab.rotation.y=atan2(delta.x,delta.z)
             var flat_dir := Vector2(delta.x,delta.z).normalized()
             var flat_normal := Vector2(-flat_dir.y,flat_dir.x)
@@ -2141,6 +2499,21 @@ func _photo_build_scene(index: int) -> void:
                 walk.rotation.y=slab.rotation.y
             var lane := _photo_box("Lane_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.25,0),Vector3(0.16,0.05,length*0.92),Color(0.92,0.90,0.72,0.65))
             lane.rotation.y=slab.rotation.y
+
+    for j in junctions:
+        if Vector2(j.pos).distance_to(center)>radius or bool(j.bridge):
+            continue
+        for axis in range(2):
+            var own: Dictionary=roads[int(j.a) if axis==0 else int(j.b)]
+            var other: Dictionary=roads[int(j.b) if axis==0 else int(j.a)]
+            var tangent:=_closest_road_tangent(int(j.a) if axis==0 else int(j.b),Vector2(j.pos))
+            var normal:=Vector2(-tangent.y,tangent.x)
+            var count:=maxi(3,int(float(own.width)/13.0))
+            for side_sign in [-1.0,1.0]:
+                for stripe in range(count):
+                    var offset: Vector2=tangent*(float(other.width)*0.5+19)*side_sign+normal*(float(stripe)-float(count-1)*0.5)*12
+                    var crossing:=_photo_box("Crossing",_photo_local(Vector2(j.pos)+offset,center,0.28),Vector3(0.65,0.025,2.7),Color("#e6e1cf"))
+                    crossing.rotation.y=-tangent.angle()+PI*0.5
 
     # Nearby procedural buildings become 3D masses with roof caps and windows.
     var built: int = 0
@@ -2238,7 +2611,7 @@ func _photo_build_scene(index: int) -> void:
         _photo_box("TransitBody",Vector3(0,1.55,0),long_size,Color(tv.color),transit_root)
         _photo_box("TransitGlass",Vector3(-0.4,2.65,0),Vector3(long_size.x*0.70,0.70,long_size.z*0.78),Color("#79b5cc"),transit_root)
         transit_root.position=_photo_local(vp,center,0.0)
-        transit_root.rotation.y=-tan.angle()+PI*0.5
+        transit_root.rotation.y=-tan.angle()
         photo_dynamic_transit[vi]=transit_root
 
     # Moving pedestrians are mirrored as simple 3D characters.
@@ -2276,6 +2649,29 @@ func _photo_build_scene(index: int) -> void:
     _photo_spawn_targets(index,center)
 
 func _photo_add_building_details(b: Dictionary, local: Vector3, size: Vector3, h: float, index: int) -> void:
+    if graphics_quality>0:
+        var region:=CityArt.facade_region(str(b.style),int(b.seed))
+        var material_key:=str(region)
+        if not photo_facade_materials.has(material_key):
+            var texture_image: Image=CityArt.FACADES.get_image()
+            var tile:=texture_image.get_region(Rect2i(Vector2i(region*Vector2(texture_image.get_size())),Vector2i(texture_image.get_size()/2)))
+            var mat:=StandardMaterial3D.new()
+            mat.albedo_texture=ImageTexture.create_from_image(tile)
+            mat.roughness=0.88
+            mat.texture_filter=BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+            photo_facade_materials[material_key]=mat
+        for side in range(4):
+            var face:=MeshInstance3D.new()
+            var mesh:=QuadMesh.new()
+            mesh.size=Vector2(size.x if side%2==0 else size.z,h)
+            face.mesh=mesh
+            face.rotation.y=float(side)*PI*0.5
+            face.position=local+Vector3(sin(face.rotation.y)*(size.x*0.5+0.025),0,cos(face.rotation.y)*(size.z*0.5+0.025))
+            face.material_override=photo_facade_materials[material_key]
+            photo_world_root.add_child(face)
+        _photo_box("RoofCornice_%d" % index,local+Vector3(0,h*0.49,0),Vector3(size.x+0.3,0.3,size.z+0.3),Color("#a1a496"))
+        _photo_box("RoofUnit_%d" % index,local+Vector3(size.x*0.18,h*0.58,size.z*0.16),Vector3(2.5,1.4,1.8),Color("#7b858c"))
+        return
     var rows: int = clampi(int(h/3.2),2,5)
     var cols_x: int = clampi(int(size.x/5.2),2,5)
     var cols_z: int = clampi(int(size.z/5.2),2,5)
@@ -2466,41 +2862,51 @@ func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls:
     elif archetype=="courier":
         _photo_box(name_text+"_CourierStripe",Vector3(0,1.28,sz.y*0.51),Vector3(sz.x*0.68,0.20,0.12),Color("#72d7e6"),root)
     root.position=_photo_local(world_pos,center,0.0)
-    root.rotation.y=-heading+PI*0.5
+    root.rotation.y=-heading
     return root
 
 func _photo_position_occluded(target_pos: Vector3) -> bool:
-    var cam:=Vector3(0,6.2,0)
-    var from2:=Vector2(cam.x,cam.z)
-    var to2:=Vector2(target_pos.x,target_pos.z)
-    var seg:=to2-from2
-    var seg_len_sq:=seg.length_squared()
-    if seg_len_sq<0.001:
+    var cam:=photo_camera.position if photo_camera!=null else Vector3(0,7.0,0)
+    var direction:=target_pos-cam
+    if direction.length_squared()<0.001:
         return false
     for occ in photo_occluders:
         var center:=Vector3(occ.center)
         var size:=Vector3(occ.size)
-        var center2:=Vector2(center.x,center.z)
-        var t:=clampf((center2-from2).dot(seg)/seg_len_sq,0.0,1.0)
-        if t<=0.055 or t>=0.93:
-            continue
-        var closest:=from2+seg*t
-        var horizontal_radius:=maxf(size.x,size.z)*0.52
-        var ray_y:=lerpf(cam.y,target_pos.y,t)
-        if closest.distance_to(center2)<horizontal_radius and abs(ray_y-center.y)<size.y*0.56:
+        var first:=0.02
+        var last:=0.98
+        var intersects:=true
+        for axis in range(3):
+            var low: float=center[axis]-size[axis]*0.5
+            var high: float=center[axis]+size[axis]*0.5
+            if absf(direction[axis])<0.0001:
+                if cam[axis]<low or cam[axis]>high:
+                    intersects=false
+                    break
+            else:
+                var near_t: float=(low-cam[axis])/direction[axis]
+                var far_t: float=(high-cam[axis])/direction[axis]
+                first=maxf(first,minf(near_t,far_t))
+                last=minf(last,maxf(near_t,far_t))
+                if first>last:
+                    intersects=false
+                    break
+        if intersects:
             return true
     return false
 
 func _photo_find_visible_target_position(base: Vector3, variant: int) -> Vector3:
-    var angles: Array=[0.0,0.32,-0.32,0.62,-0.62,0.94,-0.94,1.28,-1.28,PI]
     var base_xz:=Vector2(base.x,base.z)
-    for attempt in range(angles.size()):
-        var rotated:=base_xz.rotated(float(angles[attempt]))
-        var candidate:=Vector3(rotated.x,base.y+float(attempt/6)*1.5,rotated.y)
-        if not _photo_position_occluded(candidate):
-            return candidate
-    var outward:=base_xz.normalized()*maxf(36.0,base_xz.length()*1.32)
-    return Vector3(outward.x,base.y+5.0,outward.y)
+    for radius_scale in [1.0,0.75,1.25,0.45]:
+        for attempt in range(24):
+            var angle:=float(attempt)*TAU/24.0
+            var rotated: Vector2=base_xz.rotated(angle)*radius_scale
+            var candidate:=Vector3(rotated.x,base.y,rotated.y)
+            if not _photo_position_occluded(candidate):
+                return candidate
+    # The reserved observation plaza also provides a visible last-resort anchor.
+    var safe:=Vector2.from_angle(float(variant)*TAU/3.0-PI*0.5)*6.0
+    return Vector3(safe.x,base.y,safe.y)
 
 func _photo_spawn_targets(index: int, center: Vector2) -> void:
     var ph: Dictionary = photo_points[index]
@@ -2602,6 +3008,7 @@ func _start_photo_challenge(index: int) -> void:
         for i in range(3):
             photo_found["%s_%d" % [replay_id,i]]=false
     photo_mode=true
+    photo_viewport.render_target_update_mode=SubViewport.UPDATE_ALWAYS
     var initial_dir: Vector2 = Vector2(photo_points[index].dir).normalized()
     photo_yaw=atan2(-initial_dir.x,-initial_dir.y)
     photo_pitch=-0.17
@@ -2611,6 +3018,7 @@ func _start_photo_challenge(index: int) -> void:
     vehicle_velocity=0.0
     if current_vehicle>=0:
         parked_cars[current_vehicle]["occupied"]=true
+    _photo_update_camera()
     _photo_apply_lighting()
     _photo_build_scene(index)
     _photo_show_ui(true)
@@ -2630,6 +3038,7 @@ func _start_photo_challenge(index: int) -> void:
 
 func _exit_photo_mode() -> void:
     photo_mode=false
+    photo_viewport.render_target_update_mode=SubViewport.UPDATE_DISABLED
     active_photo_index=-1
     photo_drag_touch=-1
     photo_view_rect.visible=false
@@ -2668,8 +3077,9 @@ func _input_photo_mode(event: InputEvent) -> void:
 func _photo_update_camera() -> void:
     if photo_camera==null:
         return
-    photo_camera.position=Vector3(0,7.0,0)
-    photo_camera.rotation=Vector3(photo_pitch,photo_yaw,0)
+    var head: Vector2=camera_head_view if camera_tracking_enabled and Time.get_ticks_msec()-camera_head_last_ms<700 else sensor_view
+    photo_camera.position=Vector3(head.x*0.85,7.0-head.y*0.55,-camera_head_depth*0.45)
+    photo_camera.rotation=Vector3(clampf(photo_pitch+head.y*0.14,-1.30,0.65),photo_yaw-head.x*0.16,0)
     photo_camera.fov=photo_fov
 
 func _photo_zoom(amount: float) -> void:
@@ -2783,6 +3193,7 @@ func _complete_photo_challenge() -> void:
     _exit_photo_mode()
 
 func _update_photo_3d_scene(_delta: float) -> void:
+    _photo_update_camera()
     if active_photo_index<0:
         return
     var center: Vector2 = Vector2(photo_points[active_photo_index].pos)
@@ -2796,7 +3207,7 @@ func _update_photo_3d_scene(_delta: float) -> void:
         var tf := _traffic_world_transform(traffic[ti])
         var wp: Vector2 = Vector2(tf.pos)
         node.position=_photo_local(wp,center,0.0)
-        node.rotation.y=-Vector2(tf.tangent).angle()+PI*0.5
+        node.rotation.y=-Vector2(tf.tangent).angle()
 
     for key in photo_dynamic_transit.keys():
         var vi: int = int(key)
@@ -2812,7 +3223,7 @@ func _update_photo_3d_scene(_delta: float) -> void:
         if bool(tv.reverse):
             vtan*=-1.0
         vnode.position=_photo_local(vp,center,0.0)
-        vnode.rotation.y=-vtan.angle()+PI*0.5
+        vnode.rotation.y=-vtan.angle()
 
     for key in photo_dynamic_peds.keys():
         var pi: int = int(key)
@@ -3073,27 +3484,26 @@ func _play_sfx(name: String) -> void:
     sfx_player.play()
 
 func _bootstrap_android_camera() -> void:
-    if OS.get_name() != "Android":
-        camera_status = "Desktop · Touch Peek"
+    if OS.get_name()!="Android":
+        camera_status="Touch / Maus"
         headtrack_sensor_mode="desktop"
         return
-    OS.request_permissions()
     _recenter_headtracking()
-    camera_status = "Headtracking · Gyro+Gravity wird kalibriert"
-    headtrack_sensor_mode="calibrating"
-    CameraServer.monitoring_feeds=true
-    await get_tree().create_timer(0.75).timeout
-    _recenter_headtracking()
-    var feeds:=CameraServer.feeds()
-    var front_seen:=false
-    for feed in feeds:
-        if feed!=null and feed.has_method("get_position") and int(feed.call("get_position"))==1:
-            front_seen=true
-            break
-    camera_status = "Headtracking · Gyro+Gravity aktiv" + (" · Frontkamera erkannt" if front_seen else "")
+    if Engine.has_singleton("ParallaxHeadTracker"):
+        camera_tracker=Engine.get_singleton("ParallaxHeadTracker")
+        camera_tracker.connect("head_pose",_on_camera_head_pose)
+        camera_tracker.connect("tracking_status",_on_tracking_status)
+        if camera_tracking_enabled:
+            camera_tracker.call("startTracking")
+    elif camera_tracking_enabled:
+        camera_tracking_state="nicht verfügbar"
+    camera_status="Neigung · kalibriert"
 
 func _recenter_headtracking() -> void:
     headtrack_integrated=Vector2.ZERO
+    camera_head_calibrated=false
+    camera_head_view=Vector2.ZERO
+    camera_head_depth=0.0
     sensor_view=Vector2.ZERO
     headtrack_motion_strength=0.0
     if OS.get_name()!="Android":
@@ -3113,7 +3523,9 @@ func _update_sensor(delta: float) -> void:
     if OS.get_name()!="Android":
         sensor_view=sensor_view.lerp(Vector2.ZERO,minf(1.0,delta*2.0))
         return
-
+    if camera_tracking_enabled and Time.get_ticks_msec()-camera_head_last_ms>700:
+        camera_head_view=camera_head_view.lerp(Vector2.ZERO,1.0-exp(-delta*3.0))
+        camera_head_depth=lerpf(camera_head_depth,0.0,1.0-exp(-delta*3.0))
     var g:=Input.get_gravity()
     var gyro:=Input.get_gyroscope()
     var has_gravity:=g.length()>1.0
@@ -3320,9 +3732,18 @@ func _update_player(delta: float) -> void:
         var foot_speed: float = WALK_SPEED if energy > 5.0 else 105.0
         var velocity2 := move_vec.normalized() * foot_speed * minf(1.0, move_vec.length())
         var np2 := player_pos + velocity2 * delta
-        if not _point_blocked(np2, 12.0):
-            player_pos = np2
-            player_heading = velocity2.angle()
+        var safe_pos:=player_pos
+        if not _point_blocked(np2,12.0):
+            safe_pos=np2
+        else:
+            var step_x:=Vector2(np2.x,player_pos.y)
+            if not _point_blocked(step_x,12.0):
+                safe_pos.x=step_x.x
+            var step_y:=Vector2(safe_pos.x,np2.y)
+            if not _point_blocked(step_y,12.0):
+                safe_pos.y=step_y.y
+        player_pos=safe_pos
+        player_heading=velocity2.angle()
     player_pos.x = clampf(player_pos.x, 20.0, WORLD_SIZE.x-20.0)
     player_pos.y = clampf(player_pos.y, 20.0, WORLD_SIZE.y-20.0)
     if move_vec.length() > 0.08:
@@ -4673,8 +5094,11 @@ func _update_ui() -> void:
         scan_button.disabled=true
         return
     scan_button.disabled=false
+    if tracking_label!=null:
+        tracking_label.text=("KOPF · "+camera_tracking_state) if camera_tracking_enabled else "PERSPEKTIVE · Touch / Neigung"
+        tracking_label.modulate=Color("#73f3ce") if camera_tracking_state=="Gesicht erkannt" and camera_tracking_enabled else Color("#9cb9c4")
     var chapter: Dictionary = Dictionary(native_chapters[mini(native_chapter,native_chapters.size()-1)]) if native_chapters.size()>0 else {"title":"Explore","desc":""}
-    mission_label.text = str(chapter.title)
+    mission_label.text = "%s · %d/%d" % [str(chapter.title),mini(_chapter_progress(chapter),int(chapter.get("goal",1))),int(chapter.get("goal",1))]
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
     elif not active_job.is_empty():
@@ -5001,11 +5425,13 @@ func _draw() -> void:
     _draw_water()
     _draw_parks()
     _draw_roads()
+    CityArt.draw_street_pools(self)
     _draw_vertical_slice_road_materials()
     _draw_buildings()
     _draw_landmarks()
     _draw_trees()
     _draw_vegetation_props()
+    CityArt.draw_street_ensembles(self)
     _draw_storefronts()
     _draw_vertical_slice_architecture()
     _draw_named_npcs()
@@ -5130,31 +5556,8 @@ func _draw_rotated_texture(texture: Texture2D, center: Vector2, size: Vector2, a
     draw_set_transform(Vector2.ZERO,0.0,Vector2.ONE)
 
 func _draw_vertical_slice_road_materials() -> void:
-    if not _world_rect_visible(VISUAL_SLICE_RECT.grow(350.0)):
-        return
-    if graphics_quality==0:
-        return
-    var road_scale:=clampf(world_zoom,0.80,1.75)
-    for road in roads:
-        var pts: PackedVector2Array=road.points
-        for k in range(4,97,4):
-            var t:=float(k)/100.0
-            var wp:=_sample_polyline(pts,t)
-            if not _in_visual_slice(wp,180.0):
-                continue
-            var tan:=_polyline_tangent(pts,t)
-            var angle:=tan.angle()
-            var center:=_project(wp,0.25)
-            var seg_len:=125.0*road_scale
-            var asphalt_w:=maxf(24.0,float(road.width)-6.0)*road_scale
-            _draw_rotated_texture(VS_ASPHALT,center,Vector2(seg_len,asphalt_w),angle,Color(1,1,1,0.34))
-            var normal:=Vector2(-tan.y,tan.x)
-            var sidewalk_offset:=(float(road.width)*0.5+20.0)*world_zoom
-            var sidewalk_w:=23.0*road_scale
-            for side_sign in [-1.0,1.0]:
-                var sw_center:=center+normal*sidewalk_offset*float(side_sign)
-                _draw_rotated_texture(VS_SIDEWALK,sw_center,Vector2(seg_len,sidewalk_w),angle,Color(1,1,1,0.48))
-                draw_line(sw_center-tan*seg_len*0.48,sw_center+tan*seg_len*0.48,Color(0.95,0.88,0.72,0.12),1.2*road_scale,true)
+    # Material now belongs to the road bed pass, below lane paint.
+    pass
 
 func _draw_vertical_slice_architecture() -> void:
     if not _world_rect_visible(VISUAL_SLICE_RECT.grow(400.0)):
@@ -5189,7 +5592,7 @@ func _draw_vertical_slice_architecture() -> void:
     ]
     for i in range(0,palm_positions.size(),quality_step):
         var wp:=Vector2(palm_positions[i])
-        if player_pos.distance_to(wp)>1850.0:
+        if player_pos.distance_to(wp)>1850.0 or _point_on_road(wp) or _point_in_building(wp):
             continue
         var base:=_project(wp,0.0)
         var scale:=clampf(world_zoom*0.34,0.48,0.96)
@@ -5204,7 +5607,7 @@ func _draw_vertical_slice_architecture() -> void:
     ]
     for i in range(0,corner_positions.size(),quality_step):
         var cp_world:=Vector2(corner_positions[i])
-        if player_pos.distance_to(cp_world)>1900.0:
+        if player_pos.distance_to(cp_world)>1900.0 or _point_on_road(cp_world) or _point_in_building(cp_world):
             continue
         var cp:=_project(cp_world,5.0)
         var glow:=0.55+0.45*sin(float(Time.get_ticks_msec())/420.0+float(i))
@@ -5234,7 +5637,8 @@ func _draw_district_ground() -> void:
         if not _world_rect_visible(r):
             continue
         var p := _project(r.position)
-        draw_rect(Rect2(p,r.size*world_zoom),d.ground)
+        draw_rect(Rect2(p,r.size*world_zoom),Color(d.ground).lightened(0.10))
+        CityArt.draw_pavers(self,d)
         _draw_district_tile_pattern(d)
         var accent: Color = d.accent
         accent.a = 0.06
@@ -5341,31 +5745,7 @@ func _draw_water() -> void:
         draw_rect(Rect2(p+Vector2(3,3),r.size*world_zoom-Vector2(6,6)),Color(0.55,0.85,1.0,0.10),false,3.0)
 
 func _draw_roads() -> void:
-    for road in roads:
-        var pts: PackedVector2Array = road.points
-        var screen := PackedVector2Array()
-        for p in pts:
-            screen.append(_project(p))
-        var road_scale:=clampf(world_zoom,0.78,1.65)
-        draw_polyline(screen,Color("#0e151a"),(float(road.width)+42.0)*road_scale,true)
-        draw_polyline(screen,Color("#67737a"),(float(road.width)+24.0)*road_scale,true)
-        draw_polyline(screen,Color("#29343b"),float(road.width)*road_scale,true)
-        draw_polyline(screen,Color(1.0,0.88,0.58,0.16),3.0*road_scale,true)
-        draw_polyline(screen,Color(0.72,0.82,0.85,0.10),maxf(2.0,float(road.width)-20.0)*road_scale,true)
-        var weather := _weather_state()
-        if weather in ["rain","storm"]:
-            var wet_strength := 0.10 if weather=="rain" else 0.16
-            draw_polyline(screen,Color(0.52,0.72,0.82,wet_strength),maxf(2.0,float(road.width)-12.0)*road_scale,true)
-            draw_polyline(screen,Color(0.80,0.92,1.0,wet_strength*0.45),2.0*road_scale,true)
-        for k in range(3, 98, 6):
-            var t := float(k)/100.0
-            var wp := _sample_polyline(pts,t)
-            var tan := _polyline_tangent(pts,t)
-            var cpos := _project(wp,1.0)
-            draw_line(cpos-tan*14.0*road_scale,cpos+tan*14.0*road_scale,Color(0.92,0.89,0.72,0.48),3.0*road_scale,true)
-        _draw_sidewalk_tiles(road)
-        _draw_road_surface_details(road)
-    _draw_junction_overlays()
+    CityArt.draw_roads(self)
 
 func _draw_road_surface_details(road: Dictionary) -> void:
     if graphics_quality<=0:
@@ -5415,22 +5795,10 @@ func _draw_junction_overlays() -> void:
         if player_pos.distance_to(wp)>1900.0:
             continue
         var p := _project(wp,1.0)
-        var wa: float = float(roads[int(j.a)].width)
-        var wb: float = float(roads[int(j.b)].width)
+        var wa: float = float(roads[int(j.a)].width)*world_zoom
+        var wb: float = float(roads[int(j.b)].width)*world_zoom
         if not bool(j.bridge):
-            # True same-level intersection: one unified asphalt plate with lane/crosswalk logic.
-            draw_rect(Rect2(p-Vector2(wb*0.52,wa*0.52),Vector2(wb*1.04,wa*1.04)),Color("#2b363d"),true)
-            draw_rect(Rect2(p-Vector2(wb*0.52,wa*0.52),Vector2(wb*1.04,wa*1.04)),Color(1,1,1,0.035),false,1.0)
-            for k in [-1,1]:
-                for n in range(-3,4):
-                    draw_rect(Rect2(p+Vector2(float(n)*13-4,float(k)*wa*0.43-3),Vector2(8,6)),Color(0.92,0.92,0.86,0.34),true)
-                    draw_rect(Rect2(p+Vector2(float(k)*wb*0.43-3,float(n)*13-4),Vector2(6,8)),Color(0.92,0.92,0.86,0.34),true)
-            var a_green: bool = _junction_green(j,int(j.a))
-            var b_green: bool = _junction_green(j,int(j.b))
-            for corner in [Vector2(-wb*0.43,-wa*0.43),Vector2(wb*0.43,wa*0.43)]:
-                draw_circle(p+corner,4,Color("#63e28b") if a_green else Color("#ff665d"))
-            for corner in [Vector2(wb*0.43,-wa*0.43),Vector2(-wb*0.43,wa*0.43)]:
-                draw_circle(p+corner,4,Color("#63e28b") if b_green else Color("#ff665d"))
+            CityArt.draw_junction(self,j)
         else:
             var over: int = int(j.over)
             var over_vertical: bool = over<10
@@ -5475,42 +5843,8 @@ func _draw_parks() -> void:
 
 func _draw_buildings() -> void:
     for b in buildings:
-        var r: Rect2 = b.rect
-        if not _world_rect_visible(r.grow(260)):
-            continue
-        var z: float = b.height
-        var base := [_project(r.position),_project(Vector2(r.end.x,r.position.y)),_project(r.end),_project(Vector2(r.position.x,r.end.y))]
-        var top := [_project(r.position,z),_project(Vector2(r.end.x,r.position.y),z),_project(r.end,z),_project(Vector2(r.position.x,r.end.y),z)]
-        var roof_poly := PackedVector2Array([top[0],top[1],top[2],top[3]])
-        var shadow_shift := view_amount * z * 0.22 + Vector2(8,12)
-        draw_colored_polygon(PackedVector2Array([base[0]+shadow_shift,base[1]+shadow_shift,base[2]+shadow_shift,base[3]+shadow_shift]),Color(0,0,0,0.16))
-        for edge in range(4):
-            var next := (edge+1)%4
-            var face := PackedVector2Array([base[edge],base[next],top[next],top[edge]])
-            var shade := 0.12 + 0.09 * float(edge)
-            var fc: Color = b.wall.darkened(shade)
-            fc.a = 0.95
-            draw_colored_polygon(face,fc)
-            if _in_visual_slice(r.get_center(),80.0):
-                draw_polyline(PackedVector2Array([face[0],face[1],face[2],face[3],face[0]]),Color(0.025,0.030,0.038,0.60),1.8*clampf(world_zoom,0.85,1.55),true)
-            _draw_facade_face(b,base[edge],base[next],top[next],top[edge],edge)
-        draw_colored_polygon(roof_poly,b.roof)
-        if _in_visual_slice(r.get_center(),80.0):
-            var roof_inner:=PackedVector2Array()
-            var rc:=Vector2.ZERO
-            for rp in roof_poly:
-                rc+=rp
-            rc/=4.0
-            for rp in roof_poly:
-                roof_inner.append(rc+(rp-rc)*0.88)
-            draw_colored_polygon(roof_inner,Color(b.roof).lightened(0.035))
-            draw_polyline(PackedVector2Array([roof_poly[0],roof_poly[1],roof_poly[2],roof_poly[3],roof_poly[0]]),Color(0.02,0.025,0.03,0.72),2.2*clampf(world_zoom,0.85,1.55),true)
-        var glow: Color = b.accent
-        glow.a = 0.11 + minf(0.22,view_amount.length()*0.16)
-        draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),Color(1,1,1,0.12),1.2,true)
-        draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),glow,4.2,true)
-        _draw_roof_detail(b,top)
-        _draw_massing_detail(b,top)
+        if _world_rect_visible(Rect2(b.rect).grow(float(b.height)+100)):
+            CityArt.draw_building(self,b)
 
 func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Vector2, edge: int) -> void:
     var height_vec := d-a
@@ -6699,6 +7033,10 @@ func _draw_pedestrians() -> void:
         var base := _project(pos,0)
         var pelvis := _project(pos,10)
         var head := _project(pos,19)
+        var body_scale:=clampf(world_zoom,0.85,2.65)
+        draw_set_transform(pelvis*(1.0-body_scale),0.0,Vector2.ONE*body_scale)
+        base=pelvis+(base-pelvis)/body_scale
+        head=pelvis+(head-pelvis)/body_scale
         var phase := float(ped.phase)
         var state:=str(ped.get("state","walk"))
         var moving:=state in ["walk","cross"]
@@ -6782,6 +7120,7 @@ func _draw_pedestrians() -> void:
             var umb_color: Color = [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
             draw_arc(canopy,10.5,PI,TAU,18,umb_color,3.4,true)
             draw_line(canopy+Vector2(0,1),pelvis+Vector2(3,7),Color("#aebac0"),1.4,true)
+        draw_set_transform(Vector2.ZERO,0.0,Vector2.ONE)
 
 func _draw_traffic() -> void:
     for c in traffic:
@@ -6950,8 +7289,11 @@ func _draw_parked_cars() -> void:
         _draw_car(c.pos,c.heading,c["class"],c.color,true)
 
 func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: bool, archetype: String = "") -> void:
+    if graphics_quality>0:
+        CityArt.draw_vehicle(self,pos,heading,cls,color,parked,archetype)
+        return
     var sz: Vector2 = VEHICLE_SIZES.get(cls,Vector2(45,22))
-    var object_zoom:=clampf(pow(world_zoom,0.34),0.92,1.30)
+    var object_zoom:=world_zoom
     sz*=object_zoom
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
@@ -6983,7 +7325,7 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
         center-f*sz.x*rear+side*sz.y*.50
     ])
     draw_colored_polygon(pts,color)
-    draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.20),1.2,true)
+    draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color("#0e131b"),2.0*world_zoom,true)
     # Body shoulder line and hood highlight improve silhouette separation.
     draw_line(center-f*sz.x*.28+side*sz.y*.34,center+f*sz.x*.36+side*sz.y*.34,Color(1,1,1,0.10),1.3,true)
     draw_line(center+f*sz.x*.12-side*sz.y*.28,center+f*sz.x*.42-side*sz.y*.16,Color(1,1,1,0.075),1.1,true)
@@ -7203,6 +7545,11 @@ func _draw_player() -> void:
     var pelvis := _project(player_pos,10)
     var chest := _project(player_pos,17)
     var head := _project(player_pos,24)
+    var body_scale:=clampf(world_zoom,0.85,2.65)
+    draw_set_transform(pelvis*(1.0-body_scale),0.0,Vector2.ONE*body_scale)
+    foot=pelvis+(foot-pelvis)/body_scale
+    chest=pelvis+(chest-pelvis)/body_scale
+    head=pelvis+(head-pelvis)/body_scale
     var f := Vector2.from_angle(player_heading)
     var side := Vector2(-f.y,f.x)
     var walking := move_vec.length() > 0.08
@@ -7229,6 +7576,7 @@ func _draw_player() -> void:
     var pack := chest - f*4.0
     draw_rect(Rect2(pack-Vector2(3,4),Vector2(6,8)),Color("#20343f"),true)
     draw_circle(pack+Vector2(0,-1),1.6,Color("#73f3ce"))
+    draw_set_transform(Vector2.ZERO,0.0,Vector2.ONE)
 
 func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vector2) -> void:
     if kind in ["garage","workshop","home"]:
@@ -7626,6 +7974,7 @@ func _start_minigame(site: Dictionary) -> void:
     active_mission_replay = bool(hack_done.get(sid,false))
     active_mission_site = site
     game_type = str(site.game)
+    minigame_finishing=false
     minigame_open = true
     map_open = false
     missions_open = false
@@ -7657,8 +8006,9 @@ func _close_minigame() -> void:
     move_vec = Vector2.ZERO
 
 func _finish_minigame() -> void:
-    if active_mission_site.is_empty():
+    if active_mission_site.is_empty() or minigame_finishing:
         return
+    minigame_finishing=true
     var sid: String = str(active_mission_site.id)
     var site_name: String = str(active_mission_site.name)
     var site_reward: String = str(active_mission_site.reward)
@@ -7674,6 +8024,8 @@ func _finish_minigame() -> void:
     _haptic(55)
     game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if was_replay else "%s erhalten" % site_reward),reward_credits]
     await get_tree().create_timer(0.65).timeout
+    if not minigame_open or str(active_mission_site.get("id",""))!=sid:
+        return
     _close_minigame()
     _show_reward_popup("HACK ERFOLGREICH",("%s\n%s · +%d CR" % [site_name,("Replay" if was_replay else site_reward),reward_credits]),Color("#ffdf75"))
     _notify("%s %s." % [site_name,("wiederholt" if was_replay else "abgeschlossen")])
@@ -8179,7 +8531,7 @@ func _start_game_from_slot(slot: int, fresh: bool) -> void:
     queue_redraw()
 
 func _reset_game_state() -> void:
-    player_pos=Vector2(5200,4200)
+    player_pos=Vector2(5100,4220)
     camera_pos=player_pos
     credits=520
     energy=100.0
@@ -8215,6 +8567,13 @@ func _reset_game_state() -> void:
     vehicle_upgrades.clear()
     milestones_claimed.clear()
     active_race={}
+    photo_found.clear()
+    photo_scores.clear()
+    micro_event_seen.clear()
+    micro_event_choices.clear()
+    city_reputation=0
+    transit_transfer_count=0
+    accident_count=0
     for i in range(photo_points.size()):
         photo_points[i]["taken"]=false
     inventory={"scan_cell":0,"energy_drink":0,"transit_pass":0}
@@ -8300,7 +8659,9 @@ func _refresh_option_labels() -> void:
     var qualities := ["ECO","BALANCED","HIGH"]
     graphics_option_button.text="Grafik · %s" % qualities[graphics_quality]
     pmdd_option_button.text="PMDD Tiefe · %.2fx" % parallax_strength
-    sensor_option_button.text="Headtracking · %.1fx · %s" % [sensor_gain,("GYRO" if headtrack_sensor_mode=="gyro_gravity" else headtrack_sensor_mode.to_upper())]
+    sensor_option_button.text="Neigungssteuerung · %.1fx · %s" % [sensor_gain,("GYRO" if headtrack_sensor_mode=="gyro_gravity" else headtrack_sensor_mode.to_upper())]
+    if camera_option_button!=null:
+        camera_option_button.text="Kamera-Headtracking · %s" % ("AN" if camera_tracking_enabled else "AUS")
     if drive_option_button!=null:
         drive_option_button.text="Fahrhilfe · %s" % ("AN" if driving_assist else "AUS")
     if haptics_option_button!=null:
@@ -8309,7 +8670,7 @@ func _refresh_option_labels() -> void:
 func _save_options() -> void:
     var f := FileAccess.open("user://parallaxhunt_options.json",FileAccess.WRITE)
     if f:
-        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain,"drive_assist":driving_assist,"haptics":haptics_enabled}))
+        f.store_string(JSON.stringify({"sound":sound_enabled,"graphics":graphics_quality,"pmdd":parallax_strength,"sensor":sensor_gain,"drive_assist":driving_assist,"haptics":haptics_enabled,"camera_tracking":camera_tracking_enabled}))
 
 func _load_options() -> void:
     if not FileAccess.file_exists("user://parallaxhunt_options.json"):
@@ -8325,45 +8686,22 @@ func _load_options() -> void:
         sensor_gain=float(d.get("sensor",sensor_gain))
         driving_assist=bool(d.get("drive_assist",driving_assist))
         haptics_enabled=bool(d.get("haptics",haptics_enabled))
+        camera_tracking_enabled=bool(d.get("camera_tracking",false))
 
 func _draw_title_art() -> void:
-    var size := get_viewport_rect().size
-    var t := Time.get_ticks_msec()/1000.0
-    # Atmospheric gradient bands.
-    draw_rect(Rect2(Vector2.ZERO,size),Color("#07131b"),true)
-    draw_rect(Rect2(0,size.y*0.38,size.x,size.y*0.62),Color("#0d2029"),true)
-    var horizon := size.y*0.43
-    # Three PMDD skyline layers with slow independent drift.
-    for layer in range(3):
-        var layer_y := horizon + float(layer)*85.0
-        var alpha := 0.24+float(layer)*0.17
-        var drift := sin(t*(0.18+float(layer)*0.05))*18.0*float(layer+1)
-        for i in range(13):
-            var w := 60.0+float((i*37+layer*29)%70)
-            var h := 110.0+float((i*71+layer*43)%230)
-            var x := -40.0+float(i)*92.0+drift
-            var col := Color(0.12+layer*0.035,0.26+layer*0.045,0.32+layer*0.05,alpha)
-            draw_rect(Rect2(x,layer_y-h,w,h),col,true)
-            if (i+layer)%3==0:
-                draw_line(Vector2(x+8,layer_y-h+18),Vector2(x+w-8,layer_y-h+18),Color(0.45,0.95,0.82,0.10+alpha*0.35),2.0)
-    # Perspective road.
-    var road_top := Vector2(size.x*0.5,horizon+120)
-    var road_bottom_y := size.y
-    var road_poly := PackedVector2Array([
-        road_top+Vector2(-55,0),road_top+Vector2(55,0),
-        Vector2(size.x*0.88,road_bottom_y),Vector2(size.x*0.12,road_bottom_y)
-    ])
-    draw_colored_polygon(road_poly,Color("#111b21"))
-    for k in range(8):
-        var yy := lerpf(road_top.y,road_bottom_y,float(k)/8.0)
-        var span := lerpf(8.0,170.0,float(k)/8.0)
-        draw_line(Vector2(size.x*0.5-span*0.08,yy),Vector2(size.x*0.5+span*0.08,yy),Color(0.85,0.90,0.82,0.26),3.0)
-    # PMDD secret pulse.
-    var pulse := Vector2(size.x*0.5,horizon-145)
-    var pr := 42.0+sin(t*2.0)*8.0
-    draw_circle(pulse,pr,Color(0.45,0.95,0.82,0.035))
-    draw_arc(pulse,pr,0,TAU,36,Color(0.45,0.95,0.82,0.33),2.0,true)
-    draw_arc(pulse,pr*0.55,t*0.3,t*0.3+PI*1.55,28,Color("#9ad5ff"),2.0,true)
+    _draw_district_ground()
+    _draw_water()
+    _draw_parks()
+    _draw_roads()
+    CityArt.draw_street_pools(self)
+    _draw_buildings()
+    _draw_landmarks()
+    _draw_trees()
+    CityArt.draw_street_ensembles(self)
+    _draw_storefronts()
+    _draw_traffic()
+    _draw_parked_cars()
+    draw_rect(get_viewport_rect(),Color(0.02,0.04,0.06,0.24))
 
 func _save_path(slot: int = selected_save_slot) -> String:
     return "user://parallaxhunt_save_%d.json" % clampi(slot,1,3)
@@ -8385,6 +8723,9 @@ func _save_game() -> void:
         "chapter":native_chapter,
         "inventory":inventory,
         "shop_stock":shop_stock,
+        "save_version":2,
+        "fragments":fragments.map(func(x): return bool(x.taken)),
+        "secrets":secrets.map(func(x): return bool(x.found)),
         "frag_count":mission_fragments,
         "secret_count":mission_secrets,
         "cache_count":cache_count,
@@ -8449,6 +8790,8 @@ func _load_game(slot: int = selected_save_slot) -> void:
     native_chapter = int(d.get("chapter",0))
     inventory = Dictionary(d.get("inventory",inventory))
     shop_stock = Dictionary(d.get("shop_stock",shop_stock))
+    _restore_collectible_flags(fragments,d.get("fragments",[]),"taken",int(d.get("frag_count",0)))
+    _restore_collectible_flags(secrets,d.get("secrets",[]),"found",int(d.get("secret_count",0)))
     mission_fragments = int(d.get("frag_count",0))
     mission_secrets = int(d.get("secret_count",0))
     cache_count = int(d.get("cache_count",0))
@@ -9693,7 +10036,10 @@ func _project(world: Vector2, z: float = 0.0) -> Vector2:
         else:
             frame_y=104.0
     screen_center.y+=frame_y
-    var par := view_amount * z * parallax_strength * 0.72
+    var projection_tilt:=Vector2(0.22,-0.52)+view_amount*parallax_strength*0.43
+    projection_tilt*=1.0+camera_head_depth*0.35
+    projection_tilt.y=clampf(projection_tilt.y,-1.30,-0.16)
+    var par := projection_tilt*z
     var shake := Vector2.ZERO
     if camera_shake_strength>0.01:
         shake=Vector2(sin(camera_shake_phase*1.7),cos(camera_shake_phase*2.3))*camera_shake_strength

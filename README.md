@@ -1,6 +1,44 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.20.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.21.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+
+## 1.21.0 — City, camera and first-minute rebuild
+
+- 1,299 additional street-facing blocks bring the city to 2,085 buildings. Authored comic facade textures, amber windows, blue storefronts, ink contours, cornices and roof equipment replace the flat facade treatment throughout the street renderer.
+- Streets use textured asphalt, correctly scaled lane markings and crossings, tiled sidewalks, warm lamps, palms, cafe umbrellas, benches and planters. Furniture is kept clear of every carriageway, including intersecting roads.
+- Twelve vehicle sprites cover the ten civilian classes, response cars and ambulances, with heading rotation, headlights, brake lights and emergency lighting.
+- The pedestrian camera now runs at 2.65x zoom. Buildings retain visible depth at rest; motion adds smooth perspective and camera lead. Pedestrians and vehicles scale with the world instead of remaining tiny at close zoom.
+- The first five Echo signals, a parked hatchback, a simple wire terminal and a jobboard are near the starting neighborhood. Twelve existing pedestrians and three civilian cars populate its boulevard without increasing the simulation count. Existing collectible IDs and vehicle indices remain stable.
+- The compact HUD shows the next mission and its progress. INFO opens details; interface touches are handled before world movement. Pedestrians slide along walls instead of sticking on diagonal movement.
+- Optional **real front-camera headtracking** uses Camera2 and the bundled ML Kit face detector. Face position, distance and head angles drive perspective; recentering, smoothing, pause/resume and gyro fallback are integrated. Camera permission is requested when the option is enabled. Frames are processed in memory.
+- Photo Hunt remains a stationary, native 3D challenge. Its camera responds to headtracking, buildings share the new facade atlas, and its viewport stops rendering when closed. Covered observation points are cleared; long road segments are clipped into the local scene instead of disappearing. Target visibility uses a 3D segment/box test, and all 25 spots are checked for roads and visible subjects.
+- Hacking grants its reward once. New games clear previous photo/event progress; collected fragments and secrets now persist across save/load.
+
+### Install and play
+
+The delivered **Parallax Hunt · Preview** APK installs as `com.kosch.parallaxhunt.preview` alongside the previous app. The old debug signing key was unavailable, so the preview keeps the previous installation and its saves intact. The preview starts with separate saves. The standard `Android` export preset retains the original app ID.
+
+Use the left joystick to walk or drive, the right side to adjust perspective, INTERACT for nearby actions and SCAN for signals. For camera tracking, enable **Kamera-Headtracking** in options, grant camera access and use the recenter button while looking at the phone. Without camera tracking, touch and phone tilt remain available. On desktop: WASD/arrows, E to interact, Q to scan, right drag for perspective, C to recenter and Escape to close a panel.
+
+### Build and validation
+
+Install Godot **4.7.2** and its matching Android export templates, Java 17, Android platform 36 and build-tools 36.1.0. Enable the included editor plugin, then prepare the official template before exporting:
+
+```bash
+python3 scripts/prepare_android.py --template /path/to/android_source.zip
+godot --headless --editor --path . --import --quit
+godot --headless --path . -- --city-smoke
+godot --headless --path . -- --photo-smoke
+godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.21.0-preview.apk
+```
+
+Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs both smoke tests and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
+
+The private source archive supplied with this build includes `signing/debug.keystore` for subsequent local test builds. Use `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` to point to it (debug alias `androiddebugkey`, password `android`). The key is excluded from the repository. CI can reuse it through the optional `PARALLAX_DEBUG_KEYSTORE_BASE64` repository secret; otherwise a CI run creates its own test key.
+
+Checks cover a walkable start and nearby signals, street-furniture placement, depth at rest, movement lock and viewport lifecycle in Photo Hunt, camera-pose response, one hacking reward, collectible persistence and new-game reset. OpenGL screenshots were inspected as well. Actual camera behavior, thermals and performance on the user's Android device still require a hardware test. This remains an alpha with a 2.5D street renderer and a separate native 3D photo scene.
+
+Older saves recorded collectible totals without IDs. On migration, the first matching number of flags is marked consumed to preserve those totals; the exact previously collected positions cannot be reconstructed.
 
 ## 1.20.0 — Modular City Vertical Slice
 

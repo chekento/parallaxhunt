@@ -1,5 +1,17 @@
 # Native Roadmap
 
+## 1.21.0 — current delivered build
+
+- Expanded authored street blocks, facade/asphalt/vehicle atlases and sidewalk ensembles across the city.
+- Close pedestrian camera with stable depth, consistent object scaling and wall sliding.
+- Nearby starter signals, car, wire terminal and jobboard; compact mission HUD.
+- Camera2 + bundled ML Kit front-camera tracker implemented, with calibration, position/pose mapping, lifecycle handling and gyro fallback.
+- Stationary 3D Photo Hunt uses the facade atlas and suspends its viewport when closed.
+- One-shot hacking rewards and persistent fragment/secret flags; clean new-game reset.
+- Local Android export, city/gameplay smoke, photo smoke and OpenGL screenshot inspection are part of validation.
+
+Next priorities are real-device tracking/performance measurements, more district-specific artwork and character animation, and richer mission pacing. The street view remains 2.5D; native 3D is used in Photo Hunt.
+
 ## Alpha 1 — engine migration
 - Native Godot renderer and Android APK
 - Multitouch movement + perspective peek
@@ -13,11 +25,10 @@
 - Interiors, garages, house ownership, vehicle storage/paint
 - Bus/tram timetables and traffic-light state machine
 
-## Alpha 3 — camera head tracking
-- Android CameraX front-camera plugin
-- MediaPipe Face Landmarker native bridge
-- head-pose calibration + iris micro-parallax
-- camera privacy/status UI and power-aware tracking rate
+## Camera tracking follow-up
+- Camera2 + ML Kit position/pose bridge is implemented in 1.21.0.
+- Validate camera orientation, permissions and tracking latency on physical devices.
+- Profile power use and tune processing rate against the game's frame budget.
 
 ## Visual polish
 - authored modular building kits per district
