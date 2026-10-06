@@ -71,6 +71,27 @@ var glyph_count: int = 0
 var photo_points: Array = []
 var photo_count: int = 0
 var photo_flash_alpha: float = 0.0
+var photo_mode: bool = false
+var active_photo_index: int = -1
+var photo_targets: Array = []
+var photo_found: Dictionary = {}
+var photo_yaw: float = 0.0
+var photo_pitch: float = -0.10
+var photo_fov: float = 68.0
+var photo_drag_touch: int = -1
+var photo_drag_last := Vector2.ZERO
+var photo_viewport: SubViewport
+var photo_view_rect: TextureRect
+var photo_world_root: Node3D
+var photo_camera: Camera3D
+var photo_target_label: Label
+var photo_status_label: Label
+var photo_shutter_button: Button
+var photo_exit_button: Button
+var photo_hint_button: Button
+var photo_zoom_in_button: Button
+var photo_zoom_out_button: Button
+var photo_dynamic_cars: Dictionary = {}
 var scan_points: Array = []
 var scan_collect_count: int = 0
 var visited_districts: Dictionary = {}
@@ -218,6 +239,7 @@ func _ready() -> void:
     _build_transit_stops()
     _generate_collectibles()
     _build_ui()
+    _build_photo_3d_system()
     _build_audio()
     _bootstrap_android_camera()
     camera_pos = player_pos
@@ -232,7 +254,9 @@ func _process(delta: float) -> void:
         world_clock = fposmod(world_clock + delta * 0.006,24.0)
         queue_redraw()
         return
-    if interior_active:
+    if photo_mode:
+        target_world_zoom = 1.0
+    elif interior_active:
         target_world_zoom = 1.0
     elif current_vehicle >= 0:
         target_world_zoom = 0.76
@@ -244,6 +268,8 @@ func _process(delta: float) -> void:
         _update_traffic(delta)
         _update_pedestrians(delta)
         _update_transit(delta)
+    if photo_mode:
+        _update_photo_3d_scene(delta)
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
     scan_time = maxf(0.0, scan_time - delta)
     photo_flash_alpha=maxf(0.0,photo_flash_alpha-delta*2.8)
@@ -264,6 +290,9 @@ func _process(delta: float) -> void:
     queue_redraw()
 
 func _input(event: InputEvent) -> void:
+    if photo_mode:
+        _input_photo_mode(event)
+        return
     if main_menu_active:
         return
     if event is InputEventScreenTouch:
@@ -1104,6 +1133,68 @@ func _build_ui() -> void:
     collection_button.pressed.connect(_toggle_collection)
     layer.add_child(collection_button)
 
+    photo_target_label = Label.new()
+    photo_target_label.position=Vector2(55,90)
+    photo_target_label.size=Vector2(970,115)
+    photo_target_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+    photo_target_label.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
+    photo_target_label.add_theme_font_size_override("font_size",25)
+    photo_target_label.modulate=Color("#f7fbff")
+    photo_target_label.visible=false
+    layer.add_child(photo_target_label)
+
+    photo_status_label = Label.new()
+    photo_status_label.position=Vector2(60,205)
+    photo_status_label.size=Vector2(960,80)
+    photo_status_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+    photo_status_label.add_theme_font_size_override("font_size",17)
+    photo_status_label.modulate=Color("#ffcf8a")
+    photo_status_label.visible=false
+    layer.add_child(photo_status_label)
+
+    photo_shutter_button = Button.new()
+    photo_shutter_button.text="📷 FOTO"
+    photo_shutter_button.position=Vector2(400,1910)
+    photo_shutter_button.size=Vector2(280,120)
+    photo_shutter_button.add_theme_font_size_override("font_size",27)
+    photo_shutter_button.visible=false
+    photo_shutter_button.pressed.connect(_photo_shutter)
+    layer.add_child(photo_shutter_button)
+
+    photo_exit_button = Button.new()
+    photo_exit_button.text="VERLASSEN"
+    photo_exit_button.position=Vector2(70,1940)
+    photo_exit_button.size=Vector2(220,90)
+    photo_exit_button.visible=false
+    photo_exit_button.pressed.connect(_exit_photo_mode)
+    layer.add_child(photo_exit_button)
+
+    photo_hint_button = Button.new()
+    photo_hint_button.text="HINWEIS"
+    photo_hint_button.position=Vector2(790,1940)
+    photo_hint_button.size=Vector2(220,90)
+    photo_hint_button.visible=false
+    photo_hint_button.pressed.connect(_photo_hint)
+    layer.add_child(photo_hint_button)
+
+    photo_zoom_in_button = Button.new()
+    photo_zoom_in_button.text="＋"
+    photo_zoom_in_button.position=Vector2(890,1680)
+    photo_zoom_in_button.size=Vector2(110,100)
+    photo_zoom_in_button.add_theme_font_size_override("font_size",30)
+    photo_zoom_in_button.visible=false
+    photo_zoom_in_button.pressed.connect(_photo_zoom.bind(-7.0))
+    layer.add_child(photo_zoom_in_button)
+
+    photo_zoom_out_button = Button.new()
+    photo_zoom_out_button.text="−"
+    photo_zoom_out_button.position=Vector2(890,1790)
+    photo_zoom_out_button.size=Vector2(110,100)
+    photo_zoom_out_button.add_theme_font_size_override("font_size",30)
+    photo_zoom_out_button.visible=false
+    photo_zoom_out_button.pressed.connect(_photo_zoom.bind(7.0))
+    layer.add_child(photo_zoom_out_button)
+
     game_panel = PanelContainer.new()
     game_panel.position = Vector2(105,420)
     game_panel.size = Vector2(870,1180)
@@ -1352,6 +1443,430 @@ func _haptic(duration_ms: int = 45) -> void:
     if OS.get_name()=="Android":
         Input.vibrate_handheld(duration_ms)
 
+func _build_photo_3d_system() -> void:
+    photo_viewport=SubViewport.new()
+    photo_viewport.size=Vector2i(1080,2340)
+    photo_viewport.render_target_update_mode=SubViewport.UPDATE_ALWAYS
+    photo_viewport.transparent_bg=false
+    add_child(photo_viewport)
+
+    photo_world_root=Node3D.new()
+    photo_viewport.add_child(photo_world_root)
+
+    var world_env := WorldEnvironment.new()
+    var env := Environment.new()
+    env.background_mode=Environment.BG_COLOR
+    env.background_color=Color("#9cc5d8")
+    env.ambient_light_source=Environment.AMBIENT_SOURCE_COLOR
+    env.ambient_light_color=Color("#d8e7ec")
+    env.ambient_light_energy=0.72
+    env.tonemap_mode=Environment.TONE_MAPPER_FILMIC
+    world_env.environment=env
+    photo_world_root.add_child(world_env)
+
+    var sun := DirectionalLight3D.new()
+    sun.rotation_degrees=Vector3(-54,-28,0)
+    sun.light_energy=1.15
+    sun.shadow_enabled=true
+    photo_world_root.add_child(sun)
+
+    photo_camera=Camera3D.new()
+    photo_camera.current=true
+    photo_camera.near=0.08
+    photo_camera.far=420.0
+    photo_camera.fov=photo_fov
+    photo_world_root.add_child(photo_camera)
+
+    photo_view_rect=TextureRect.new()
+    photo_view_rect.position=Vector2.ZERO
+    photo_view_rect.size=Vector2(1080,2340)
+    photo_view_rect.texture=photo_viewport.get_texture()
+    photo_view_rect.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+    photo_view_rect.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    photo_view_rect.visible=false
+    photo_view_rect.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    var layer := CanvasLayer.new()
+    layer.layer=-1
+    add_child(layer)
+    layer.add_child(photo_view_rect)
+
+func _photo_clear_3d_scene() -> void:
+    if photo_world_root==null:
+        return
+    for child in photo_world_root.get_children():
+        if child==photo_camera or child is WorldEnvironment or child is DirectionalLight3D:
+            continue
+        child.queue_free()
+    photo_dynamic_cars.clear()
+    photo_targets.clear()
+
+func _photo_material(color: Color, metallic: float = 0.0, roughness: float = 0.72) -> StandardMaterial3D:
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color=color
+    mat.metallic=metallic
+    mat.roughness=roughness
+    return mat
+
+func _photo_box(name_text: String, pos: Vector3, size: Vector3, color: Color, parent: Node3D = photo_world_root) -> MeshInstance3D:
+    var node := MeshInstance3D.new()
+    node.name=name_text
+    var mesh := BoxMesh.new()
+    mesh.size=size
+    node.mesh=mesh
+    node.position=pos
+    node.material_override=_photo_material(color)
+    parent.add_child(node)
+    return node
+
+func _photo_local(world: Vector2, center: Vector2, y: float = 0.0) -> Vector3:
+    return Vector3((world.x-center.x)*0.10,y,(world.y-center.y)*0.10)
+
+func _photo_build_scene(index: int) -> void:
+    _photo_clear_3d_scene()
+    var ph: Dictionary = photo_points[index]
+    var center: Vector2 = Vector2(ph.pos)
+    var radius: float = 1250.0
+
+    _photo_box("Ground",Vector3(0,-0.35,0),Vector3(260,0.6,260),Color("#596b62"))
+
+    # Roads become real 3D slabs around the fixed observation point.
+    for ri in range(roads.size()):
+        var road = roads[ri]
+        var pts: PackedVector2Array = road.points
+        for k in range(pts.size()-1):
+            var a: Vector2 = pts[k]
+            var b: Vector2 = pts[k+1]
+            var mid: Vector2 = (a+b)*0.5
+            if mid.distance_to(center)>radius+650.0:
+                continue
+            var la := _photo_local(a,center,0.0)
+            var lb := _photo_local(b,center,0.0)
+            var delta := lb-la
+            var length: float = Vector2(delta.x,delta.z).length()
+            if length<0.5:
+                continue
+            var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.02,0),Vector3(float(road.width)*0.10,0.10,length),Color("#30383d"))
+            slab.rotation.y=atan2(delta.x,delta.z)
+
+    # Nearby procedural buildings become 3D masses with roof caps and windows.
+    var built: int = 0
+    for bi in range(buildings.size()):
+        var b: Dictionary = buildings[bi]
+        var rect: Rect2 = b.rect
+        var bc: Vector2 = rect.get_center()
+        if bc.distance_to(center)>radius:
+            continue
+        var h: float = maxf(4.0,float(b.height)*0.075)
+        var local := _photo_local(bc,center,h*0.5)
+        var size := Vector3(rect.size.x*0.10,h,rect.size.y*0.10)
+        var body := _photo_box("Building_%d" % bi,local,size,Color(b.wall))
+        var roof := _photo_box("Roof_%d" % bi,local+Vector3(0,h*0.52,0),Vector3(size.x*0.94,0.35,size.z*0.94),Color(b.roof))
+        built+=1
+        if built>55:
+            break
+
+    # Landmark volumes get stronger silhouettes.
+    for li in range(landmarks.size()):
+        var l: Dictionary = landmarks[li]
+        var lp: Vector2 = Vector2(l.pos)
+        if lp.distance_to(center)>radius*1.25:
+            continue
+        var h: float = maxf(8.0,float(l.h)*0.085)
+        var sz: Vector2 = Vector2(l.size)*0.10
+        var local := _photo_local(lp,center,h*0.5)
+        var lm := _photo_box("Landmark_%s" % str(l.name),local,Vector3(maxf(8.0,sz.x),h,maxf(8.0,sz.y)),Color(l.accent).darkened(0.42))
+        var cap := _photo_box("LandmarkCap_%s" % str(l.name),local+Vector3(0,h*0.53,0),Vector3(maxf(6.0,sz.x*0.72),1.0,maxf(6.0,sz.y*0.72)),Color(l.accent))
+
+    # Trees as trunk/crown 3D forms.
+    var tree_count: int = 0
+    for tr in trees:
+        var tp: Vector2 = Vector2(tr.pos)
+        if tp.distance_to(center)>radius*0.80:
+            continue
+        var base := _photo_local(tp,center,0)
+        _photo_box("TreeTrunk",base+Vector3(0,2.2,0),Vector3(0.8,4.4,0.8),Color("#6c543d"))
+        var crown := SphereMesh.new()
+        crown.radius=maxf(1.5,float(tr.r)*0.12)
+        crown.height=crown.radius*2.0
+        var crown_node := MeshInstance3D.new()
+        crown_node.mesh=crown
+        crown_node.position=base+Vector3(0,5.5+crown.radius*0.5,0)
+        crown_node.material_override=_photo_material(Color(tr.tint))
+        photo_world_root.add_child(crown_node)
+        tree_count+=1
+        if tree_count>38:
+            break
+
+    # Static parked cars.
+    var parked_count: int = 0
+    for ci in range(parked_cars.size()):
+        var car: Dictionary = parked_cars[ci]
+        var cp: Vector2 = Vector2(car.pos)
+        if cp.distance_to(center)>radius:
+            continue
+        _photo_make_car("Parked_%d" % ci,cp,float(car.heading),str(car["class"]),Color(car.color),center,null)
+        parked_count+=1
+        if parked_count>22:
+            break
+
+    # Moving traffic is mirrored and updated each frame.
+    var traffic_count: int = 0
+    for ti in range(traffic.size()):
+        var trf: Dictionary = traffic[ti]
+        var tf := _traffic_world_transform(trf)
+        var wp: Vector2 = Vector2(tf.pos)
+        if wp.distance_to(center)>radius:
+            continue
+        var car_node := _photo_make_car("Traffic_%d" % ti,wp,Vector2(tf.tangent).angle(),str(trf["class"]),Color(trf.color),center,null)
+        photo_dynamic_cars[ti]=car_node
+        traffic_count+=1
+        if traffic_count>30:
+            break
+
+    _photo_spawn_targets(index,center)
+
+func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls: String, color: Color, center: Vector2, parent: Node3D = null) -> Node3D:
+    var root := Node3D.new()
+    root.name=name_text
+    (photo_world_root if parent==null else parent).add_child(root)
+    var sz: Vector2 = VEHICLE_SIZES.get(cls,Vector2(45,22))*0.10
+    var body := _photo_box(name_text+"_Body",Vector3(0,1.15,0),Vector3(sz.x,1.3,sz.y),color,root)
+    var cabin := _photo_box(name_text+"_Cabin",Vector3(-0.2,2.0,0),Vector3(sz.x*0.48,0.85,sz.y*0.78),Color("#74a7bd"),root)
+    if cls in ["suv","van","delivery"]:
+        cabin.scale.y=1.20
+    if cls in ["sport","hyper"]:
+        body.scale.y=0.72
+        cabin.scale.y=0.72
+    root.position=_photo_local(world_pos,center,0.0)
+    root.rotation.y=-heading+PI*0.5
+    return root
+
+func _photo_spawn_targets(index: int, center: Vector2) -> void:
+    var ph: Dictionary = photo_points[index]
+    var id: String = str(ph.id)
+    var templates := [
+        {"kind":"symbol","label":"Verstecktes PMDD-Symbol","hint":"Suche hoch an einer Fassade.","pos":Vector3(-18,13,-32)},
+        {"kind":"drone","label":"Kleine Wartungsdrohne","hint":"Sie schwebt über Straßenniveau.","pos":Vector3(27,17,-10)},
+        {"kind":"rarecar","label":"Seltenes Fahrzeugdetail","hint":"Achte auf ein auffällig leuchtendes Auto.","pos":Vector3(-30,2.8,22)}
+    ]
+    var offset_seed: int = abs(id.hash())%19
+    for i in range(templates.size()):
+        var t: Dictionary = templates[i].duplicate(true)
+        var p: Vector3 = Vector3(t.pos)
+        p.x += float((offset_seed+i*7)%13)-6.0
+        p.z += float((offset_seed+i*11)%17)-8.0
+        t["pos"]=p
+        t["key"]="%s_%d" % [id,i]
+        var root := Node3D.new()
+        root.name="PhotoTarget_%d" % i
+        root.position=p
+        photo_world_root.add_child(root)
+        if str(t.kind)=="symbol":
+            var mesh := SphereMesh.new()
+            mesh.radius=1.4
+            mesh.height=2.8
+            var node := MeshInstance3D.new()
+            node.mesh=mesh
+            node.material_override=_photo_material(Color("#ff73d1"),0.15,0.28)
+            root.add_child(node)
+            for a in range(3):
+                var ring := TorusMesh.new()
+                ring.inner_radius=1.8+float(a)*0.55
+                ring.outer_radius=2.05+float(a)*0.55
+                var ring_node := MeshInstance3D.new()
+                ring_node.mesh=ring
+                ring_node.rotation_degrees=Vector3(90,0,float(a)*35)
+                ring_node.material_override=_photo_material(Color(1.0,0.42,0.82,0.62),0.25,0.20)
+                root.add_child(ring_node)
+        elif str(t.kind)=="drone":
+            _photo_box("DroneBody",Vector3.ZERO,Vector3(3.2,0.9,2.2),Color("#dce8ec"),root)
+            for dx in [-2.1,2.1]:
+                for dz in [-1.5,1.5]:
+                    _photo_box("Rotor",Vector3(dx,0,dz),Vector3(1.8,0.15,1.8),Color("#35464f"),root)
+        else:
+            _photo_box("RareBody",Vector3.ZERO,Vector3(5.4,1.2,2.1),Color("#ff4f65"),root)
+            _photo_box("RareCabin",Vector3(-0.3,1.0,0),Vector3(2.4,0.8,1.65),Color("#68efd7"),root)
+        t["node"]=root
+        photo_targets.append(t)
+
+func _start_photo_challenge(index: int) -> void:
+    if index<0 or index>=photo_points.size() or bool(photo_points[index].taken):
+        return
+    active_photo_index=index
+    photo_mode=true
+    photo_yaw=0.0
+    photo_pitch=-0.08
+    photo_fov=68.0
+    photo_drag_touch=-1
+    move_vec=Vector2.ZERO
+    vehicle_velocity=0.0
+    if current_vehicle>=0:
+        parked_cars[current_vehicle]["occupied"]=true
+    _photo_build_scene(index)
+    _photo_show_ui(true)
+    photo_view_rect.visible=true
+    _photo_update_camera()
+    _photo_refresh_labels()
+    _play_sfx("mission")
+    _show_reward_popup("PHOTO CHALLENGE",str(photo_points[index].label)+"\nFinde und fotografiere alle versteckten Motive.",Color("#ffb3e6"))
+
+func _exit_photo_mode() -> void:
+    photo_mode=false
+    active_photo_index=-1
+    photo_drag_touch=-1
+    photo_view_rect.visible=false
+    _photo_show_ui(false)
+    _photo_clear_3d_scene()
+    queue_redraw()
+
+func _photo_show_ui(show: bool) -> void:
+    photo_target_label.visible=show
+    photo_status_label.visible=show
+    photo_shutter_button.visible=show
+    photo_exit_button.visible=show
+    photo_hint_button.visible=show
+    photo_zoom_in_button.visible=show
+    photo_zoom_out_button.visible=show
+
+func _input_photo_mode(event: InputEvent) -> void:
+    if event is InputEventScreenTouch:
+        var t := event as InputEventScreenTouch
+        if t.pressed and photo_drag_touch<0:
+            photo_drag_touch=t.index
+            photo_drag_last=t.position
+        elif not t.pressed and t.index==photo_drag_touch:
+            photo_drag_touch=-1
+    elif event is InputEventScreenDrag:
+        var d := event as InputEventScreenDrag
+        if d.index==photo_drag_touch:
+            var delta := d.position-photo_drag_last
+            photo_drag_last=d.position
+            photo_yaw=wrapf(photo_yaw-delta.x*0.0045,-PI,PI)
+            photo_pitch=clampf(photo_pitch-delta.y*0.0038,-0.72,0.48)
+            _photo_update_camera()
+
+func _photo_update_camera() -> void:
+    if photo_camera==null:
+        return
+    photo_camera.position=Vector3(0,6.2,0)
+    photo_camera.rotation=Vector3(photo_pitch,photo_yaw,0)
+    photo_camera.fov=photo_fov
+
+func _photo_zoom(amount: float) -> void:
+    photo_fov=clampf(photo_fov+amount,34.0,82.0)
+    _photo_update_camera()
+
+func _photo_center_target() -> Dictionary:
+    if photo_camera==null:
+        return {}
+    var center := Vector2(photo_viewport.size)*0.5
+    var best: Dictionary = {}
+    var best_d: float = 99999.0
+    for t in photo_targets:
+        var key := str(t.key)
+        if bool(photo_found.get(key,false)):
+            continue
+        var node: Node3D = t.node
+        if photo_camera.is_position_behind(node.global_position):
+            continue
+        var screen := photo_camera.unproject_position(node.global_position)
+        var d: float = screen.distance_to(center)
+        if d<best_d:
+            best_d=d
+            best=t
+    if best_d<115.0:
+        return best
+    return {}
+
+func _photo_shutter() -> void:
+    if not photo_mode:
+        return
+    photo_flash_alpha=1.0
+    _play_sfx("photo")
+    var target := _photo_center_target()
+    if target.is_empty():
+        photo_status_label.text="Kein Suchmotiv sauber im Sucher."
+        return
+    var key := str(target.key)
+    photo_found[key]=true
+    _show_reward_popup("MOTIV GEFUNDEN",str(target.label),Color("#ffb3e6"))
+    var node: Node3D = target.node
+    node.visible=false
+    _photo_refresh_labels()
+    var complete := true
+    for t in photo_targets:
+        if not bool(photo_found.get(str(t.key),false)):
+            complete=false
+            break
+    if complete:
+        _complete_photo_challenge()
+
+func _photo_refresh_labels() -> void:
+    if not photo_mode or active_photo_index<0:
+        return
+    var remaining: Array = []
+    var found_count: int = 0
+    for t in photo_targets:
+        if bool(photo_found.get(str(t.key),false)):
+            found_count+=1
+        else:
+            remaining.append(str(t.label))
+    photo_target_label.text="%s\nMotive %d / %d" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size()]
+    photo_status_label.text=("Noch suchen: "+", ".join(remaining)) if not remaining.is_empty() else "Alle Motive gefunden."
+
+func _photo_hint() -> void:
+    if not photo_mode:
+        return
+    for t in photo_targets:
+        if not bool(photo_found.get(str(t.key),false)):
+            photo_status_label.text="HINWEIS · "+str(t.hint)
+            return
+
+func _complete_photo_challenge() -> void:
+    if active_photo_index<0:
+        return
+    var ph: Dictionary = photo_points[active_photo_index]
+    if not bool(ph.taken):
+        photo_points[active_photo_index]["taken"]=true
+        photo_count+=1
+        credits+=int(ph.reward)
+        _save_game()
+        _advance_native_chapter()
+        _check_milestones()
+        _show_reward_popup("PHOTO SPOT ABGESCHLOSSEN","%s\n3 Motive · +%d CR" % [str(ph.label),int(ph.reward)],Color("#ffb3e6"))
+    await get_tree().create_timer(0.85).timeout
+    _exit_photo_mode()
+
+func _update_photo_3d_scene(_delta: float) -> void:
+    if active_photo_index<0:
+        return
+    var center: Vector2 = Vector2(photo_points[active_photo_index].pos)
+    for key in photo_dynamic_cars.keys():
+        var ti: int = int(key)
+        if ti<0 or ti>=traffic.size():
+            continue
+        var node: Node3D = photo_dynamic_cars[key]
+        if not is_instance_valid(node):
+            continue
+        var tf := _traffic_world_transform(traffic[ti])
+        var wp: Vector2 = Vector2(tf.pos)
+        node.position=_photo_local(wp,center,0.0)
+        node.rotation.y=-Vector2(tf.tangent).angle()+PI*0.5
+
+    # Add a subtle animation to photo targets.
+    var time := Time.get_ticks_msec()/1000.0
+    for i in range(photo_targets.size()):
+        var t: Dictionary = photo_targets[i]
+        var node: Node3D = t.node
+        if not is_instance_valid(node) or not node.visible:
+            continue
+        if str(t.kind)=="drone":
+            var base: Vector3 = Vector3(t.pos)
+            node.position=base+Vector3(sin(time*1.7+float(i))*2.0,sin(time*2.4)*0.8,cos(time*1.3+float(i))*1.4)
+        elif str(t.kind)=="symbol":
+            node.rotation.y=time*0.45
+    _photo_refresh_labels()
+
 func _build_audio() -> void:
     sfx_player = AudioStreamPlayer.new()
     sfx_player.volume_db = -7.0
@@ -1432,6 +1947,10 @@ func _update_sensor(delta: float) -> void:
     sensor_view = sensor_view.lerp(Vector2.ZERO, minf(1.0,delta*2.0))
 
 func _update_player(delta: float) -> void:
+    if photo_mode:
+        move_vec=Vector2.ZERO
+        vehicle_velocity=move_toward(vehicle_velocity,0.0,delta*620.0)
+        return
     if transit_riding >= 0:
         move_vec = Vector2.ZERO
         return
@@ -1871,6 +2390,14 @@ func _update_district() -> void:
         tw.tween_property(district_banner, "modulate:a", 0.0, 0.65)
 
 func _update_ui() -> void:
+    if photo_mode:
+        mission_label.text="PHOTO CHALLENGE"
+        detail_label.text="Position fixiert · Kamera drehen, zoomen und versteckte Motive fotografieren."
+        status_label.text="3D FOTO-MODUS · Bewegung gesperrt · Kamera aktiv"
+        interact_button.disabled=true
+        scan_button.disabled=true
+        return
+    scan_button.disabled=false
     var chapter: Dictionary = Dictionary(native_chapters[mini(native_chapter,native_chapters.size()-1)]) if native_chapters.size()>0 else {"title":"Explore","desc":""}
     mission_label.text = str(chapter.title)
     if interior_active:
@@ -1915,6 +2442,8 @@ func _scan() -> void:
         _notify("Scan aktiv · versteckte Signale in der Nähe werden sichtbar.")
 
 func _interact() -> void:
+    if photo_mode:
+        return
     if map_open or missions_open or minigame_open or dialogue_panel.visible:
         return
     var n := _nearest_interactable()
@@ -1989,20 +2518,7 @@ func _interact() -> void:
             _advance_native_chapter()
         return
     elif n.type == "photo":
-        var pidx: int = int(n.index)
-        var req: Vector2 = Vector2(photo_points[pidx].dir).normalized()
-        var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
-        if aligned and not bool(photo_points[pidx].taken):
-            photo_points[pidx]["taken"]=true
-            photo_count+=1
-            photo_flash_alpha=1.0
-            credits+=int(photo_points[pidx].reward)
-            _play_sfx("photo")
-            _notify("PHOTO HUNT · %s · +%d CR" % [str(photo_points[pidx].label),int(photo_points[pidx].reward)])
-            _save_game()
-            _advance_native_chapter()
-        else:
-            _notify("Bewege Blick/PMDD-Perspektive in die markierte Richtung.")
+        _start_photo_challenge(int(n.index))
         return
     elif n.type == "fragment":
         var idx: int = n.index
@@ -2090,10 +2606,8 @@ func _nearest_interactable() -> Dictionary:
         if bool(photo_points[pi].taken):
             continue
         var dphoto: float = player_pos.distance_to(Vector2(photo_points[pi].pos))
-        if dphoto < 135.0 and dphoto < bd:
-            var req: Vector2 = Vector2(photo_points[pi].dir).normalized()
-            var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
-            best = {"type":"photo","index":pi,"action":"FOTO ✓" if aligned else "BLICK AUSRICHTEN"}
+        if dphoto < 150.0 and dphoto < bd:
+            best = {"type":"photo","index":pi,"action":"PHOTO CHALLENGE"}
             bd = dphoto
     for i in range(fragments.size()):
         if fragments[i].taken:
@@ -2977,16 +3491,8 @@ func _draw_photo_points() -> void:
         draw_arc(p,14.0*pulse,0,TAU,26,Color("#ff9fdd"),2.0,true)
         draw_arc(p,8.0*pulse,-1.0,1.0,12,Color("#f2f8ff"),2.0,true)
         if player_pos.distance_to(Vector2(ph.pos))<180.0:
-            var req: Vector2 = Vector2(ph.dir).normalized()
-            var aligned: bool = view_amount.length()>0.28 and view_amount.normalized().dot(req)>0.72
             draw_string(ThemeDB.fallback_font,p+Vector2(-90,-30),str(ph.label),HORIZONTAL_ALIGNMENT_CENTER,180,12,Color.WHITE)
-            if not aligned:
-                var tip := p+req*38.0
-                var perp := Vector2(-req.y,req.x)
-                var arrow := PackedVector2Array([tip,tip-req*14.0+perp*7.0,tip-req*14.0-perp*7.0])
-                draw_colored_polygon(arrow,Color("#ffcf8a"))
-                draw_line(p+req*15.0,tip-req*8.0,Color("#ffcf8a"),2.5,true)
-            draw_string(ThemeDB.fallback_font,p+Vector2(-90,34),"AUSRICHTUNG OK" if aligned else "PMDD-BLICK AUSRICHTEN",HORIZONTAL_ALIGNMENT_CENTER,180,10,Color("#73f3ce") if aligned else Color("#ffcf8a"))
+            draw_string(ThemeDB.fallback_font,p+Vector2(-90,34),"PHOTO CHALLENGE STARTEN",HORIZONTAL_ALIGNMENT_CENTER,180,10,Color("#ffcf8a"))
 
 func _draw_transit_stops() -> void:
     for st in transit_stops:
@@ -4554,6 +5060,8 @@ func _reset_game_state() -> void:
     _save_game()
 
 func _return_to_main_menu() -> void:
+    if photo_mode:
+        _exit_photo_mode()
     _save_game()
     minigame_open=false
     game_panel.visible=false
@@ -4707,6 +5215,7 @@ func _save_game() -> void:
         "glyph_count":glyph_count,
         "photo_count":photo_count,
         "photos":photo_points.map(func(x): return bool(x.taken)),
+        "photo_found":photo_found,
         "scan_collect_count":scan_collect_count,
         "scan_points":scan_points.map(func(x): return bool(x.taken)),
         "visited_districts":visited_districts,
@@ -4768,6 +5277,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     if scan_taken is Array:
         for i in range(mini(scan_taken.size(),scan_points.size())):
             scan_points[i]["taken"]=bool(scan_taken[i])
+    photo_found = Dictionary(d.get("photo_found",{}))
     var photo_taken = d.get("photos",[])
     if photo_taken is Array:
         for i in range(mini(photo_taken.size(),photo_points.size())):
@@ -5340,7 +5850,7 @@ func _draw_mission_compass() -> void:
     draw_string(ThemeDB.fallback_font,center+Vector2(-90,38),"%d m · %s" % [int(distance/10.0),str(native_chapters[native_chapter].title)],HORIZONTAL_ALIGNMENT_CENTER,180,13,Color("#d9f5ef"))
 
 func _toggle_map() -> void:
-    if minigame_open:
+    if minigame_open or photo_mode:
         return
     map_open = not map_open
     missions_open = false
@@ -5349,7 +5859,7 @@ func _toggle_map() -> void:
     queue_redraw()
 
 func _toggle_collection() -> void:
-    if minigame_open:
+    if minigame_open or photo_mode:
         return
     collection_open=not collection_open
     map_open=false
@@ -5358,7 +5868,7 @@ func _toggle_collection() -> void:
     queue_redraw()
 
 func _toggle_missions() -> void:
-    if minigame_open:
+    if minigame_open or photo_mode:
         return
     missions_open = not missions_open
     map_open = false
