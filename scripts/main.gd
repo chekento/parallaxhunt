@@ -4109,13 +4109,6 @@ func _draw_car_wheels(center: Vector2, f: Vector2, side: Vector2, sz: Vector2) -
         draw_line(w1-f*4,w1+f*4,Color(0.05,0.05,0.06,0.92),2.4)
         draw_line(w2-f*4,w2+f*4,Color(0.05,0.05,0.06,0.92),2.4)
 
-func _draw_poly_ellipse(center: Vector2, radii: Vector2, color: Color) -> void:
-    var pts := PackedVector2Array()
-    for i in range(24):
-        var a := TAU*float(i)/24.0
-        pts.append(center+Vector2(cos(a)*radii.x,sin(a)*radii.y))
-    draw_colored_polygon(pts,color)
-
 func _draw_poly_ellipse(center: Vector2, radii: Vector2, rotation: float, color: Color) -> void:
     var pts := PackedVector2Array()
     for i in range(18):
