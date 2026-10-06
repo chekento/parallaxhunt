@@ -262,3 +262,28 @@
 - more authored building façades, street furniture and district-specific materials
 - performance profiling of dynamic accidents during rain/storm crowd scenarios
 - player-facing traffic-safety tutorial and optional stronger pedestrian protection assist
+
+
+## Alpha 1.19 — visual rebuild & headtracking fix
+- Pedestrian camera zoom raised to 2.15x with separate transit / driving framing
+- Lower street framing and persistent default PMDD vertical perspective
+- Slightly higher, downward-facing 3D Photo Hunt camera
+- Android gravity / gyroscope / accelerometer sensors explicitly enabled
+- Calibrated gyro + gravity fusion replaces gravity-only pseudo tracking
+- Automatic recenter after headtracking sensitivity changes
+- Honest tracking status in HUD/options; front-camera detection is no longer presented as face tracking
+- District ground rendering correctly scales with world zoom
+- Zoom-aware road widths, markings and sidewalk tile bands
+- District-specific procedural surface tiles for heritage, urban glass, campus, green, waterfront, industrial, terminal, solar / wind / air and data districts
+- District-specific building massing, façade and roof recipes
+- More coherent materials / wall variation and restrained close-zoom vehicle scaling
+
+### Next quality targets
+- native front-camera face/head-position tracking via a dedicated Android CV implementation rather than pretending camera-feed detection is tracking
+- authored texture atlases / material tiles for the strongest districts on top of the procedural surface pass
+- higher-detail vehicle / pedestrian silhouettes at the new close zoom
+- dedicated sidewalk furniture sets, storefront fronts and entrance modules by district
+- stronger landmark streetscapes and bespoke block compositions instead of only single landmark meshes
+- device-side calibration test screen for headtracking direction, gain and deadzone
+- graphics-density / tile-detail controls for lower-end Android devices
+- performance profiling at 2.15x on-foot zoom during rain, crowds and emergency scenes
