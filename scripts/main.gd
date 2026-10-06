@@ -323,6 +323,9 @@ func _input(event: InputEvent) -> void:
         return
     if main_menu_active:
         return
+    if commerce_panel.visible:
+        move_vec=Vector2.ZERO
+        return
     if missions_open or collection_open:
         if event is InputEventScreenTouch:
             var overlay_touch := event as InputEventScreenTouch
@@ -3155,7 +3158,7 @@ func _scan() -> void:
 func _interact() -> void:
     if photo_mode:
         return
-    if map_open or missions_open or minigame_open or dialogue_panel.visible:
+    if map_open or missions_open or collection_open or minigame_open or dialogue_panel.visible or commerce_panel.visible:
         return
     var n := _nearest_interactable()
     if n.is_empty():
@@ -4155,6 +4158,7 @@ func _join_micro_event(index: int) -> void:
     var kind:=str(event.type)
     var label:=str(event.label)
     _open_commerce(label,"LIVE-EVENT · %s\nWie möchtest du dich einbringen?" % current_district)
+    move_vec=Vector2.ZERO
     var active_label:="MITMACHEN"
     var support_label:="UNTERSTÜTZEN"
     if kind=="foodtruck":
