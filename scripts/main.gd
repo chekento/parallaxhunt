@@ -3278,7 +3278,8 @@ func _update_ui() -> void:
     elif not active_job.is_empty():
         var job_target := Vector2(active_job.get("target",Vector2.ZERO))
         var job_distance := int(player_pos.distance_to(job_target)/10.0) if job_target!=Vector2.ZERO else 0
-        detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance]
+        var task_text:=str(active_job.get("task",""))
+        detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m%s · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance,(" · "+task_text if task_text!="" else "")]
     else:
         detail_label.text = "Links bewegen · rechts Perspektive · MAP/MISSIONS für Übersicht."
     var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
@@ -3519,11 +3520,12 @@ func _nearest_interactable() -> Dictionary:
         if dt < 115.0 and dt < bd:
             best = {"type":"transit","index":ti,"action":"EINSTEIGEN %s" % str(tv.line)}
             bd = dt
-    if not active_job.is_empty() and str(active_job.get("kind","delivery"))=="delivery":
+    if not active_job.is_empty() and str(active_job.get("kind","delivery")) in ["delivery","event_followup"]:
         var target_pos: Vector2 = Vector2(active_job.get("target",Vector2.ZERO))
         var djob: float = player_pos.distance_to(target_pos)
-        if djob < 105.0 and djob < bd:
-            best = {"type":"job_target","action":"DELIVER"}
+        if djob < 115.0 and djob < bd:
+            var action:="ÜBERGEBEN" if str(active_job.get("kind",""))=="event_followup" else "DELIVER"
+            best = {"type":"job_target","action":action}
             bd = djob
     for ji in range(side_job_sites.size()):
         var djb: float = player_pos.distance_to(Vector2(side_job_sites[ji].pos))
@@ -3596,6 +3598,7 @@ func _draw() -> void:
     _draw_race_markers()
     _draw_transit_stops()
     _draw_jobboards()
+    _draw_active_job_target()
     _draw_street_props()
     _draw_city_micro_events()
     _draw_pedestrians()
@@ -4346,6 +4349,68 @@ func _join_micro_event(index: int) -> void:
     commerce_actions.add_child(_commerce_button(support_label,_resolve_micro_event.bind(index,"GEHOLFEN")))
     commerce_actions.add_child(_commerce_button("WEITERGEHEN",_close_commerce))
 
+func _event_followup_target(index: int, source: Vector2) -> Vector2:
+    if junctions.is_empty():
+        return Vector2.ZERO
+    var start:=abs(index*17+int(source.x/100.0)+int(source.y/100.0))%junctions.size()
+    var fallback:=Vector2.ZERO
+    for step in range(junctions.size()):
+        var j: Dictionary=junctions[(start+step*7)%junctions.size()]
+        if bool(j.get("bridge",false)):
+            continue
+        var p:=Vector2(j.pos)
+        var dist:=source.distance_to(p)
+        if dist>900.0 and dist<5200.0:
+            return p
+        if fallback==Vector2.ZERO and dist>650.0:
+            fallback=p
+    return fallback
+
+func _start_event_followup(index: int, event: Dictionary) -> bool:
+    if not active_job.is_empty():
+        return false
+    var kind:=str(event.type)
+    if kind not in ["maintenance","repair_crew","street_market","foodtruck","street_art","campus_group","busker","boardwalk_music"]:
+        return false
+    var source:=Vector2(event.pos)
+    var target:=_event_followup_target(index,source)
+    if target==Vector2.ZERO:
+        return false
+    var title:="Lokaler Folgeauftrag"
+    var task:="Material weiterbringen"
+    var pay:=52
+    if kind in ["maintenance","repair_crew"]:
+        title="Crew-Nachschub"
+        task="Ersatzteil zum markierten Übergabepunkt bringen"
+        pay=68
+    elif kind in ["street_market","foodtruck"]:
+        title="Quartiers-Lieferung"
+        task="Eine kleine Lieferung ins nächste Viertel bringen"
+        pay=58
+    elif kind=="street_art":
+        title="Mural-Material"
+        task="Material am markierten Treffpunkt abgeben"
+        pay=55
+    elif kind=="campus_group":
+        title="Campus-Kurier"
+        task="Unterlagen zum Treffpunkt bringen"
+        pay=48
+    elif kind in ["busker","boardwalk_music"]:
+        title="Gig-Support"
+        task="Equipment zum nächsten Treffpunkt bringen"
+        pay=54
+    active_job={
+        "kind":"event_followup",
+        "title":title,
+        "target":target,
+        "pay":pay,
+        "event":str(event.label),
+        "task":task
+    }
+    _play_sfx("mission")
+    _notify("FOLGEAUFTRAG · %s · %d CR" % [title,pay])
+    return true
+
 func _resolve_micro_event(index: int, choice: String) -> void:
     if index<0 or index>=city_micro_events.size():
         return
@@ -4406,6 +4471,8 @@ func _resolve_micro_event(index: int, choice: String) -> void:
         credits+=10
         _play_sfx("city_event")
         _show_reward_popup("STADTLEBEN · %s" % label,"%s\n+10 CR Erstentdeckung · Stadtruf %d/%d" % [flavor,city_reputation,city_micro_events.size()],Color(event.accent))
+        if choice=="GEHOLFEN":
+            _start_event_followup(index,event)
     else:
         _play_sfx("collect")
         var delta_text:=""
@@ -4600,6 +4667,26 @@ func _draw_transit_stops() -> void:
         draw_rect(Rect2(c+Vector2(-18,-44),Vector2(36,20)),Color(0.04,0.09,0.11,0.94),true)
         draw_rect(Rect2(c+Vector2(-18,-44),Vector2(36,20)),Color("#72d7e6"),false,1.5)
         draw_string(ThemeDB.fallback_font,c+Vector2(-14,-40),str(st.line),HORIZONTAL_ALIGNMENT_CENTER,28,9,Color.WHITE)
+
+func _draw_active_job_target() -> void:
+    if active_job.is_empty():
+        return
+    var kind:=str(active_job.get("kind",""))
+    if kind not in ["delivery","event_followup"]:
+        return
+    var target:=Vector2(active_job.get("target",Vector2.ZERO))
+    if target==Vector2.ZERO or player_pos.distance_to(target)>1800.0:
+        return
+    var p:=_project(target,8)
+    var pulse:=1.0+sin(Time.get_ticks_msec()/260.0)*0.10
+    var accent:=Color("#8de9aa") if kind=="event_followup" else Color("#9ad5ff")
+    draw_circle(p,22.0*pulse,Color(accent.r,accent.g,accent.b,0.08))
+    draw_arc(p,22.0*pulse,0,TAU,30,Color(accent.r,accent.g,accent.b,0.55),2.0,true)
+    draw_rect(Rect2(p-Vector2(9,7),Vector2(18,14)),Color(0.06,0.10,0.11,0.92),true)
+    draw_rect(Rect2(p-Vector2(9,7),Vector2(18,14)),accent,false,1.5)
+    draw_line(p+Vector2(-7,-2),p+Vector2(7,-2),accent,1.3,true)
+    if player_pos.distance_to(target)<180.0:
+        draw_string(ThemeDB.fallback_font,p+Vector2(-85,44),"FOLGEZIEL" if kind=="event_followup" else "LIEFERZIEL",HORIZONTAL_ALIGNMENT_CENTER,170,12,accent)
 
 func _draw_jobboards() -> void:
     for j in side_job_sites:
