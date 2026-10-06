@@ -1607,10 +1607,24 @@ func _photo_apply_lighting() -> void:
     var dusk_sky := Color("#7d7892")
     var night_sky := Color("#101927")
     var sky: Color = night_sky.lerp(dusk_sky,twilight*0.72).lerp(day_sky,daylight)
+    var weather := _weather_state()
+    var weather_strength := _weather_strength()
+    if weather=="mist":
+        sky=sky.lerp(Color("#9aadb2"),0.46)
+    elif weather=="rain":
+        sky=sky.lerp(Color("#526671"),0.52)
+    elif weather=="storm":
+        sky=sky.lerp(Color("#303b4a"),0.70)
     photo_environment.background_color=sky
     photo_environment.ambient_light_color=Color("#7f91aa").lerp(Color("#d8e7ec"),daylight)
-    photo_environment.ambient_light_energy=0.34+daylight*0.46+twilight*0.10
-    photo_sun.light_energy=0.10+daylight*1.10
+    photo_environment.ambient_light_energy=(0.34+daylight*0.46+twilight*0.10)*(1.0-weather_strength*0.20)
+    photo_environment.fog_enabled=weather in ["mist","rain","storm"]
+    if photo_environment.fog_enabled:
+        photo_environment.fog_light_color=sky.lightened(0.12)
+        photo_environment.fog_density=0.012 if weather=="mist" else (0.006 if weather=="rain" else 0.010)
+    else:
+        photo_environment.fog_density=0.0
+    photo_sun.light_energy=(0.10+daylight*1.10)*(1.0-weather_strength*0.38)
     photo_sun.light_color=Color("#ffb987").lerp(Color("#fff6db"),daylight)
     photo_sun.rotation_degrees=Vector3(-18.0-daylight*42.0,-40.0+hour*5.0,0.0)
 
@@ -1655,7 +1669,13 @@ func _photo_build_scene(index: int) -> void:
     var center: Vector2 = Vector2(ph.pos)
     var radius: float = 1250.0
 
-    _photo_box("Ground",Vector3(0,-0.35,0),Vector3(260,0.6,260),Color("#596b62"))
+    var photo_weather := _weather_state()
+    var ground_color := Color("#596b62")
+    if photo_weather in ["rain","storm"]:
+        ground_color=Color("#465651")
+    elif photo_weather=="mist":
+        ground_color=Color("#56615c")
+    _photo_box("Ground",Vector3(0,-0.35,0),Vector3(260,0.6,260),ground_color)
 
     # Roads become real 3D slabs around the fixed observation point.
     for ri in range(roads.size()):
@@ -1673,14 +1693,20 @@ func _photo_build_scene(index: int) -> void:
             var length: float = Vector2(delta.x,delta.z).length()
             if length<0.5:
                 continue
-            var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.14,0),Vector3(float(road.width)*0.10,0.16,length),Color("#30383d"))
+            var road_color := Color("#30383d")
+            if photo_weather in ["rain","storm"]:
+                road_color=Color("#1f292f")
+            var slab := _photo_box("Road_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.14,0),Vector3(float(road.width)*0.10,0.16,length),road_color)
             slab.rotation.y=atan2(delta.x,delta.z)
             var flat_dir := Vector2(delta.x,delta.z).normalized()
             var flat_normal := Vector2(-flat_dir.y,flat_dir.x)
             var edge_offset: float = float(road.width)*0.05+1.15
             for side_sign in [-1.0,1.0]:
                 var off := Vector3(flat_normal.x*edge_offset,0.26,flat_normal.y*edge_offset)
-                var walk := _photo_box("Walk_%d_%d_%d" % [ri,k,int(side_sign)],(la+lb)*0.5+off,Vector3(2.0,0.24,length),Color("#6b7478"))
+                var walk_color := Color("#6b7478")
+                if photo_weather in ["rain","storm"]:
+                    walk_color=Color("#536067")
+                var walk := _photo_box("Walk_%d_%d_%d" % [ri,k,int(side_sign)],(la+lb)*0.5+off,Vector3(2.0,0.24,length),walk_color)
                 walk.rotation.y=slab.rotation.y
             var lane := _photo_box("Lane_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.25,0),Vector3(0.16,0.05,length*0.92),Color(0.92,0.90,0.72,0.65))
             lane.rotation.y=slab.rotation.y
@@ -2190,7 +2216,7 @@ func _photo_refresh_labels() -> void:
     var score_sum: int = 0
     for t in photo_targets:
         score_sum+=int(photo_scores.get(str(t.key),0))
-    photo_target_label.text="%s\nMotive %d / %d · Score %d/300" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size(),score_sum]
+    photo_target_label.text="%s\nMotive %d / %d · Score %d/300 · %s" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size(),score_sum,_weather_label()]
     photo_status_label.text=("Noch suchen: "+", ".join(remaining)) if not remaining.is_empty() else "Alle Motive gefunden."
     if photo_crosshair!=null:
         photo_crosshair.modulate=Color("#73f3ce") if not _photo_center_target().is_empty() else Color(1,1,1,0.82)
@@ -2288,12 +2314,6 @@ func _update_photo_3d_scene(_delta: float) -> void:
             node.position=base+Vector3(sin(time*1.7+float(i))*2.0,sin(time*2.4)*0.8,cos(time*1.3+float(i))*1.4)
         elif str(t.kind)=="symbol":
             node.rotation.y=time*0.45
-        elif str(t.kind)=="bird":
-            var base: Vector3 = Vector3(t.pos)
-            node.position=base+Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2)
-            node.rotation.y=time*0.75
-        elif str(t.kind)=="neoncode":
-            node.scale=Vector3.ONE*(1.0+sin(time*3.0)*0.06)
         elif str(t.kind)=="bird":
             var base: Vector3 = Vector3(t.pos)
             node.position=base+Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2)
