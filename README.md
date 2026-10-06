@@ -1,6 +1,26 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.16.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.17.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.17.0 — Emergency City & Connected Transit
+
+- traffic can now physically hit the on-foot player if a moving vehicle reaches the player before its braking logic can stop it
+- AI cars actively attempt to brake for pedestrians, so collisions are avoidable rather than scripted, but stepping into traffic at the wrong moment can still cause an accident
+- an accident triggers a short rescue / ambulance / emergency-room transition before respawning the player outside Parallax Stadtklinikum
+- accident count persists in the save slot
+- Parallax Stadtklinikum is a new Bioquartier landmark with its own map marker, bespoke 2D and 3D geometry, emergency entrance and ambulance bay
+- the hospital is fully enterable with reception, triage, waiting areas, treatment / observation floor and an interactive triage station
+- two dedicated ambulances and additional city-response vehicles now exist as real traffic actors
+- emergency vehicles are dispatched to concrete active incident locations; multiple vehicles can be assigned to the same incident
+- ambulances return to the hospital after incident service while response vehicles can be retasked to other active scenes
+- normal traffic still yields for emergency vehicles and emergency routing uses the connected road graph rather than random turns
+- public transit now creates real interchange hubs at junctions where different bus/tram route roads meet
+- exiting at an interchange exposes the other line and boarding that line within the transfer window records a real transfer
+- transfer hubs are marked on the city map and transfer count is tracked in the HUD / save data
+- free pedestrians seeking shelter in rain/storms can now route across connected roads instead of being limited to cover on their current street
+- selected shops, cafés and restaurants now run animated delivery/loading loops with courier vans, workers and moving crates
+- harbor / industrial / rail districts add dock-loading scenes with pallets, forklifts and workers
+- every district receives an additional authored signature scene so heritage, glass, solar, canal, center, harbor, industry, terminal, campus, astro, neon, expo, air, wind, data and waterfront areas read more distinctly at street level
 
 ## 1.16.0 — City Behavior
 
