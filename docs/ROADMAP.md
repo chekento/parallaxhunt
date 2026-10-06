@@ -110,3 +110,26 @@
 - more landmark-specific Photo Hunt geometry and stronger occlusion-aware target placement
 - richer map filters and activity discovery layers
 - further mobile performance profiling on dense districts and bad-weather scenes
+
+
+## Alpha 1.13 — social world
+- Explicit pedestrian states: walking, crossing, sitting, chatting, phone use and alert reactions
+- Seeded social pairs that can visibly converse together
+- Junction crossing behavior with AI and player-traffic yielding
+- Explicit taxi, rideshare, service, maintenance, courier and city-response traffic archetypes
+- Archetype-specific markings, racks, beacons and lightbars in 2D and 3D Photo Hunt traffic
+- Live-event support choices can unlock short chained city follow-up jobs
+- Follow-up objectives use existing job saves, compass guidance, world markers and payouts
+- Lightweight Photo Hunt occlusion model built from local buildings and landmarks
+- Hidden photo targets shift toward valid sight lines and can no longer be captured through static masses
+- Photo smoke test now asserts occlusion data exists
+
+### Next quality targets
+- more authored social set-pieces: benches, café clusters, queues, transit waiting groups and small crowd scenes
+- pedestrian reactions to rain shelters, bus arrivals, live events and traffic-light phase
+- emergency/service traffic behaviors beyond visuals, including route priority and staged roadside scenes
+- optional second-step follow-up jobs with NPC callbacks rather than only destination handoffs
+- stronger Photo Hunt target anchoring to actual roofs, façades, cars and props while preserving valid sight lines
+- district-specific sound one-shots with spatial falloff and richer weather variation
+- map filters for live events, photo points, jobs, services and transit
+- performance profiling for social simulation density on mobile
