@@ -61,6 +61,22 @@ jobs:
           fi
           test "$STATUS" -eq 0
 
+      - name: 3D Photo Hunt smoke test
+        run: |
+          GODOT_BIN="$(find "$HOME/.local/share/godot/godot_executable" -maxdepth 2 -type f -name 'Godot_v*-stable_linux.x86_64' | head -1)"
+          test -x "$GODOT_BIN"
+          set +e
+          timeout 35 "$GODOT_BIN" --headless --path . -- --photo-smoke > photo-smoke.log 2>&1
+          STATUS=$?
+          set -e
+          cat photo-smoke.log
+          if grep -E "SCRIPT ERROR|Parse Error|Invalid access|Invalid call|Attempt to call|not declared in the current scope|Cannot get class|PHOTO_SMOKE: " photo-smoke.log; then
+            echo "3D Photo Hunt smoke test detected an error."
+            exit 1
+          fi
+          grep -q "PHOTO_SMOKE_OK" photo-smoke.log
+          test "$STATUS" -eq 0
+
       - name: Locate APK
         run: |
           find build -type f -maxdepth 4 -print
