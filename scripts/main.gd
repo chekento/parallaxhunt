@@ -53,6 +53,9 @@ var vegetation_props: Array = []
 var pedestrians: Array = []
 var social_setpieces: Array = []
 var response_incidents: Array = []
+var traffic_accidents: Array = []
+var traffic_accident_scan_timer: float = 0.0
+var traffic_accident_serial: int = 0
 var active_crossings_by_road: Dictionary = {}
 var transit_vehicles: Array = []
 var transit_transfer_hubs: Array = []
@@ -315,6 +318,7 @@ func _process(delta: float) -> void:
     if not interior_active:
         _update_response_dispatches()
         _update_traffic(delta)
+        _update_traffic_accidents(delta)
         _check_player_traffic_accident()
         _update_pedestrians(delta)
         _update_transit(delta)
@@ -1458,7 +1462,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.17"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.18"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2811,6 +2815,7 @@ func _build_audio() -> void:
     sounds["hack_click"] = _make_chime([520.0],[0.025],0.055)
     sounds["error"] = _make_chime([190.0,145.0],[0.055,0.09],0.08)
     sounds["impact"] = _make_chime([95.0,72.0],[0.035,0.055],0.11)
+    sounds["traffic_crash"] = _make_chime([118.0,82.0,64.0],[0.045,0.065,0.085],0.10)
     sounds["city_event"] = _make_chime([392.0,523.0,659.0],[0.04,0.05,0.09],0.08)
     sounds["event_music"] = _make_chime([330.0,440.0,494.0,659.0],[0.08,0.08,0.08,0.14],0.055)
     sounds["event_work"] = _make_chime([125.0,190.0,145.0],[0.055,0.04,0.075],0.050)
@@ -3346,6 +3351,30 @@ func _active_response_incident_indices() -> Array:
             result.append(i)
     return result
 
+func _active_emergency_targets() -> Array:
+    var result: Array=[]
+    for i in range(response_incidents.size()):
+        if not _incident_active(i):
+            continue
+        var incident: Dictionary=response_incidents[i]
+        result.append({
+            "id":str(incident.id),
+            "pos":Vector2(incident.pos),
+            "kind":"service_incident",
+            "priority":1
+        })
+    for accident in traffic_accidents:
+        if str(accident.get("state","active"))!="active":
+            continue
+        result.append({
+            "id":str(accident.id),
+            "pos":Vector2(accident.pos),
+            "kind":"traffic_accident",
+            "priority":2
+        })
+    result.sort_custom(func(a,b): return int(a.priority)>int(b.priority))
+    return result
+
 func _assign_emergency_target(car: Dictionary, target_pos: Vector2, target_kind: String, target_id: String) -> Dictionary:
     var start_road: int=int(car.road)
     var goal_road: int=_nearest_road_index(target_pos)
@@ -3360,34 +3389,37 @@ func _assign_emergency_target(car: Dictionary, target_pos: Vector2, target_kind:
 func _retask_emergency_car(car: Dictionary, index: int) -> Dictionary:
     var archetype:=str(car.get("archetype",""))
     var current_kind:=str(car.get("response_target_kind",""))
-    if archetype=="ambulance" and current_kind=="incident":
+    if archetype=="ambulance" and current_kind in ["incident","traffic_accident"]:
         return _assign_emergency_target(car,_hospital_world_pos(),"hospital","hospital")
-    var active:=_active_response_incident_indices()
-    if not active.is_empty():
-        var incident_index: int=int(active[index%active.size()])
-        var incident: Dictionary=response_incidents[incident_index]
-        return _assign_emergency_target(car,Vector2(incident.pos),"incident",str(incident.id))
+    var targets:=_active_emergency_targets()
+    if not targets.is_empty():
+        var target: Dictionary=targets[index%targets.size()]
+        var kind: String="traffic_accident" if str(target.kind)=="traffic_accident" else "incident"
+        return _assign_emergency_target(car,Vector2(target.pos),kind,str(target.id))
     return _assign_emergency_target(car,_hospital_world_pos(),"hospital","hospital")
 
 func _update_response_dispatches(force: bool = false) -> void:
-    if response_incidents.is_empty():
+    if response_incidents.is_empty() and traffic_accidents.is_empty():
         return
     var slot: int=int(floor(world_clock*1.35))
     if not force and slot==response_dispatch_slot:
         return
     response_dispatch_slot=slot
-    var active:=_active_response_incident_indices()
+    var targets:=_active_emergency_targets()
     var emergency_order:=0
     for i in range(traffic.size()):
         var car: Dictionary=traffic[i]
         if not _is_emergency_archetype(str(car.get("archetype",""))):
             continue
-        if active.is_empty():
+        if bool(car.get("crashed",false)):
+            continue
+        if targets.is_empty():
             car=_assign_emergency_target(car,_hospital_world_pos(),"hospital","hospital")
         else:
-            var incident_index: int=int(active[emergency_order%active.size()])
-            var incident: Dictionary=response_incidents[incident_index]
-            car=_assign_emergency_target(car,Vector2(incident.pos),"incident",str(incident.id))
+            # Ambulances and response vehicles distribute across the most urgent live targets.
+            var target: Dictionary=targets[emergency_order%targets.size()]
+            var target_kind: String="traffic_accident" if str(target.kind)=="traffic_accident" else "incident"
+            car=_assign_emergency_target(car,Vector2(target.pos),target_kind,str(target.id))
         traffic[i]=car
         emergency_order+=1
 
@@ -3413,9 +3445,173 @@ func _response_priority_pressure(index: int, car: Dictionary) -> float:
             return 1.0-clampf(gap/0.075,0.0,1.0)
     return 0.0
 
+func _traffic_accident_pair_valid(a: Dictionary, b: Dictionary) -> bool:
+    if bool(a.get("crashed",false)) or bool(b.get("crashed",false)):
+        return false
+    if _is_emergency_archetype(str(a.get("archetype",""))) or _is_emergency_archetype(str(b.get("archetype",""))):
+        return false
+    if abs(float(a.get("speed",0.0)))<0.020 or abs(float(b.get("speed",0.0)))<0.020:
+        return false
+    var ta:=_traffic_world_transform(a)
+    var tb:=_traffic_world_transform(b)
+    var pa:=Vector2(ta.pos)
+    var pb:=Vector2(tb.pos)
+    if pa.distance_to(pb)>34.0:
+        return false
+    var dir_a:=Vector2(ta.tangent).normalized()
+    var dir_b:=Vector2(tb.tangent).normalized()
+    var conflict_angle:=absf(dir_a.angle_to(dir_b))
+    var turning_conflict:=float(a.get("turn_anim",0.0))>0.0 or float(b.get("turn_anim",0.0))>0.0
+    var lane_conflict:=float(a.get("lane_change",0.0))>0.0 or float(b.get("lane_change",0.0))>0.0
+    return conflict_angle>0.34 or turning_conflict or lane_conflict
+
+func _create_traffic_accident(a_index: int, b_index: int) -> void:
+    if a_index<0 or b_index<0 or a_index>=traffic.size() or b_index>=traffic.size():
+        return
+    var a: Dictionary=traffic[a_index]
+    var b: Dictionary=traffic[b_index]
+    var ta:=_traffic_world_transform(a)
+    var tb:=_traffic_world_transform(b)
+    var pos: Vector2=(Vector2(ta.pos)+Vector2(tb.pos))*0.5
+    var id:="traffic_crash_%d" % traffic_accident_serial
+    traffic_accident_serial+=1
+    var severity:=clampf((abs(float(a.speed))+abs(float(b.speed)))/0.10,0.35,1.0)
+    a["crashed"]=true
+    b["crashed"]=true
+    a["speed"]=0.0
+    b["speed"]=0.0
+    a["cruise_before_crash"]=float(a.get("cruise",0.03))
+    b["cruise_before_crash"]=float(b.get("cruise",0.03))
+    a["crash_id"]=id
+    b["crash_id"]=id
+    a["crash_angle"]=rng.randf_range(-0.18,0.18)
+    b["crash_angle"]=rng.randf_range(-0.18,0.18)
+    a["hazard_after_crash"]=true
+    b["hazard_after_crash"]=true
+    traffic[a_index]=a
+    traffic[b_index]=b
+    traffic_accidents.append({
+        "id":id,
+        "pos":pos,
+        "car_a":a_index,
+        "car_b":b_index,
+        "severity":severity,
+        "age":0.0,
+        "state":"active",
+        "road":int(a.road)
+    })
+    _play_sfx("impact")
+    if player_pos.distance_to(pos)<850.0:
+        camera_shake_strength=maxf(camera_shake_strength,3.2+severity*2.2)
+        _notify("Verkehrsunfall gemeldet · Rettungskräfte werden disponiert.")
+    response_dispatch_slot=-1
+    _update_response_dispatches(true)
+
+func _maybe_create_ai_traffic_accident() -> void:
+    if traffic_accidents.size()>=3:
+        return
+    var weather:=_weather_state()
+    var risk:=0.018
+    if weather=="rain":
+        risk=0.032
+    elif weather=="storm":
+        risk=0.050
+    elif weather=="mist":
+        risk=0.027
+    for i in range(traffic.size()):
+        var a: Dictionary=traffic[i]
+        if bool(a.get("crashed",false)):
+            continue
+        var pa:=Vector2(_traffic_world_transform(a).pos)
+        if player_pos.distance_to(pa)>2400.0:
+            continue
+        for k in range(i+1,traffic.size()):
+            var b: Dictionary=traffic[k]
+            if not _traffic_accident_pair_valid(a,b):
+                continue
+            if rng.randf()<risk:
+                _create_traffic_accident(i,k)
+                return
+
+func _release_crashed_vehicle(index: int) -> void:
+    if index<0 or index>=traffic.size():
+        return
+    var car: Dictionary=traffic[index]
+    car["crashed"]=false
+    car["crash_id"]=""
+    car["hazard_after_crash"]=false
+    car["crash_angle"]=0.0
+    car["speed"]=0.0
+    car["cruise"]=float(car.get("cruise_before_crash",car.get("cruise",0.03)))
+    car["t"]=fposmod(float(car.t)+rng.randf_range(0.025,0.070),1.0)
+    car["lane"]=rng.randi_range(0,1)
+    traffic[index]=car
+
+func _update_traffic_accidents(delta: float) -> void:
+    traffic_accident_scan_timer-=delta
+    if traffic_accident_scan_timer<=0.0:
+        traffic_accident_scan_timer=1.15
+        _maybe_create_ai_traffic_accident()
+    for i in range(traffic_accidents.size()-1,-1,-1):
+        var accident: Dictionary=traffic_accidents[i]
+        accident["age"]=float(accident.get("age",0.0))+delta
+        var age: float=float(accident.age)
+        if age>42.0 and str(accident.state)=="active":
+            accident["state"]="clearing"
+        if age>58.0:
+            _release_crashed_vehicle(int(accident.car_a))
+            _release_crashed_vehicle(int(accident.car_b))
+            traffic_accidents.remove_at(i)
+            response_dispatch_slot=-1
+            continue
+        traffic_accidents[i]=accident
+
+func _traffic_near_dynamic_accident(car: Dictionary) -> bool:
+    if bool(car.get("crashed",false)):
+        return true
+    var pos:=Vector2(_traffic_world_transform(car).pos)
+    for accident in traffic_accidents:
+        if str(accident.get("state","active"))=="cleared":
+            continue
+        if pos.distance_to(Vector2(accident.pos))<175.0:
+            return true
+    return false
+
+func _draw_traffic_accidents() -> void:
+    for accident in traffic_accidents:
+        var pos:=Vector2(accident.pos)
+        if player_pos.distance_to(pos)>1850.0:
+            continue
+        var age:=float(accident.get("age",0.0))
+        var severity:=float(accident.get("severity",0.5))
+        var p:=_project(pos,5)
+        var pulse:=0.55+0.45*sin(float(Time.get_ticks_msec())/220.0)
+        draw_circle(p,26.0+severity*12.0,Color(1.0,0.38,0.20,0.035+0.025*pulse))
+        for k in range(6):
+            var a:=float(k)*TAU/6.0+float(int(accident.id.hash())%11)*0.08
+            var d:=Vector2.from_angle(a)
+            var debris:=p+d*(18.0+float(k%3)*7.0)
+            draw_rect(Rect2(debris-Vector2(3,2),Vector2(6,4)),Color("#4d5456"),true)
+        if age>5.0:
+            for k in range(4):
+                var a:=float(k)*TAU/4.0
+                var cone:=p+Vector2.from_angle(a)*45.0
+                var poly:=PackedVector2Array([cone+Vector2(-4,5),cone+Vector2(4,5),cone+Vector2(1,-6),cone+Vector2(-1,-6)])
+                draw_colored_polygon(poly,Color("#e77e36"))
+        if age<6.0 and graphics_quality>=1:
+            for k in range(3):
+                var spark:=p+Vector2.from_angle(float(k)*2.1+age)*float(8+k*5)
+                draw_circle(spark,2.0,Color(1.0,0.70,0.25,0.55))
+        draw_string(ThemeDB.fallback_font,p+Vector2(-80,-48),"UNFALLSTELLE",HORIZONTAL_ALIGNMENT_CENTER,160,10,Color("#ffb36d"))
+
 func _update_traffic(delta: float) -> void:
     for i in range(traffic.size()):
         var c: Dictionary = traffic[i]
+        if bool(c.get("crashed",false)):
+            c["speed"]=0.0
+            c["indicator"]=0
+            traffic[i]=c
+            continue
         c["turn_cooldown"]=maxf(0.0,float(c.get("turn_cooldown",0.0))-delta)
         c["turn_anim"]=maxf(0.0,float(c.get("turn_anim",0.0))-delta)
         if float(c.get("turn_anim",0.0))<=0.0 and float(c.get("lane_change",0.0))<=0.0:
@@ -3509,6 +3705,11 @@ func _update_traffic(delta: float) -> void:
         c["incident_yield"]=incident_yield
         if incident_yield:
             target_speed*=0.28
+
+        var crash_yield:=_traffic_near_dynamic_accident(c)
+        c["crash_yield"]=crash_yield
+        if crash_yield:
+            target_speed*=0.20
 
         if best_gap<0.018:
             target_speed=0.0
@@ -4672,6 +4873,7 @@ func _draw() -> void:
     _draw_city_micro_events()
     _draw_social_setpieces()
     _draw_response_incidents()
+    _draw_traffic_accidents()
     _draw_pedestrians()
     _draw_traffic()
     _draw_transit()
@@ -6212,7 +6414,15 @@ func _draw_traffic() -> void:
         var traffic_draw_distance: float = [1050.0,1450.0,1800.0][graphics_quality]
         if player_pos.distance_to(pos)>traffic_draw_distance:
             continue
-        _draw_car(pos,tangent.angle(),str(c["class"]),Color(c.color),false,str(c.get("archetype","")))
+        var car_heading:=tangent.angle()+float(c.get("crash_angle",0.0))
+        _draw_car(pos,car_heading,str(c["class"]),Color(c.color),false,str(c.get("archetype","")))
+        if bool(c.get("crashed",false)):
+            var center:=_project(pos,8)
+            draw_line(center+Vector2(-12,-5),center+Vector2(10,7),Color(0.10,0.10,0.10,0.82),4.0,true)
+            draw_line(center+Vector2(-9,7),center+Vector2(7,-8),Color(0.70,0.78,0.80,0.30),2.0,true)
+            if int(Time.get_ticks_msec()/280)%2==0:
+                draw_circle(center+Vector2(-8,0),3.2,Color("#ffb343"))
+                draw_circle(center+Vector2(8,0),3.2,Color("#ffb343"))
         if bool(c.get("ped_yield",false)):
             var rear_center:=_project(pos,8)-tangent.normalized()*18.0
             draw_circle(rear_center+Vector2(-5,0),3.4,Color("#ff364b"))
@@ -6222,6 +6432,11 @@ func _draw_traffic() -> void:
             var side_vec:=Vector2(-tangent.y,tangent.x).normalized()
             draw_circle(hazard_center+side_vec*8.0,2.8,Color("#ffb343"))
             draw_circle(hazard_center-side_vec*8.0,2.8,Color("#ffb343"))
+        if bool(c.get("crash_yield",false)) and int(Time.get_ticks_msec()/300)%2==0:
+            var crash_center:=_project(pos,8)
+            var crash_side:=Vector2(-tangent.y,tangent.x).normalized()
+            draw_circle(crash_center+crash_side*8.0,2.8,Color("#ffb343"))
+            draw_circle(crash_center-crash_side*8.0,2.8,Color("#ffb343"))
         if bool(c.get("response_yield",false)) and int(Time.get_ticks_msec()/260)%2==0:
             var ry_center:=_project(pos,8)
             var ry_side:=Vector2(-tangent.y,tangent.x).normalized()
@@ -8558,6 +8773,9 @@ func _draw_map_overlay() -> void:
     for ii in range(response_incidents.size()):
         if _incident_active(ii):
             _draw_map_marker(_map_point(Vector2(response_incidents[ii].pos),map_rect),Color("#ffb65a"),"⚠")
+    for accident in traffic_accidents:
+        if str(accident.get("state","active"))=="active":
+            _draw_map_marker(_map_point(Vector2(accident.pos),map_rect),Color("#ff725f"),"✹")
     for ts in transit_stops:
         _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
     for hub in transit_transfer_hubs:
@@ -8591,6 +8809,7 @@ func _draw_map_overlay() -> void:
         ["J","Nebenjob-Board",Color("#8de9aa")],
         ["●","Aktives Live-Event",Color("#ffb66f")],
         ["⚠","Aktiver Service-/Response-Einsatz",Color("#ffb65a")],
+        ["✹","Dynamische Unfallstelle",Color("#ff725f")],
         ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
         ["↔","ÖPNV-Umsteigepunkt",Color("#9eefff")],
         ["◆","Persönlicher NPC-Auftrag",Color("#ff9fe8")],
