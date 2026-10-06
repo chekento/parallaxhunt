@@ -1,6 +1,20 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.14.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.15.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.15.0 — Living Streets
+
+- transit vehicles now carry a lightweight passenger count and boarding/exiting state
+- visible boarding and exiting waves move between the waiting group and the actual stopped bus/tram
+- bus/tram doors visibly open while dwelling at a stop
+- denser authored plaza, market, harbor, campus, expo and nightlife crowd pockets add stronger district-specific activity
+- selected cafés and transit areas spawn rain-shelter groups during rain and storms
+- spectators now gather around music, mural, drone and fountain live events; some watch while others visibly use phones/cameras
+- restaurant/café awnings sway subtly, restaurant steam animates, market canopies move and neon props pulse
+- response vehicles now receive real right-of-way behavior instead of only visual styling
+- nearby traffic detects an approaching response vehicle on the same road, slows/yields and flashes hazards
+- response vehicles retain speed priority through red phases instead of behaving exactly like ordinary traffic
+- the new crowd/animation systems remain graphics-quality aware and reuse existing deterministic world data for mobile stability
 
 ## 1.14.0 — Street Scenes
 
