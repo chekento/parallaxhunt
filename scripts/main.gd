@@ -76,7 +76,6 @@ var active_photo_index: int = -1
 var photo_targets: Array = []
 var photo_found: Dictionary = {}
 var photo_scores: Dictionary = {}
-var photo_scores: Dictionary = {}
 var photo_yaw: float = 0.0
 var photo_pitch: float = -0.10
 var photo_fov: float = 68.0
