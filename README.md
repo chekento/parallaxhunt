@@ -1,6 +1,19 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.13.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.14.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.14.0 — Street Scenes
+
+- social street set-pieces now appear around real transit stops, cafés/restaurants and selected street corners
+- transit-stop groups visibly wait together and one NPC reacts when the linked bus/tram is actually dwelling at that stop
+- café clusters include seated and chatting people instead of relying only on moving sidewalk pedestrians
+- corner queues add small static social groups that make intersections feel less empty
+- normal pedestrians now react to transit arrivals with a wave state
+- pedestrian crossings are now traffic-light aware: crossings are attempted when the active road phase is red for vehicles
+- six rotating service / response incidents are staged around the city with cones, crew, service vehicles and flashing warning equipment
+- nearby AI traffic slows significantly around active incidents and displays hazard lights
+- active response incidents appear on the city map with their own warning marker and live incident count
+- the social scene system is intentionally lightweight and deterministic to preserve Android performance
 
 ## 1.13.0 — Social World
 
