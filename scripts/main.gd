@@ -75,6 +75,7 @@ var photo_mode: bool = false
 var active_photo_index: int = -1
 var photo_targets: Array = []
 var photo_found: Dictionary = {}
+var photo_scores: Dictionary = {}
 var photo_yaw: float = 0.0
 var photo_pitch: float = -0.10
 var photo_fov: float = 68.0
@@ -1023,6 +1024,7 @@ func _generate_collectibles() -> void:
 
 func _build_ui() -> void:
     var layer := CanvasLayer.new()
+    layer.layer=20
     add_child(layer)
 
     var mission_panel := PanelContainer.new()
@@ -1486,7 +1488,7 @@ func _build_photo_3d_system() -> void:
     photo_view_rect.visible=false
     photo_view_rect.mouse_filter=Control.MOUSE_FILTER_IGNORE
     var layer := CanvasLayer.new()
-    layer.layer=-1
+    layer.layer=10
     add_child(layer)
     layer.add_child(photo_view_rect)
 
@@ -1644,14 +1646,34 @@ func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls:
 func _photo_spawn_targets(index: int, center: Vector2) -> void:
     var ph: Dictionary = photo_points[index]
     var id: String = str(ph.id)
-    var templates := [
+    var district: String = str(ph.district)
+    var library: Array = [
         {"kind":"symbol","label":"Verstecktes PMDD-Symbol","hint":"Suche hoch an einer Fassade.","pos":Vector3(-18,13,-32)},
-        {"kind":"drone","label":"Kleine Wartungsdrohne","hint":"Sie schwebt über Straßenniveau.","pos":Vector3(27,17,-10)},
-        {"kind":"rarecar","label":"Seltenes Fahrzeugdetail","hint":"Achte auf ein auffällig leuchtendes Auto.","pos":Vector3(-30,2.8,22)}
+        {"kind":"drone","label":"Wartungsdrohne","hint":"Sie schwebt oberhalb der Straße.","pos":Vector3(27,17,-10)},
+        {"kind":"rarecar","label":"Seltenes Fahrzeug","hint":"Achte auf eine ungewöhnliche Karosserie.","pos":Vector3(-30,2.8,22)},
+        {"kind":"cat","label":"Dachkatze","hint":"Schau auf niedrige Dächer und Vorsprünge.","pos":Vector3(20,10,-28)},
+        {"kind":"neoncode","label":"Leuchtender Code","hint":"Suche eine kleine helle Zeichenfolge.","pos":Vector3(-24,9,-20)},
+        {"kind":"antenna","label":"Seltsame Antenne","hint":"Sie ragt deutlich über die Dachkante.","pos":Vector3(32,19,18)},
+        {"kind":"window","label":"Ungewöhnlicher Fensterreflex","hint":"Ein Fenster leuchtet anders als die anderen.","pos":Vector3(18,12,31)},
+        {"kind":"bird","label":"Seltener Vogel","hint":"Suche in der Nähe von Dachkante oder Baumkrone.","pos":Vector3(-16,16,26)}
     ]
+    var picks: Array = []
+    if district in ["Glasdistrikt","Zentrum","Kulturviertel"]:
+        picks=[0,1,6]
+    elif district in ["Hafen","Kanäle","Küstenband"]:
+        picks=[1,2,7]
+    elif district in ["Nordpark","Gärten","Universität"]:
+        picks=[3,6,7]
+    elif district in ["Neon Mile","Solar Heights"]:
+        picks=[2,4,5]
+    elif district=="Observatorium":
+        picks=[0,5,7]
+    else:
+        picks=[0,2,3]
+
     var offset_seed: int = abs(id.hash())%19
-    for i in range(templates.size()):
-        var t: Dictionary = templates[i].duplicate(true)
+    for i in range(3):
+        var t: Dictionary = Dictionary(library[int(picks[i])]).duplicate(true)
         var p: Vector3 = Vector3(t.pos)
         p.x += float((offset_seed+i*7)%13)-6.0
         p.z += float((offset_seed+i*11)%17)-8.0
@@ -1661,33 +1683,55 @@ func _photo_spawn_targets(index: int, center: Vector2) -> void:
         root.name="PhotoTarget_%d" % i
         root.position=p
         photo_world_root.add_child(root)
-        if str(t.kind)=="symbol":
-            var mesh := SphereMesh.new()
-            mesh.radius=1.4
-            mesh.height=2.8
-            var node := MeshInstance3D.new()
-            node.mesh=mesh
-            node.material_override=_photo_material(Color("#ff73d1"),0.15,0.28)
-            root.add_child(node)
-            for a in range(3):
-                var ring := TorusMesh.new()
-                ring.inner_radius=1.8+float(a)*0.55
-                ring.outer_radius=2.05+float(a)*0.55
-                var ring_node := MeshInstance3D.new()
-                ring_node.mesh=ring
-                ring_node.rotation_degrees=Vector3(90,0,float(a)*35)
-                ring_node.material_override=_photo_material(Color(1.0,0.42,0.82,0.62),0.25,0.20)
-                root.add_child(ring_node)
-        elif str(t.kind)=="drone":
-            _photo_box("DroneBody",Vector3.ZERO,Vector3(3.2,0.9,2.2),Color("#dce8ec"),root)
-            for dx in [-2.1,2.1]:
-                for dz in [-1.5,1.5]:
-                    _photo_box("Rotor",Vector3(dx,0,dz),Vector3(1.8,0.15,1.8),Color("#35464f"),root)
-        else:
-            _photo_box("RareBody",Vector3.ZERO,Vector3(5.4,1.2,2.1),Color("#ff4f65"),root)
-            _photo_box("RareCabin",Vector3(-0.3,1.0,0),Vector3(2.4,0.8,1.65),Color("#68efd7"),root)
+        _photo_build_target_visual(root,str(t.kind),i)
         t["node"]=root
         photo_targets.append(t)
+
+func _photo_build_target_visual(root: Node3D, kind: String, variant: int) -> void:
+    if kind=="symbol":
+        var mesh := SphereMesh.new()
+        mesh.radius=1.4
+        mesh.height=2.8
+        var node := MeshInstance3D.new()
+        node.mesh=mesh
+        node.material_override=_photo_material(Color("#ff73d1"),0.15,0.28)
+        root.add_child(node)
+        for a in range(3):
+            var ring := TorusMesh.new()
+            ring.inner_radius=1.8+float(a)*0.55
+            ring.outer_radius=2.05+float(a)*0.55
+            var ring_node := MeshInstance3D.new()
+            ring_node.mesh=ring
+            ring_node.rotation_degrees=Vector3(90,0,float(a)*35)
+            ring_node.material_override=_photo_material(Color(1.0,0.42,0.82,0.62),0.25,0.20)
+            root.add_child(ring_node)
+    elif kind=="drone":
+        _photo_box("DroneBody",Vector3.ZERO,Vector3(3.2,0.9,2.2),Color("#dce8ec"),root)
+        for dx in [-2.1,2.1]:
+            for dz in [-1.5,1.5]:
+                _photo_box("Rotor",Vector3(dx,0,dz),Vector3(1.8,0.15,1.8),Color("#35464f"),root)
+    elif kind=="rarecar":
+        _photo_box("RareBody",Vector3.ZERO,Vector3(5.4,1.2,2.1),Color("#ff4f65"),root)
+        _photo_box("RareCabin",Vector3(-0.3,1.0,0),Vector3(2.4,0.8,1.65),Color("#68efd7"),root)
+    elif kind=="cat":
+        _photo_box("CatBody",Vector3.ZERO,Vector3(1.4,0.8,2.2),Color("#51473f"),root)
+        _photo_box("CatHead",Vector3(0,0.6,-1.25),Vector3(1.0,1.0,1.0),Color("#5d5147"),root)
+        _photo_box("EarL",Vector3(-0.28,0.72,-1.35),Vector3(0.22,0.45,0.22),Color("#5d5147"),root)
+        _photo_box("EarR",Vector3(0.28,0.72,-1.35),Vector3(0.22,0.45,0.22),Color("#5d5147"),root)
+    elif kind=="neoncode":
+        for k in range(5):
+            _photo_box("Code_%d" % k,Vector3(float(k)*0.8-1.6,float(k%2)*0.45,0),Vector3(0.55,0.24,0.18),Color("#67f7df") if k%2==0 else Color("#ff6bd6"),root)
+    elif kind=="antenna":
+        _photo_box("Mast",Vector3(0,4.5,0),Vector3(0.45,9.0,0.45),Color("#8d9ba3"),root)
+        for k in range(3):
+            _photo_box("Cross_%d" % k,Vector3(0,2.4+float(k)*2.1,0),Vector3(4.8-float(k)*0.8,0.25,0.25),Color("#d3e1e5"),root)
+    elif kind=="window":
+        _photo_box("WindowGlow",Vector3.ZERO,Vector3(4.2,3.0,0.20),Color("#ffd47f"),root)
+        _photo_box("WindowCore",Vector3(0,0,0.18),Vector3(2.8,1.8,0.12),Color("#fff5d0"),root)
+    elif kind=="bird":
+        _photo_box("BirdBody",Vector3.ZERO,Vector3(1.3,0.6,1.8),Color("#27343a"),root)
+        _photo_box("WingL",Vector3(-1.0,0,0),Vector3(1.6,0.18,0.8),Color("#3e5059"),root)
+        _photo_box("WingR",Vector3(1.0,0,0),Vector3(1.6,0.18,0.8),Color("#3e5059"),root)
 
 func _start_photo_challenge(index: int) -> void:
     if index<0 or index>=photo_points.size() or bool(photo_points[index].taken):
@@ -1788,9 +1832,15 @@ func _photo_shutter() -> void:
         photo_status_label.text="Kein Suchmotiv sauber im Sucher."
         return
     var key := str(target.key)
-    photo_found[key]=true
-    _show_reward_popup("MOTIV GEFUNDEN",str(target.label),Color("#ffb3e6"))
     var node: Node3D = target.node
+    var screen_pos := photo_camera.unproject_position(node.global_position)
+    var center := Vector2(photo_viewport.size)*0.5
+    var framing: float = clampf(1.0-screen_pos.distance_to(center)/115.0,0.0,1.0)
+    var zoom_bonus: float = clampf((82.0-photo_fov)/48.0,0.0,1.0)
+    var score: int = int(60.0+framing*30.0+zoom_bonus*10.0)
+    photo_found[key]=true
+    photo_scores[key]=maxi(score,int(photo_scores.get(key,0)))
+    _show_reward_popup("MOTIV GEFUNDEN","%s · %d/100" % [str(target.label),score],Color("#ffb3e6"))
     node.visible=false
     _photo_refresh_labels()
     var complete := true
@@ -1811,7 +1861,10 @@ func _photo_refresh_labels() -> void:
             found_count+=1
         else:
             remaining.append(str(t.label))
-    photo_target_label.text="%s\nMotive %d / %d" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size()]
+    var score_sum: int = 0
+    for t in photo_targets:
+        score_sum+=int(photo_scores.get(str(t.key),0))
+    photo_target_label.text="%s\nMotive %d / %d · Score %d/300" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size(),score_sum]
     photo_status_label.text=("Noch suchen: "+", ".join(remaining)) if not remaining.is_empty() else "Alle Motive gefunden."
 
 func _photo_hint() -> void:
@@ -1829,11 +1882,15 @@ func _complete_photo_challenge() -> void:
     if not bool(ph.taken):
         photo_points[active_photo_index]["taken"]=true
         photo_count+=1
-        credits+=int(ph.reward)
+        var quality: int = 0
+        for t in photo_targets:
+            quality+=int(photo_scores.get(str(t.key),0))
+        var quality_bonus: int = 25 if quality>=270 else (12 if quality>=225 else 0)
+        credits+=int(ph.reward)+quality_bonus
         _save_game()
         _advance_native_chapter()
         _check_milestones()
-        _show_reward_popup("PHOTO SPOT ABGESCHLOSSEN","%s\n3 Motive · +%d CR" % [str(ph.label),int(ph.reward)],Color("#ffb3e6"))
+        _show_reward_popup("PHOTO SPOT ABGESCHLOSSEN","%s\n3 Motive · +%d CR%s" % [str(ph.label),int(ph.reward),(" · Qualitätsbonus" if quality_bonus>0 else "")],Color("#ffb3e6"))
     await get_tree().create_timer(0.85).timeout
     _exit_photo_mode()
 
@@ -1865,6 +1922,12 @@ func _update_photo_3d_scene(_delta: float) -> void:
             node.position=base+Vector3(sin(time*1.7+float(i))*2.0,sin(time*2.4)*0.8,cos(time*1.3+float(i))*1.4)
         elif str(t.kind)=="symbol":
             node.rotation.y=time*0.45
+        elif str(t.kind)=="bird":
+            var base: Vector3 = Vector3(t.pos)
+            node.position=base+Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2)
+            node.rotation.y=time*0.75
+        elif str(t.kind)=="neoncode":
+            node.scale=Vector3.ONE*(1.0+sin(time*3.0)*0.06)
     _photo_refresh_labels()
 
 func _build_audio() -> void:
@@ -2684,6 +2747,8 @@ func _draw() -> void:
     draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color("#07131b"))
     if main_menu_active:
         _draw_title_art()
+        return
+    if photo_mode:
         return
     if interior_active:
         _draw_interior_scene()
@@ -5216,6 +5281,7 @@ func _save_game() -> void:
         "photo_count":photo_count,
         "photos":photo_points.map(func(x): return bool(x.taken)),
         "photo_found":photo_found,
+        "photo_scores":photo_scores,
         "scan_collect_count":scan_collect_count,
         "scan_points":scan_points.map(func(x): return bool(x.taken)),
         "visited_districts":visited_districts,
@@ -5278,6 +5344,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
         for i in range(mini(scan_taken.size(),scan_points.size())):
             scan_points[i]["taken"]=bool(scan_taken[i])
     photo_found = Dictionary(d.get("photo_found",{}))
+    photo_scores = Dictionary(d.get("photo_scores",{}))
     var photo_taken = d.get("photos",[])
     if photo_taken is Array:
         for i in range(mini(photo_taken.size(),photo_points.size())):
@@ -5996,6 +6063,12 @@ func _chapter_progress(c: Dictionary) -> int:
     if kind=="upgrades": return mini(_total_upgrade_count(),int(c.goal))
     return 1
 
+func _photo_spot_score(id: String) -> int:
+    var total := 0
+    for i in range(3):
+        total+=int(photo_scores.get("%s_%d" % [id,i],0))
+    return total
+
 func _draw_collection_overlay() -> void:
     var screen := get_viewport_rect().size
     draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
@@ -6025,7 +6098,8 @@ func _draw_collection_overlay() -> void:
     for i in range(photo_points.size()):
         var ph: Dictionary = photo_points[i]
         var done: bool = bool(ph.taken)
-        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %02d · %s · %s" % [("✓" if done else "○"),i+1,str(ph.label),str(ph.district)],HORIZONTAL_ALIGNMENT_LEFT,820,14,Color("#8de9aa") if done else Color("#c7d6de"))
+        var spot_score: int = _photo_spot_score(str(ph.id))
+        draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %02d · %s · %s · %d/300" % [("✓" if done else "○"),i+1,str(ph.label),str(ph.district),spot_score],HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#8de9aa") if done else Color("#c7d6de"))
         y+=30
         if y>1150: break
 
