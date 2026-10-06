@@ -1,6 +1,20 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.10.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.11.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.11.0 — Street Life & District Ambience
+
+- district-specific synthesized ambient beds without external audio assets
+- separate rain and storm ambience layers that react to interiors, vehicles and photo mode
+- ambient character changes between heritage, green, waterside, industrial, neon, campus and open districts
+- all 12 rotating city micro-events are now directly interactive on foot
+- first-time participation earns City Reputation and a small discovery reward; repeat visits provide contextual effects instead of farming the same reward
+- City Reputation is saved per slot and now has three long-term milestones: City Regular, Local Pulse and Megacity Insider
+- micro-events advertise NEW/LIVE states and show a local interaction ring at close range
+- district-entry banners now communicate a stronger identity such as HERITAGE CORE, GLASS CANYON, HARBOR LIFE or DATA GRID
+- pedestrians pause more naturally, occasionally check phones, and use umbrellas in rain and storms
+- vehicles gain taxi, service, utility-rack, response-light and EV-accent variants plus wet-road wheel spray
+- collection milestone layout is now two-column so the expanded progression list remains readable
 
 ## 1.10.0 — World Alive
 
