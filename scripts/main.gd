@@ -55,6 +55,11 @@ var social_setpieces: Array = []
 var response_incidents: Array = []
 var active_crossings_by_road: Dictionary = {}
 var transit_vehicles: Array = []
+var transit_transfer_hubs: Array = []
+var last_transit_exit_hub: String = ""
+var last_transit_exit_line: String = ""
+var last_transit_exit_time: float = -9999.0
+var transit_transfer_count: int = 0
 var fragments: Array = []
 var secrets: Array = []
 var camera_pos := Vector2.ZERO
@@ -1217,6 +1222,7 @@ func _generate_transit() -> void:
 
 func _build_transit_stops() -> void:
     transit_stops.clear()
+    transit_transfer_hubs.clear()
     for vi in range(transit_vehicles.size()):
         var tv: Dictionary = transit_vehicles[vi]
         var rd = roads[int(tv.road)]
@@ -1240,8 +1246,58 @@ func _build_transit_stops() -> void:
                 "arrivals":0,
                 "last_boarded":0,
                 "last_exited":0,
-                "demand_slot":-1
+                "demand_slot":-1,
+                "transfer_hub":""
             })
+    _build_transit_transfer_hubs()
+
+func _build_transit_transfer_hubs() -> void:
+    var road_vehicle: Dictionary={}
+    for vi in range(transit_vehicles.size()):
+        road_vehicle[int(transit_vehicles[vi].road)]=vi
+    var hub_count:=0
+    for j in junctions:
+        if bool(j.get("bridge",false)):
+            continue
+        var a: int=int(j.a)
+        var b: int=int(j.b)
+        if not road_vehicle.has(a) or not road_vehicle.has(b):
+            continue
+        var va: int=int(road_vehicle[a])
+        var vb: int=int(road_vehicle[b])
+        if va==vb:
+            continue
+        var line_a:=str(transit_vehicles[va].line)
+        var line_b:=str(transit_vehicles[vb].line)
+        if line_a==line_b:
+            continue
+        var hub_id:="transfer_%d" % hub_count
+        var pos:=Vector2(j.pos)
+        var stop_a:=transit_stops.size()
+        transit_stops.append({
+            "vehicle":va,"t":float(j.ta),"pos":pos,"line":line_a,"name":"%s · Umstieg" % line_a,
+            "waiting":3+(hub_count%4),"arrivals":0,"last_boarded":0,"last_exited":0,"demand_slot":-1,"transfer_hub":hub_id
+        })
+        var stop_b:=transit_stops.size()
+        transit_stops.append({
+            "vehicle":vb,"t":float(j.tb),"pos":pos,"line":line_b,"name":"%s · Umstieg" % line_b,
+            "waiting":3+((hub_count+2)%4),"arrivals":0,"last_boarded":0,"last_exited":0,"demand_slot":-1,"transfer_hub":hub_id
+        })
+        transit_transfer_hubs.append({"id":hub_id,"pos":pos,"lines":[line_a,line_b],"stops":[stop_a,stop_b]})
+        hub_count+=1
+        if hub_count>=8:
+            break
+
+func _transit_hub_lines(hub_id: String, exclude_line: String = "") -> Array:
+    for hub in transit_transfer_hubs:
+        if str(hub.id)!=hub_id:
+            continue
+        var result: Array=[]
+        for line in Array(hub.lines):
+            if str(line)!=exclude_line:
+                result.append(str(line))
+        return result
+    return []
 
 func _build_social_setpieces() -> void:
     social_setpieces.clear()
@@ -1275,6 +1331,32 @@ func _build_social_setpieces() -> void:
         cafe_added+=1
         if cafe_added>=9:
             break
+
+    for hi in range(transit_transfer_hubs.size()):
+        var hub: Dictionary=transit_transfer_hubs[hi]
+        social_setpieces.append({"kind":"transfer_hub","pos":Vector2(hub.pos),"hub_id":str(hub.id),"seed":hi*71+9,"count":5+(hi%3)})
+
+    var delivery_added:=0
+    for si in range(storefronts.size()):
+        var st: Dictionary=storefronts[si]
+        if str(st.kind) not in ["shop","restaurant","cafe"]:
+            continue
+        var heading:=float(st.heading)
+        var side:=Vector2.from_angle(heading+PI*0.5)
+        social_setpieces.append({
+            "kind":"delivery_loading","pos":Vector2(st.pos)+side*72.0,"heading":heading,
+            "seed":si*79+17,"count":2,"store_name":str(st.name),"store_kind":str(st.kind)
+        })
+        delivery_added+=1
+        if delivery_added>=12:
+            break
+
+    for di in range(districts.size()):
+        var d: Dictionary=districts[di]
+        var center:=Vector2(d.rect.get_center())
+        social_setpieces.append({"kind":"district_signature","pos":center+Vector2(260,-220),"style":str(d.style),"district":str(d.name),"seed":di*83+29,"count":3})
+        if str(d.style) in ["harbor","industry","rail"]:
+            social_setpieces.append({"kind":"dock_loading","pos":center+Vector2(-260,220),"heading":0.0,"seed":di*89+31,"count":3,"district":str(d.name)})
 
     for i in range(mini(7,junctions.size())):
         var idx: int=(i*13+9)%junctions.size()
@@ -3608,6 +3690,60 @@ func _traffic_has_crossing_hazard(car: Dictionary) -> bool:
             return true
     return false
 
+func _junction_between_roads(a: int, b: int) -> Dictionary:
+    for j in junctions:
+        if bool(j.get("bridge",false)):
+            continue
+        if (int(j.a)==a and int(j.b)==b) or (int(j.a)==b and int(j.b)==a):
+            return j
+    return {}
+
+func _shelter_target_t_for_route(p: Dictionary) -> float:
+    var route: Array=Array(p.get("shelter_route",[]))
+    var route_index: int=int(p.get("shelter_route_index",0))
+    var current_road: int=int(p.road)
+    if route.is_empty() or route_index>=route.size()-1:
+        return _nearest_road_t_to_point(current_road,Vector2(p.get("shelter_target",Vector2.ZERO)))
+    var next_road: int=int(route[route_index+1])
+    var j:=_junction_between_roads(current_road,next_road)
+    if j.is_empty():
+        return _nearest_road_t_to_point(current_road,Vector2(p.get("shelter_target",Vector2.ZERO)))
+    return float(j.ta) if int(j.a)==current_road else float(j.tb)
+
+func _configure_ped_shelter_route(p: Dictionary, shelter: Vector2) -> Dictionary:
+    var current_road: int=int(p.road)
+    var shelter_road: int=_nearest_road_index(shelter)
+    p["shelter_target"]=shelter
+    p["shelter_route"]=_build_road_route(current_road,shelter_road)
+    p["shelter_route_index"]=0
+    p["state"]="seek_shelter"
+    p["target_t"]=_shelter_target_t_for_route(p)
+    return p
+
+func _advance_ped_shelter_route(p: Dictionary) -> Dictionary:
+    var route: Array=Array(p.get("shelter_route",[]))
+    var route_index: int=int(p.get("shelter_route_index",0))
+    if route.is_empty() or route_index>=route.size()-1:
+        p["state"]="shelter"
+        p["pause"]=rng.randf_range(5.0,11.0)
+        return p
+    var current_road: int=int(p.road)
+    var next_road: int=int(route[route_index+1])
+    var j:=_junction_between_roads(current_road,next_road)
+    if j.is_empty():
+        p["state"]="shelter"
+        p["pause"]=rng.randf_range(5.0,11.0)
+        return p
+    p["road"]=next_road
+    p["t"]=float(j.tb) if int(j.b)==next_road else float(j.ta)
+    p["shelter_route_index"]=route_index+1
+    p["side"]=-1.0 if rng.randf()<0.5 else 1.0
+    p["target_t"]=_shelter_target_t_for_route(p)
+    if int(p.shelter_route_index)>=route.size()-1 and abs(float(p.target_t)-float(p.t))<0.008:
+        p["state"]="shelter"
+        p["pause"]=rng.randf_range(5.0,11.0)
+    return p
+
 func _nearest_rain_shelter(pos: Vector2, max_distance: float = 650.0) -> Vector2:
     var best:=Vector2.ZERO
     var best_dist: float=max_distance
@@ -3626,7 +3762,7 @@ func _ped_should_seek_shelter(index: int, p: Dictionary) -> bool:
         return false
     if index%4==0:
         return false
-    if str(p.get("state","walk")) in ["cross","alert","wave","shelter"]:
+    if str(p.get("state","walk")) in ["cross","alert","wave","shelter","seek_shelter"]:
         return false
     return true
 
@@ -3636,18 +3772,18 @@ func _update_pedestrians(delta: float) -> void:
         var p: Dictionary = pedestrians[i]
         p["phase"]=fposmod(float(p.phase)+delta*5.0,TAU)
         var state:=str(p.get("state","walk"))
-        if _weather_state() not in ["rain","storm"] and state=="shelter":
+        if _weather_state() not in ["rain","storm"] and state in ["shelter","seek_shelter"]:
             p["state"]="walk"
             p["pause"]=0.0
             p["shelter_target"]=Vector2.ZERO
+            p["shelter_route"]=[]
+            p["shelter_route_index"]=0
             state="walk"
         elif _ped_should_seek_shelter(i,p):
             var current_pos:=_ped_world_pos(p)
             var shelter:=_nearest_rain_shelter(current_pos,650.0)
             if shelter!=Vector2.ZERO:
-                p["shelter_target"]=shelter
-                p["target_t"]=_nearest_road_t_to_point(int(p.road),shelter)
-                p["state"]="seek_shelter"
+                p=_configure_ped_shelter_route(p,shelter)
                 state="seek_shelter"
 
         if state=="cross":
@@ -3694,8 +3830,7 @@ func _update_pedestrians(delta: float) -> void:
             p["t"]=fposmod(float(p.t)+float(p.speed)*delta*direction,1.0)
         else:
             if state=="seek_shelter" and _weather_state() in ["rain","storm"]:
-                p["state"]="shelter"
-                p["pause"]=rng.randf_range(5.0,11.0)
+                p=_advance_ped_shelter_route(p)
                 pedestrians[i]=p
                 continue
             # Arrive at a routine stop, then choose a social/idle action.
@@ -3811,6 +3946,112 @@ func _draw_social_person(pos: Vector2, accent: Color, state: String, seed: int) 
         draw_circle(head+Vector2(6,-14),1.0,Color("#324047"))
         draw_circle(head+Vector2(9,-14),1.0,Color("#324047"))
 
+func _draw_loading_scene(s: Dictionary, dock: bool) -> void:
+    var pos:=Vector2(s.pos)
+    var heading:=float(s.get("heading",0.0))
+    var f:=Vector2.from_angle(heading)
+    var side:=Vector2(-f.y,f.x)
+    var t:=float(Time.get_ticks_msec())/1000.0+float(int(s.seed)%17)
+    var cycle:=fposmod(t,5.2)/5.2
+    var van_pos:=pos-f*52.0
+    _draw_car(van_pos,heading,"delivery",Color("#edf2ee"),true,"courier")
+    var door:=_project(van_pos+f*28.0,10)
+    draw_rect(Rect2(door-Vector2(8,10),Vector2(16,20)),Color("#1d272b"),true)
+    var target:=pos+f*(74.0 if not dock else 110.0)
+    var crate_world:=van_pos.lerp(target,clampf(cycle*1.35,0.0,1.0))
+    var crate:=_project(crate_world,7)
+    draw_rect(Rect2(crate-Vector2(9,7),Vector2(18,14)),Color("#9a6d45"),true)
+    draw_rect(Rect2(crate-Vector2(9,7),Vector2(18,14)),Color("#d6a66b"),false,1.4)
+    var worker_pos:=crate_world-side*18.0
+    _draw_social_person(worker_pos,Color("#f0b84b"),"walk",int(s.seed)+4)
+    if dock:
+        var base:=_project(target,4)
+        for k in range(3):
+            draw_rect(Rect2(base+Vector2(float(k)*18.0-26,-float(k%2)*12.0),Vector2(16,14)),Color("#76543d"),true)
+        var lift_x:=sin(t*1.2)*28.0
+        draw_rect(Rect2(base+Vector2(lift_x-13,22),Vector2(26,13)),Color("#d59a3f"),true)
+        draw_circle(base+Vector2(lift_x-7,37),5,Color("#22282b"))
+        draw_circle(base+Vector2(lift_x+8,37),5,Color("#22282b"))
+        draw_line(base+Vector2(lift_x+10,20),base+Vector2(lift_x+10,-14),Color("#4a555a"),3.0,true)
+        draw_line(base+Vector2(lift_x+10,-14),base+Vector2(lift_x+30,-14),Color("#4a555a"),2.0,true)
+
+func _draw_district_signature_scene(s: Dictionary) -> void:
+    var pos:=Vector2(s.pos)
+    var style:=str(s.style)
+    var district:=str(s.district)
+    var c:=_project(pos,8)
+    var accent: Color=Color(_district_at(pos).get("accent",Color("#9ad5ff")))
+    var t:=float(Time.get_ticks_msec())/1000.0
+    if style=="heritage":
+        draw_rect(Rect2(c-Vector2(42,18),Vector2(84,36)),Color("#5c4638"),true)
+        draw_line(c+Vector2(-34,-18),c+Vector2(-28,-42),accent,3.0,true)
+        draw_line(c+Vector2(34,-18),c+Vector2(28,-42),accent,3.0,true)
+    elif style=="culture":
+        draw_rect(Rect2(c-Vector2(46,30),Vector2(92,60)),Color("#263641"),true)
+        for k in range(4):
+            draw_arc(c+Vector2(float(k-1)*15.0,0),18+float(k)*3.0,t*0.4+float(k),t*0.4+float(k)+PI,18,accent,2.0,true)
+    elif style=="glass":
+        var q:=PackedVector2Array([c+Vector2(0,-52),c+Vector2(38,24),c+Vector2(0,42),c+Vector2(-38,24)])
+        draw_colored_polygon(q,Color(accent.r,accent.g,accent.b,0.20))
+        draw_polyline(PackedVector2Array([q[0],q[1],q[2],q[3],q[0]]),accent,2.0,true)
+    elif style in ["green","garden"]:
+        draw_arc(c,44,PI,TAU,24,Color("#6fc58a"),5.0,true)
+        for k in range(5):
+            draw_circle(c+Vector2(float(k-2)*15.0,18),8,Color("#4d8f5b"))
+    elif style=="solar":
+        for k in range(4):
+            var d:=Vector2.from_angle(float(k)*PI*0.5+t*0.08)
+            draw_rect(Rect2(c+d*24.0-Vector2(12,6),Vector2(24,12)),Color("#d8cf67"),true)
+    elif style in ["canal","coast"]:
+        draw_line(c+Vector2(-44,18),c+Vector2(44,18),Color("#6e8f98"),4.0,true)
+        for k in range(4):
+            draw_circle(c+Vector2(float(k-2)*22.0,9),5,accent)
+    elif style=="center":
+        draw_rect(Rect2(c-Vector2(22,42),Vector2(44,84)),Color("#314a57"),true)
+        draw_string(ThemeDB.fallback_font,c+Vector2(-16,-12),"i",HORIZONTAL_ALIGNMENT_CENTER,32,32,accent)
+    elif style=="harbor":
+        for k in range(4):
+            draw_rect(Rect2(c+Vector2(float(k%2)*30-30,float(k/2)*17-6),Vector2(28,15)),[Color("#b56c4f"),Color("#47768a")][k%2],true)
+        draw_line(c+Vector2(40,28),c+Vector2(40,-52),Color("#8c765f"),4.0,true)
+        draw_line(c+Vector2(40,-52),c+Vector2(78,-52),accent,3.0,true)
+    elif style in ["industry","rail"]:
+        for k in range(3):
+            draw_line(c+Vector2(float(k-1)*22,30),c+Vector2(float(k-1)*22,-36),Color("#6c6e6c"),7.0,true)
+        draw_circle(c+Vector2(0,-46),8+sin(t*2.0)*2.0,Color(0.82,0.86,0.86,0.12))
+    elif style=="terminal":
+        draw_rect(Rect2(c-Vector2(48,28),Vector2(96,56)),Color("#29343a"),true)
+        for k in range(3):
+            draw_string(ThemeDB.fallback_font,c+Vector2(-40,-18+float(k)*17),"→ %02d:%02d" % [12+k,int(fposmod(t*3.0+float(k)*7.0,60.0))],HORIZONTAL_ALIGNMENT_LEFT,82,10,accent)
+    elif style=="campus":
+        for k in range(4):
+            draw_circle(c+Vector2(float(k-2)*20.0,18),9,Color("#4b647d"),false,2.0)
+            draw_line(c+Vector2(float(k-2)*20.0-8,18),c+Vector2(float(k-2)*20.0+8,18),Color("#4b647d"),2.0,true)
+        draw_rect(Rect2(c-Vector2(34,34),Vector2(68,18)),Color("#536c8a"),true)
+    elif style=="astro":
+        draw_arc(c+Vector2(0,10),38,PI,TAU,28,accent,4.0,true)
+        draw_line(c+Vector2(12,-22),c+Vector2(42,-48),Color("#8f84b8"),6.0,true)
+    elif style=="neon":
+        draw_rect(Rect2(c-Vector2(44,24),Vector2(88,48)),Color("#241c35"),true)
+        draw_arc(c,30,0,TAU,24,Color(accent.r,accent.g,accent.b,0.65+0.25*sin(t*3.0)),4.0,true)
+    elif style=="expo":
+        var q:=PackedVector2Array([c+Vector2(-46,20),c+Vector2(46,20),c+Vector2(28,-30),c+Vector2(-28,-30)])
+        draw_colored_polygon(q,Color(accent.r,accent.g,accent.b,0.35))
+        draw_polyline(PackedVector2Array([q[0],q[1],q[2],q[3],q[0]]),accent,2.0,true)
+    elif style=="air":
+        draw_line(c+Vector2(-48,18),c+Vector2(48,18),Color("#9fb1b8"),5.0,true)
+        draw_circle(c+Vector2(sin(t)*30,-6),5,Color("#f8e7a8"))
+    elif style=="wind":
+        draw_line(c+Vector2(0,32),c+Vector2(0,-36),Color("#9aa7ad"),4.0,true)
+        for k in range(3):
+            draw_line(c+Vector2(0,-36),c+Vector2(0,-36)+Vector2.from_angle(t+float(k)*TAU/3.0)*28.0,accent,3.0,true)
+    elif style=="data":
+        draw_rect(Rect2(c-Vector2(32,42),Vector2(64,84)),Color("#202d44"),true)
+        for k in range(5):
+            draw_line(c+Vector2(-24,-28+float(k)*14),c+Vector2(24,-28+float(k)*14),Color(accent.r,accent.g,accent.b,0.35+0.10*sin(t*2.0+float(k))),2.0,true)
+    else:
+        draw_arc(c,32,0,TAU,24,accent,3.0,true)
+    draw_string(ThemeDB.fallback_font,c+Vector2(-80,58),district.upper(),HORIZONTAL_ALIGNMENT_CENTER,160,10,Color(accent.r,accent.g,accent.b,0.78))
+
 func _draw_social_setpieces() -> void:
     for i in range(social_setpieces.size()):
         var s: Dictionary=social_setpieces[i]
@@ -3906,6 +4147,21 @@ func _draw_social_setpieces() -> void:
             for k in range(count):
                 var a:=float(k)*TAU/float(maxi(1,count))
                 _draw_social_person(pos+Vector2.from_angle(a)*34.0,Color("#8ff0b4"),"sit",seed+k)
+        elif kind=="transfer_hub":
+            var hub_id:=str(s.hub_id)
+            var lines:=_transit_hub_lines(hub_id)
+            for k in range(count):
+                var off:=Vector2(float(k-(count-1)*0.5)*16.0,10.0+float(k%2)*7.0)
+                _draw_social_person(pos+off,Color("#72d7e6"),"phone" if k%2==0 else "idle",seed+k)
+            var hp:=_project(pos,6)
+            draw_rect(Rect2(hp-Vector2(48,42),Vector2(96,20)),Color("#17313b"),true)
+            draw_string(ThemeDB.fallback_font,hp+Vector2(-42,-39),"↔ %s" % " / ".join(lines),HORIZONTAL_ALIGNMENT_CENTER,84,10,Color("#72d7e6"))
+        elif kind=="delivery_loading":
+            _draw_loading_scene(s,false)
+        elif kind=="dock_loading":
+            _draw_loading_scene(s,true)
+        elif kind=="district_signature":
+            _draw_district_signature_scene(s)
 
 func _draw_response_incidents() -> void:
     for i in range(response_incidents.size()):
@@ -4092,7 +4348,7 @@ func _update_ui() -> void:
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     var clock_h := int(floor(world_clock))
     var clock_m := int(floor((world_clock-float(clock_h))*60.0))
-    status_label.text = "%s · %s · %02d:%02d · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d · Stadtruf %d/%d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),world_zoom,credits,int(energy),jobs_done,city_reputation,city_micro_events.size()]
+    status_label.text = "%s · %s · %02d:%02d · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d · Stadtruf %d/%d · Umstiege %d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),world_zoom,credits,int(energy),jobs_done,city_reputation,city_micro_events.size(),transit_transfer_count]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
     interact_button.text = "INTERACT" if near.is_empty() else str(near.get("action","INTERACT"))
@@ -4233,7 +4489,10 @@ func _nearest_interactable() -> Dictionary:
     if transit_riding>=0:
         var tv: Dictionary = transit_vehicles[transit_riding]
         if bool(tv.get("at_stop",false)):
-            return {"type":"transit","index":transit_riding,"action":"AUSSTEIGEN"}
+            var ride_stop_index:=int(tv.get("stop_index",-1))
+            var ride_stop: Dictionary=transit_stops[ride_stop_index] if ride_stop_index>=0 and ride_stop_index<transit_stops.size() else {}
+            var ride_hub:=str(ride_stop.get("transfer_hub",""))
+            return {"type":"transit","index":transit_riding,"action":"AUSSTEIGEN / UMSTEIGEN" if ride_hub!="" else "AUSSTEIGEN"}
         return {}
     if interior_active:
         var exit_pos := Vector2(interior_size.x*0.5,interior_size.y-48)
@@ -4318,7 +4577,11 @@ func _nearest_interactable() -> Dictionary:
         var tp: Vector2 = _sample_polyline(rd.points,float(tv.t))
         var dt: float = player_pos.distance_to(tp)
         if dt < 115.0 and dt < bd:
-            best = {"type":"transit","index":ti,"action":"EINSTEIGEN %s" % str(tv.line)}
+            var ti_stop:=int(tv.get("stop_index",-1))
+            var ti_stop_data: Dictionary=transit_stops[ti_stop] if ti_stop>=0 and ti_stop<transit_stops.size() else {}
+            var ti_hub:=str(ti_stop_data.get("transfer_hub",""))
+            var transfer_now:=ti_hub!="" and ti_hub==last_transit_exit_hub and str(tv.line)!=last_transit_exit_line and float(Time.get_ticks_msec())/1000.0-last_transit_exit_time<=120.0
+            best = {"type":"transit","index":ti,"action":("UMSTEIGEN %s" if transfer_now else "EINSTEIGEN %s") % str(tv.line)}
             bd = dt
     if not active_job.is_empty() and str(active_job.get("kind","delivery")) in ["delivery","event_followup"]:
         var target_pos: Vector2 = Vector2(active_job.get("target",Vector2.ZERO))
@@ -7111,14 +7374,28 @@ func _toggle_transit(index: int) -> void:
         if not bool(ride.get("at_stop",false)):
             _notify("Aussteigen erst am nächsten Halt.")
             return
+        var stop_index: int=int(ride.get("stop_index",-1))
+        var stop_data: Dictionary=transit_stops[stop_index] if stop_index>=0 and stop_index<transit_stops.size() else {}
         var road = roads[int(ride.road)]
         var tang := _polyline_tangent(road.points,float(ride.t))
         var normal := Vector2(-tang.y,tang.x)
-        player_pos = _sample_polyline(road.points,float(ride.t)) + normal*85.0
+        var exit_pos:=Vector2(stop_data.get("pos",_sample_polyline(road.points,float(ride.t))))
+        player_pos = exit_pos + normal*85.0
+        var exit_line:=str(ride.line)
+        var hub_id:=str(stop_data.get("transfer_hub",""))
         transit_riding=-1
         transit_trip_count+=1
         _play_sfx("vehicle")
-        _notify("ÖPNV verlassen.")
+        if hub_id!="":
+            last_transit_exit_hub=hub_id
+            last_transit_exit_line=exit_line
+            last_transit_exit_time=float(Time.get_ticks_msec())/1000.0
+            var lines:=_transit_hub_lines(hub_id,exit_line)
+            _notify("Umsteigepunkt · %s → %s" % [exit_line,", ".join(lines)] if not lines.is_empty() else "ÖPNV verlassen.")
+        else:
+            last_transit_exit_hub=""
+            last_transit_exit_line=""
+            _notify("ÖPNV verlassen.")
         _check_npc_contract()
         _save_game()
         return
@@ -7128,11 +7405,23 @@ func _toggle_transit(index: int) -> void:
     if not bool(tv.get("at_stop",false)):
         _notify("Fahrzeug ist nicht am Halt.")
         return
+    var stop_index: int=int(tv.get("stop_index",-1))
+    var stop_data: Dictionary=transit_stops[stop_index] if stop_index>=0 and stop_index<transit_stops.size() else {}
+    var hub_id:=str(stop_data.get("transfer_hub",""))
+    var line:=str(tv.line)
+    var now_s:=float(Time.get_ticks_msec())/1000.0
+    var is_transfer:=hub_id!="" and hub_id==last_transit_exit_hub and line!=last_transit_exit_line and now_s-last_transit_exit_time<=120.0
     transit_riding=index
     current_vehicle=-1
     vehicle_velocity=0.0
     _play_sfx("vehicle")
-    _notify("%s bestiegen." % str(tv.line))
+    if is_transfer:
+        transit_transfer_count+=1
+        _notify("Umstieg %s → %s · Verbindung übernommen." % [last_transit_exit_line,line])
+        last_transit_exit_hub=""
+        last_transit_exit_line=""
+    else:
+        _notify("%s bestiegen." % line)
 
 func _read_save_summary(slot: int) -> Dictionary:
     var path := _save_path(slot)
@@ -7443,6 +7732,7 @@ func _save_game() -> void:
         "city_reputation":city_reputation,
         "active_npc_contract":_serialize_contract(active_npc_contract),
         "transit_trip_count":transit_trip_count,
+        "transit_transfer_count":transit_transfer_count,
         "vertical_flags":vertical_flags,
         "relay_count":relay_count,
         "sublevel_count":sublevel_count,
@@ -7512,6 +7802,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     city_reputation = int(d.get("city_reputation",micro_event_seen.size()))
     active_npc_contract = _deserialize_contract(Dictionary(d.get("active_npc_contract",{})))
     transit_trip_count = int(d.get("transit_trip_count",0))
+    transit_transfer_count = int(d.get("transit_transfer_count",0))
     vertical_flags = Dictionary(d.get("vertical_flags",{}))
     relay_count = int(d.get("relay_count",0))
     sublevel_count = int(d.get("sublevel_count",0))
@@ -8221,6 +8512,8 @@ func _draw_map_overlay() -> void:
             _draw_map_marker(_map_point(Vector2(response_incidents[ii].pos),map_rect),Color("#ffb65a"),"⚠")
     for ts in transit_stops:
         _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
+    for hub in transit_transfer_hubs:
+        _draw_map_marker(_map_point(Vector2(hub.pos),map_rect),Color("#9eefff"),"↔")
     if not active_job.is_empty():
         _draw_map_marker(_map_point(Vector2(active_job.get("target",Vector2.ZERO)),map_rect),Color("#ffffff"),"➤")
     var contract_target := _npc_contract_target()
@@ -8251,6 +8544,7 @@ func _draw_map_overlay() -> void:
         ["●","Aktives Live-Event",Color("#ffb66f")],
         ["⚠","Aktiver Service-/Response-Einsatz",Color("#ffb65a")],
         ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
+        ["↔","ÖPNV-Umsteigepunkt",Color("#9eefff")],
         ["◆","Persönlicher NPC-Auftrag",Color("#ff9fe8")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
     ]
