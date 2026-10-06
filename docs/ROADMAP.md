@@ -51,3 +51,19 @@
 - Weather states, richer ambient soundscapes and district event beats
 - Additional NPC reactions, micro-events and systemic world interactions
 - Further mobile UX tuning based on Android playtesting
+
+
+## Alpha 1.10 — world alive
+- Dynamic clear, mist, rain and storm states
+- Wet-road, rain, mist and lightning presentation
+- Weather-aware HUD and NPC dialogue context
+- Rotating district micro-events for ambient city life
+- Night/poor-visibility headlights, stronger brake lights and high-speed skid feedback
+- More reactive NPC trust/time/district/world-state responses
+
+### Next immersion targets
+- District-specific ambient audio beds and traffic tone
+- Weather-specific photo-scene materials and reflections
+- More interactive micro-events with optional rewards
+- More NPC state changes tied to story and trust
+- Additional authored street sets and bespoke district set-pieces
