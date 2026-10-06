@@ -51,6 +51,7 @@ var landmarks: Array = []
 var storefronts: Array = []
 var vegetation_props: Array = []
 var pedestrians: Array = []
+var active_crossings_by_road: Dictionary = {}
 var transit_vehicles: Array = []
 var fragments: Array = []
 var secrets: Array = []
@@ -821,6 +822,22 @@ func _vehicle_class_for_district(style: String) -> String:
         pool=["hatch","sedan","executive","delivery","suv","sport"]
     return str(pool[rng.randi_range(0,pool.size()-1)])
 
+func _traffic_archetype_for(style: String, cls: String) -> String:
+    var roll:=rng.randf()
+    if style in ["industry","rail","harbor","terminal"] and cls in ["pickup","van","delivery","suv"]:
+        if roll<0.30: return "service"
+        if roll<0.48: return "utility"
+    if style in ["center","glass","terminal"] and cls in ["sedan","executive","suv","van"]:
+        if roll<0.055: return "response"
+        if roll<0.20: return "taxi"
+    if style in ["campus","culture","expo"] and cls in ["sedan","hatch","suv"]:
+        if roll<0.22: return "rideshare"
+    if style in ["green","garden","wind","solar"] and cls in ["pickup","van","delivery"]:
+        if roll<0.26: return "maintenance"
+    if cls=="delivery" and roll<0.22:
+        return "courier"
+    return ""
+
 func _generate_traffic() -> void:
     traffic.clear()
     for i in range(155):
@@ -829,13 +846,20 @@ func _generate_traffic() -> void:
         var spawn_pos:=_sample_polyline(roads[road_index].points,t_value)
         var spawn_style:=str(_district_at(spawn_pos).get("style","center"))
         var cls: String = _vehicle_class_for_district(spawn_style)
+        var archetype:=_traffic_archetype_for(spawn_style,cls)
+        var cruise:=rng.randf_range(0.024,0.050)
+        if archetype=="response":
+            cruise*=1.14
+        elif archetype in ["service","maintenance"]:
+            cruise*=0.90
         var reverse := rng.randf()<0.5
         traffic.append({
             "road":road_index,
             "t":t_value,
             "speed":rng.randf_range(0.020,0.044),
-            "cruise":rng.randf_range(0.024,0.050),
+            "cruise":cruise,
             "class":cls,
+            "archetype":archetype,
             "color":_car_color(cls),
             "reverse":reverse,
             "lane":rng.randi_range(0,1),
@@ -1023,8 +1047,26 @@ func _generate_visual_props() -> void:
             "phase":rng.randf_range(0,TAU),
             "pause":0.0,
             "target_t":rng.randf(),
-            "routine":["work","shop","park","home","transit"][rng.randi_range(0,4)]
+            "routine":["work","shop","park","home","transit"][rng.randi_range(0,4)],
+            "state":"walk",
+            "cross_progress":0.0,
+            "cross_from_side":0.0,
+            "social_partner":-1
         })
+    # Seed a few real social pairs so paused pedestrians can visibly talk together.
+    for pair_start in range(0,pedestrians.size()-1,22):
+        var a: Dictionary=pedestrians[pair_start]
+        var b: Dictionary=pedestrians[pair_start+1]
+        b["road"]=a.road
+        b["t"]=fposmod(float(a.t)+0.006,1.0)
+        b["target_t"]=a.target_t
+        b["side"]=a.side
+        b["speed"]=a.speed
+        b["routine"]=a.routine
+        a["social_partner"]=pair_start+1
+        b["social_partner"]=pair_start
+        pedestrians[pair_start]=a
+        pedestrians[pair_start+1]=b
 
 
 func _generate_storefronts() -> void:
@@ -1147,7 +1189,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.12"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.13"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2858,6 +2900,11 @@ func _update_traffic(delta: float) -> void:
             elif player_gap<92.0:
                 target_speed*=0.45
 
+        var ped_yield:=_traffic_has_crossing_hazard(c)
+        c["ped_yield"]=ped_yield
+        if ped_yield:
+            target_speed=0.0
+
         if best_gap<0.018:
             target_speed=0.0
         elif best_gap<0.035:
@@ -2989,13 +3036,81 @@ func _update_smart_agents(delta: float) -> void:
 
         smart_agents[i]=a
 
+func _ped_world_pos(p: Dictionary) -> Vector2:
+    var rd=roads[int(p.road)]
+    var pos:=_sample_polyline(rd.points,float(p.t))
+    var tan:=_polyline_tangent(rd.points,float(p.t))
+    if bool(p.get("reverse",false)):
+        tan*=-1.0
+    var normal:=Vector2(-tan.y,tan.x)
+    var sidewalk:=float(rd.width)*0.5+18.0
+    var side_factor:=float(p.get("side",1.0))
+    if str(p.get("state","walk"))=="cross":
+        var from_side:=float(p.get("cross_from_side",side_factor))
+        side_factor=lerpf(from_side,-from_side,clampf(float(p.get("cross_progress",0.0)),0.0,1.0))
+    return pos+normal*sidewalk*side_factor
+
+func _crossing_vehicle_near(p: Dictionary, threshold: float = 85.0) -> bool:
+    var road_index:=int(p.road)
+    var pt:=float(p.t)
+    for car in traffic:
+        if int(car.road)!=road_index:
+            continue
+        var dt:=abs(float(car.t)-pt)
+        dt=minf(dt,1.0-dt)
+        if dt<0.020:
+            var tr:=_traffic_world_transform(car)
+            if Vector2(tr.pos).distance_to(_ped_world_pos(p))<threshold:
+                return true
+    if current_vehicle>=0 and player_pos.distance_to(_ped_world_pos(p))<threshold:
+        return true
+    return false
+
+func _traffic_has_crossing_hazard(car: Dictionary) -> bool:
+    var road_index:=int(car.road)
+    if not active_crossings_by_road.has(road_index):
+        return false
+    var car_t:=float(car.t)
+    for cross_t in Array(active_crossings_by_road[road_index]):
+        var dt:=abs(float(cross_t)-car_t)
+        dt=minf(dt,1.0-dt)
+        if dt<0.018:
+            return true
+    return false
+
 func _update_pedestrians(delta: float) -> void:
+    active_crossings_by_road.clear()
     for i in range(pedestrians.size()):
         var p: Dictionary = pedestrians[i]
         p["phase"]=fposmod(float(p.phase)+delta*5.0,TAU)
+        var state:=str(p.get("state","walk"))
+
+        if state=="cross":
+            if not _crossing_vehicle_near(p,72.0):
+                p["cross_progress"]=minf(1.0,float(p.get("cross_progress",0.0))+delta*0.34)
+            if float(p.cross_progress)>=1.0:
+                p["side"]=-float(p.get("cross_from_side",p.side))
+                p["state"]="walk"
+                p["cross_progress"]=0.0
+                p["pause"]=rng.randf_range(0.4,1.3)
+                p["target_t"]=rng.randf_range(0.05,0.95)
+            else:
+                if not active_crossings_by_road.has(int(p.road)):
+                    active_crossings_by_road[int(p.road)]=[]
+                var crossings: Array=active_crossings_by_road[int(p.road)]
+                crossings.append(float(p.t))
+                active_crossings_by_road[int(p.road)]=crossings
+            pedestrians[i]=p
+            continue
+
         var pause: float = float(p.get("pause",0.0))
         if pause>0.0:
             p["pause"]=maxf(0.0,pause-delta)
+            if current_vehicle>=0 and player_pos.distance_to(_ped_world_pos(p))<70.0:
+                p["state"]="alert"
+                p["pause"]=maxf(float(p.pause),0.75)
+            elif float(p.pause)<=0.0:
+                p["state"]="walk"
             pedestrians[i]=p
             continue
 
@@ -3005,27 +3120,56 @@ func _update_pedestrians(delta: float) -> void:
             diff=-sign(diff)*(1.0-abs(diff))
         var direction: float = sign(diff)
         if abs(diff)>0.008:
+            p["state"]="walk"
             p["reverse"]=direction<0.0
             p["t"]=fposmod(float(p.t)+float(p.speed)*delta*direction,1.0)
         else:
-            # Arrive at a routine stop, wait, then choose another destination.
+            # Arrive at a routine stop, then choose a social/idle action.
             var role: String = str(p.get("routine","work"))
-            var dwell: float = 1.5
+            var dwell: float = rng.randf_range(2.0,5.0)
             if role=="shop": dwell=rng.randf_range(3.0,7.0)
             elif role=="park": dwell=rng.randf_range(4.0,10.0)
             elif role=="transit": dwell=rng.randf_range(2.0,5.0)
             elif role=="home": dwell=rng.randf_range(5.0,12.0)
-            else: dwell=rng.randf_range(2.5,6.0)
-            p["pause"]=dwell
-            p["target_t"]=rng.randf_range(0.05,0.95)
-            if rng.randf()<0.18:
-                # Change sidewalk corridor at a nearby flat intersection.
-                var j := _junction_for_car(int(p.road),float(p.t),0.055)
-                if not j.is_empty():
-                    var new_road: int = int(j.b) if int(j.a)==int(p.road) else int(j.a)
-                    p["road"]=new_road
-                    p["t"]=float(j.tb) if new_road==int(j.b) else float(j.ta)
-                    p["side"]=-1.0 if rng.randf()<0.5 else 1.0
+
+            var junction:=_junction_for_car(int(p.road),float(p.t),0.040)
+            if not junction.is_empty() and rng.randf()<0.26:
+                p["state"]="cross"
+                p["cross_progress"]=0.0
+                p["cross_from_side"]=float(p.side)
+                p["pause"]=0.0
+                if not active_crossings_by_road.has(int(p.road)):
+                    active_crossings_by_road[int(p.road)]=[]
+                var starts: Array=active_crossings_by_road[int(p.road)]
+                starts.append(float(p.t))
+                active_crossings_by_road[int(p.road)]=starts
+            else:
+                var idle_roll:=rng.randf()
+                var partner:=int(p.get("social_partner",-1))
+                if partner>=0 and partner<pedestrians.size() and idle_roll<0.46:
+                    p["state"]="chat"
+                    var other: Dictionary=pedestrians[partner]
+                    if int(other.road)==int(p.road):
+                        other["pause"]=dwell
+                        other["state"]="chat"
+                        other["target_t"]=p.target_t
+                        pedestrians[partner]=other
+                elif role in ["park","home"] and idle_roll<0.72:
+                    p["state"]="sit"
+                elif idle_roll<0.88:
+                    p["state"]="phone"
+                else:
+                    p["state"]="idle"
+                p["pause"]=dwell
+                p["target_t"]=rng.randf_range(0.05,0.95)
+
+                if rng.randf()<0.16:
+                    var j := _junction_for_car(int(p.road),float(p.t),0.055)
+                    if not j.is_empty():
+                        var new_road: int = int(j.b) if int(j.a)==int(p.road) else int(j.a)
+                        p["road"]=new_road
+                        p["t"]=float(j.tb) if new_road==int(j.b) else float(j.ta)
+                        p["side"]=-1.0 if rng.randf()<0.5 else 1.0
         pedestrians[i]=p
 
 func _update_transit(delta: float) -> void:
@@ -4742,31 +4886,46 @@ func _draw_attraction(p: Dictionary) -> void:
 func _draw_pedestrians() -> void:
     var weather := _weather_state()
     for ped in pedestrians:
-        var rd = roads[ped.road]
-        var pos := _sample_polyline(rd.points,float(ped.t))
+        var pos:=_ped_world_pos(ped)
         var ped_draw_distance: float = [900.0,1300.0,1700.0][graphics_quality]
         if player_pos.distance_to(pos) > ped_draw_distance:
             continue
-        var tan := _polyline_tangent(rd.points,float(ped.t))
-        if ped.reverse:
-            tan *= -1.0
-        var normal := Vector2(-tan.y,tan.x)
-        pos += normal * (float(rd.width)*0.5 + 18.0) * float(ped.side)
+        var rd=roads[int(ped.road)]
+        var tan:=_polyline_tangent(rd.points,float(ped.t))
+        if bool(ped.reverse):
+            tan*=-1.0
+        var normal:=Vector2(-tan.y,tan.x)
         var base := _project(pos,0)
         var pelvis := _project(pos,10)
         var head := _project(pos,19)
         var phase := float(ped.phase)
-        var paused := float(ped.get("pause",0.0))>0.0
-        var bob := 0.0 if paused else sin(phase)*1.4
+        var state:=str(ped.get("state","walk"))
+        var moving:=state in ["walk","cross"]
+        var bob := sin(phase)*1.4 if moving else 0.0
+        if state=="sit":
+            pelvis.y+=5.0
+            head.y+=7.0
         head.y += bob
         pelvis.y += bob*0.5
         draw_circle(base+Vector2(2,5),5.5,Color(0,0,0,0.18))
-        var swing := 0.0 if paused else sin(phase)*4.0
+        var swing := sin(phase)*4.0 if moving else 0.0
         var side_dir := normal.normalized()
-        draw_line(pelvis+Vector2(0,1),pelvis+Vector2(swing*0.35,9),ped.color,4.0,true)
-        draw_line(pelvis+Vector2(-2,7),pelvis+Vector2(-swing,15),Color("#7b8790"),2.3,true)
-        draw_line(pelvis+Vector2(2,7),pelvis+Vector2(swing,15),Color("#697783"),2.3,true)
-        draw_line(pelvis+Vector2(0,2),pelvis+Vector2(swing*0.8,-3),ped.color.darkened(0.12),2.2,true)
+
+        if state=="sit":
+            draw_line(pelvis+Vector2(0,1),pelvis+Vector2(0,11),ped.color,4.0,true)
+            draw_line(pelvis+Vector2(-2,9),pelvis+Vector2(-9,14),Color("#7b8790"),2.5,true)
+            draw_line(pelvis+Vector2(2,9),pelvis+Vector2(9,14),Color("#697783"),2.5,true)
+            draw_line(pelvis+Vector2(-9,14),pelvis+Vector2(-5,20),Color("#7b8790"),2.2,true)
+            draw_line(pelvis+Vector2(9,14),pelvis+Vector2(5,20),Color("#697783"),2.2,true)
+        else:
+            draw_line(pelvis+Vector2(0,1),pelvis+Vector2(swing*0.35,9),ped.color,4.0,true)
+            draw_line(pelvis+Vector2(-2,7),pelvis+Vector2(-swing,15),Color("#7b8790"),2.3,true)
+            draw_line(pelvis+Vector2(2,7),pelvis+Vector2(swing,15),Color("#697783"),2.3,true)
+
+        var arm_swing:=swing*0.8
+        if state=="chat":
+            arm_swing=sin(phase*0.55)*7.0
+        draw_line(pelvis+Vector2(0,2),pelvis+Vector2(arm_swing,-3),ped.color.darkened(0.12),2.2,true)
         draw_circle(head,4.8,ped.skin)
         draw_arc(head+Vector2(0,-1),4.7,PI,TAU,12,ped.hair,2.4,true)
 
@@ -4795,13 +4954,23 @@ func _draw_pedestrians() -> void:
         elif ped_style in ["canal","harbor","coast"]:
             draw_line(pelvis+Vector2(-4,0),pelvis+Vector2(4,0),Color("#72d7e6"),1.7,true)
 
-        var personal_seed := int(abs(pos.x*0.13+pos.y*0.07))
-        if paused and personal_seed%4==0:
+        if state=="phone":
             var phone_pos := pelvis+Vector2(5,-5)
             draw_rect(Rect2(phone_pos-Vector2(2,3),Vector2(4,6)),Color("#a9dcff"),true)
             draw_line(pelvis+Vector2(1,-1),phone_pos,Color(ped.skin),1.6,true)
+        elif state=="chat":
+            var bubble:=head+Vector2(8,-14)
+            draw_circle(bubble,7,Color(0.92,0.97,0.98,0.78))
+            draw_circle(bubble+Vector2(-3,0),1.0,Color("#34444b"))
+            draw_circle(bubble,1.0,Color("#34444b"))
+            draw_circle(bubble+Vector2(3,0),1.0,Color("#34444b"))
+        elif state=="alert":
+            draw_string(ThemeDB.fallback_font,head+Vector2(-5,-11),"!",HORIZONTAL_ALIGNMENT_CENTER,10,13,Color("#ffcf69"))
+        elif state=="cross":
+            draw_circle(base+Vector2(0,6),8,Color(0.95,0.82,0.35,0.06))
 
-        if weather in ["rain","storm"] and personal_seed%3!=0:
+        var personal_seed := int(abs(pos.x*0.13+pos.y*0.07))
+        if weather in ["rain","storm"] and personal_seed%3!=0 and state!="sit":
             var canopy := head+Vector2(0,-13)
             var umb_color: Color = [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
             draw_arc(canopy,10.5,PI,TAU,18,umb_color,3.4,true)
@@ -4831,7 +5000,11 @@ func _draw_traffic() -> void:
         var traffic_draw_distance: float = [1050.0,1450.0,1800.0][graphics_quality]
         if player_pos.distance_to(pos)>traffic_draw_distance:
             continue
-        _draw_car(pos,tangent.angle(),str(c["class"]),Color(c.color),false)
+        _draw_car(pos,tangent.angle(),str(c["class"]),Color(c.color),false,str(c.get("archetype","")))
+        if bool(c.get("ped_yield",false)):
+            var rear_center:=_project(pos,8)-tangent.normalized()*18.0
+            draw_circle(rear_center+Vector2(-5,0),3.4,Color("#ff364b"))
+            draw_circle(rear_center+Vector2(5,0),3.4,Color("#ff364b"))
         var ind: int = int(c.get("indicator",0))
         if ind!=0 and int(Time.get_ticks_msec()/320)%2==0:
             var fwd := tangent.normalized()
@@ -4940,7 +5113,7 @@ func _draw_parked_cars() -> void:
             continue
         _draw_car(c.pos,c.heading,c["class"],c.color,true)
 
-func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: bool) -> void:
+func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: bool, archetype: String = "") -> void:
     var sz: Vector2 = VEHICLE_SIZES.get(cls,Vector2(45,22))
     var center := _project(pos,8)
     var f := Vector2.from_angle(heading)
@@ -5054,6 +5227,30 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
         draw_line(center-f*sz.x*.38-side*sz.y*.50,center-f*sz.x*.38+side*sz.y*.50,Color(0.04,0.06,0.08,0.82),3.0)
         draw_line(center+f*sz.x*.30-side*sz.y*.30,center+f*sz.x*.42-side*sz.y*.12,Color(0.45,1.0,0.92,0.24),2.0)
         draw_line(center+f*sz.x*.30+side*sz.y*.30,center+f*sz.x*.42+side*sz.y*.12,Color(0.45,1.0,0.92,0.24),2.0)
+
+    if archetype=="taxi":
+        draw_rect(Rect2(center-Vector2(6,sz.y*.66),Vector2(12,5)),Color("#f2cf4f"),true)
+        draw_line(center-f*sz.x*.30-side*sz.y*.47,center+f*sz.x*.30-side*sz.y*.47,Color("#f2cf4f"),2.4,true)
+    elif archetype=="rideshare":
+        draw_circle(center+f*2.0-Vector2(0,sz.y*.63),3.5,Color("#71e0c0"))
+        draw_line(center-f*sz.x*.24+side*sz.y*.46,center+f*sz.x*.24+side*sz.y*.46,Color("#71e0c0"),1.8,true)
+    elif archetype in ["service","maintenance"]:
+        draw_line(center-f*sz.x*.30-side*sz.y*.48,center+f*sz.x*.30-side*sz.y*.48,Color("#f2b34e"),2.2,true)
+        draw_line(center-f*sz.x*.30+side*sz.y*.48,center+f*sz.x*.30+side*sz.y*.48,Color("#f2b34e"),2.2,true)
+        if cls in ["pickup","van","delivery","suv"]:
+            draw_line(center-f*sz.x*.18-side*sz.y*.32,center+f*sz.x*.18-side*sz.y*.32,Color("#20282c"),2.6,true)
+            draw_line(center-f*sz.x*.18+side*sz.y*.32,center+f*sz.x*.18+side*sz.y*.32,Color("#20282c"),2.6,true)
+        if archetype=="maintenance":
+            draw_circle(center+f*1.0-Vector2(0,sz.y*.64),3.0,Color("#ffb12d") if int(Time.get_ticks_msec()/330)%2==0 else Color("#6f5224"))
+    elif archetype=="response":
+        var flash:=int(Time.get_ticks_msec()/180)%2==0 and not parked
+        draw_rect(Rect2(center+f*2.0-Vector2(8,sz.y*.65),Vector2(16,4)),Color("#46545d"),true)
+        draw_circle(center+f*2.0-side*4.0-Vector2(0,sz.y*.63),2.4,Color("#ff4057") if flash else Color("#5b3138"))
+        draw_circle(center+f*2.0+side*4.0-Vector2(0,sz.y*.63),2.4,Color("#55aaff") if not flash else Color("#304760"))
+        draw_line(center-f*sz.x*.32-side*sz.y*.46,center+f*sz.x*.32-side*sz.y*.46,Color("#d6edf2"),2.2,true)
+    elif archetype=="courier":
+        draw_rect(Rect2(center-f*9-side*sz.y*.31,Vector2(18,sz.y*.62)),Color(1,1,1,0.08),true)
+        draw_line(center-f*sz.x*.24+side*sz.y*.47,center+f*sz.x*.20+side*sz.y*.47,Color("#72d7e6"),2.2,true)
 
     var livery := int(abs(pos.x+pos.y)) % 17
     if livery==0:
