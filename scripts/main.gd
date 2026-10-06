@@ -51,6 +51,8 @@ var landmarks: Array = []
 var storefronts: Array = []
 var vegetation_props: Array = []
 var pedestrians: Array = []
+var social_setpieces: Array = []
+var response_incidents: Array = []
 var active_crossings_by_road: Dictionary = {}
 var transit_vehicles: Array = []
 var fragments: Array = []
@@ -261,6 +263,7 @@ func _ready() -> void:
     _generate_storefronts()
     _generate_transit()
     _build_transit_stops()
+    _build_social_setpieces()
     _generate_collectibles()
     _build_ui()
     _build_photo_3d_system()
@@ -1158,6 +1161,65 @@ func _build_transit_stops() -> void:
             var pos := _sample_polyline(rd.points,tt)
             transit_stops.append({"vehicle":vi,"t":tt,"pos":pos,"line":str(tv.line),"name":"%s · Halt %d" % [str(tv.line),si+1]})
 
+func _build_social_setpieces() -> void:
+    social_setpieces.clear()
+    response_incidents.clear()
+
+    var transit_added:=0
+    for si in range(transit_stops.size()):
+        if transit_added>=10:
+            break
+        var st: Dictionary=transit_stops[si]
+        social_setpieces.append({
+            "kind":"transit_wait",
+            "pos":Vector2(st.pos),
+            "stop_index":si,
+            "seed":si*19+7,
+            "count":3+(si%3)
+        })
+        transit_added+=1
+
+    var cafe_added:=0
+    for si in range(storefronts.size()):
+        var st: Dictionary=storefronts[si]
+        if str(st.kind) not in ["cafe","restaurant"]:
+            continue
+        social_setpieces.append({
+            "kind":"cafe_cluster",
+            "pos":Vector2(st.pos)+Vector2(0,58),
+            "seed":si*23+11,
+            "count":3+(si%2)
+        })
+        cafe_added+=1
+        if cafe_added>=9:
+            break
+
+    for i in range(mini(7,junctions.size())):
+        var idx: int=(i*13+9)%junctions.size()
+        var j: Dictionary=junctions[idx]
+        if bool(j.get("bridge",false)):
+            continue
+        social_setpieces.append({
+            "kind":"corner_queue",
+            "pos":Vector2(j.pos)+Vector2(86 if i%2==0 else -86,72 if i%3==0 else -72),
+            "seed":idx*31,
+            "count":3+(i%3)
+        })
+
+    var incident_indices: Array=[5,18,31,44,57,70]
+    for ii in range(incident_indices.size()):
+        if junctions.is_empty():
+            break
+        var ji: int=int(incident_indices[ii])%junctions.size()
+        var jn: Dictionary=junctions[ji]
+        response_incidents.append({
+            "id":"incident_%d" % ii,
+            "pos":Vector2(jn.pos)+Vector2(55 if ii%2==0 else -55,42 if ii%3==0 else -42),
+            "road":int(jn.a) if ii%2==0 else int(jn.b),
+            "kind":["maintenance","response","utility"][ii%3],
+            "seed":ii*37+3
+        })
+
 func _generate_collectibles() -> void:
     fragments.clear()
     secrets.clear()
@@ -1190,7 +1252,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.13"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.14"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2961,6 +3023,11 @@ func _update_traffic(delta: float) -> void:
         if ped_yield:
             target_speed=0.0
 
+        var incident_yield:=_traffic_near_active_incident(c)
+        c["incident_yield"]=incident_yield
+        if incident_yield:
+            target_speed*=0.28
+
         if best_gap<0.018:
             target_speed=0.0
         elif best_gap<0.035:
@@ -3160,6 +3227,10 @@ func _update_pedestrians(delta: float) -> void:
             continue
 
         var pause: float = float(p.get("pause",0.0))
+        if _ped_near_transit_arrival(p):
+            p["state"]="wave"
+            p["pause"]=maxf(pause,0.85)
+            pause=float(p.pause)
         if pause>0.0:
             p["pause"]=maxf(0.0,pause-delta)
             if current_vehicle>=0 and player_pos.distance_to(_ped_world_pos(p))<70.0:
@@ -3189,7 +3260,8 @@ func _update_pedestrians(delta: float) -> void:
             elif role=="home": dwell=rng.randf_range(5.0,12.0)
 
             var junction:=_junction_for_car(int(p.road),float(p.t),0.040)
-            if not junction.is_empty() and rng.randf()<0.26:
+            var pedestrian_green:=not junction.is_empty() and not _junction_green(junction,int(p.road))
+            if pedestrian_green and rng.randf()<0.42:
                 p["state"]="cross"
                 p["cross_progress"]=0.0
                 p["cross_from_side"]=float(p.side)
@@ -3227,6 +3299,130 @@ func _update_pedestrians(delta: float) -> void:
                         p["t"]=float(j.tb) if new_road==int(j.b) else float(j.ta)
                         p["side"]=-1.0 if rng.randf()<0.5 else 1.0
         pedestrians[i]=p
+
+func _transit_stop_has_arrival(stop_index: int) -> bool:
+    if stop_index<0 or stop_index>=transit_stops.size():
+        return false
+    var st: Dictionary=transit_stops[stop_index]
+    var vi:=int(st.vehicle)
+    if vi<0 or vi>=transit_vehicles.size():
+        return false
+    var tv: Dictionary=transit_vehicles[vi]
+    return bool(tv.get("at_stop",false)) and int(tv.get("stop_index",-1))==stop_index
+
+func _ped_near_transit_arrival(p: Dictionary) -> bool:
+    if str(p.get("routine",""))!="transit":
+        return false
+    var pp:=_ped_world_pos(p)
+    for si in range(transit_stops.size()):
+        if not _transit_stop_has_arrival(si):
+            continue
+        if pp.distance_to(Vector2(transit_stops[si].pos))<185.0:
+            return true
+    return false
+
+func _incident_active(index: int) -> bool:
+    var slot:=int(floor(world_clock*1.35))
+    return ((slot+index*3)%9) in [0,1]
+
+func _traffic_near_active_incident(car: Dictionary) -> bool:
+    var tr:=_traffic_world_transform(car)
+    var pos:=Vector2(tr.pos)
+    for i in range(response_incidents.size()):
+        if not _incident_active(i):
+            continue
+        if int(response_incidents[i].road)!=int(car.road):
+            continue
+        if pos.distance_to(Vector2(response_incidents[i].pos))<165.0:
+            return true
+    return false
+
+func _draw_social_person(pos: Vector2, accent: Color, state: String, seed: int) -> void:
+    var base:=_project(pos,0)
+    var pelvis:=_project(pos,10)
+    var head:=_project(pos,19)
+    var skin: Color=[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655"),Color("#7b4f3d")][absi(seed)%4]
+    var cloth:=accent.lerp(Color("#d7e1e5"),0.36+float(absi(seed)%3)*0.10)
+    draw_circle(base+Vector2(2,5),5.0,Color(0,0,0,0.16))
+    if state=="sit":
+        pelvis.y+=5.0
+        head.y+=7.0
+        draw_line(pelvis,pelvis+Vector2(0,10),cloth,4.0,true)
+        draw_line(pelvis+Vector2(0,8),pelvis+Vector2(-8,14),Color("#66747b"),2.4,true)
+        draw_line(pelvis+Vector2(0,8),pelvis+Vector2(8,14),Color("#66747b"),2.4,true)
+    else:
+        draw_line(pelvis,pelvis+Vector2(0,13),cloth,4.0,true)
+        draw_line(pelvis+Vector2(0,8),pelvis+Vector2(-4,18),Color("#66747b"),2.2,true)
+        draw_line(pelvis+Vector2(0,8),pelvis+Vector2(4,18),Color("#66747b"),2.2,true)
+    draw_circle(head,4.6,skin)
+    if state=="wave":
+        draw_line(pelvis+Vector2(0,2),pelvis+Vector2(10,-10),cloth,2.4,true)
+        draw_circle(pelvis+Vector2(11,-11),2.0,skin)
+    elif state=="chat":
+        draw_line(pelvis+Vector2(0,2),pelvis+Vector2(8,-2),cloth,2.2,true)
+        draw_circle(head+Vector2(8,-14),6.0,Color(0.95,0.98,1.0,0.74))
+        draw_circle(head+Vector2(6,-14),1.0,Color("#324047"))
+        draw_circle(head+Vector2(9,-14),1.0,Color("#324047"))
+
+func _draw_social_setpieces() -> void:
+    for i in range(social_setpieces.size()):
+        var s: Dictionary=social_setpieces[i]
+        var pos:=Vector2(s.pos)
+        if player_pos.distance_to(pos)>1500.0:
+            continue
+        var kind:=str(s.kind)
+        var count:=int(s.count)
+        var seed:=int(s.seed)
+        var accent: Color=Color(_district_at(pos).get("accent",Color("#9ad5ff")))
+        if kind=="transit_wait":
+            var arriving:=_transit_stop_has_arrival(int(s.stop_index))
+            for k in range(count):
+                var off:=Vector2(float(k-(count-1)*0.5)*18.0,22.0+float(k%2)*5.0)
+                _draw_social_person(pos+off,accent,"wave" if arriving and k==0 else ("phone" if k==count-1 else "idle"),seed+k)
+            if arriving:
+                var p:=_project(pos,5)
+                draw_string(ThemeDB.fallback_font,p+Vector2(-55,-42),"ANKUNFT",HORIZONTAL_ALIGNMENT_CENTER,110,10,Color("#72d7e6"))
+        elif kind=="cafe_cluster":
+            var center:=_project(pos,4)
+            draw_circle(center,11,Color("#695646"))
+            draw_line(center,center+Vector2(0,13),Color("#4c5960"),2.0,true)
+            for k in range(count):
+                var a:=float(k)*TAU/float(count)
+                var off:=Vector2.from_angle(a)*28.0
+                _draw_social_person(pos+off,accent,"sit" if k%2==0 else "chat",seed+k)
+        elif kind=="corner_queue":
+            for k in range(count):
+                var off:=Vector2(float(k)*15.0-float(count)*7.5,0)
+                _draw_social_person(pos+off,accent,"phone" if k%3==0 else "idle",seed+k)
+
+func _draw_response_incidents() -> void:
+    for i in range(response_incidents.size()):
+        if not _incident_active(i):
+            continue
+        var incident: Dictionary=response_incidents[i]
+        var pos:=Vector2(incident.pos)
+        if player_pos.distance_to(pos)>1750.0:
+            continue
+        var kind:=str(incident.kind)
+        var heading:=0.0
+        if int(incident.road)>=0 and int(incident.road)<roads.size():
+            heading=_polyline_tangent(roads[int(incident.road)].points,0.5).angle()
+        var cls:="van" if kind!="utility" else "pickup"
+        var color:=Color("#d9e3e7") if kind=="response" else Color("#d9a85e")
+        var archetype:="response" if kind=="response" else ("maintenance" if kind=="maintenance" else "service")
+        _draw_car(pos,heading,cls,color,true,archetype)
+        var f:=Vector2.from_angle(heading)
+        var side:=Vector2(-f.y,f.x)
+        for k in range(3):
+            var cone_pos:=pos-f*(24.0+float(k)*18.0)+side*(18.0 if k%2==0 else -18.0)
+            var cp:=_project(cone_pos,5)
+            var cone:=PackedVector2Array([cp+Vector2(-5,6),cp+Vector2(5,6),cp+Vector2(2,-7),cp+Vector2(-2,-7)])
+            draw_colored_polygon(cone,Color("#e77e36"))
+        for k in range(2):
+            var worker_pos:=pos+side*(34.0+float(k)*22.0)-f*8.0
+            _draw_social_person(worker_pos,Color("#f0b84b"),"idle",i*11+k)
+        var pp:=_project(pos,20)
+        draw_string(ThemeDB.fallback_font,pp+Vector2(-70,-42),"SERVICE-EINSATZ",HORIZONTAL_ALIGNMENT_CENTER,140,10,Color("#ffcf72"))
 
 func _update_transit(delta: float) -> void:
     for i in range(transit_vehicles.size()):
@@ -3657,6 +3853,8 @@ func _draw() -> void:
     _draw_active_job_target()
     _draw_street_props()
     _draw_city_micro_events()
+    _draw_social_setpieces()
+    _draw_response_incidents()
     _draw_pedestrians()
     _draw_traffic()
     _draw_transit()
@@ -5101,6 +5299,9 @@ func _draw_pedestrians() -> void:
             var phone_pos := pelvis+Vector2(5,-5)
             draw_rect(Rect2(phone_pos-Vector2(2,3),Vector2(4,6)),Color("#a9dcff"),true)
             draw_line(pelvis+Vector2(1,-1),phone_pos,Color(ped.skin),1.6,true)
+        elif state=="wave":
+            draw_line(pelvis+Vector2(0,2),pelvis+Vector2(10,-11),ped.color.darkened(0.08),2.5,true)
+            draw_circle(pelvis+Vector2(11,-12),2.0,Color(ped.skin))
         elif state=="chat":
             var bubble:=head+Vector2(8,-14)
             draw_circle(bubble,7,Color(0.92,0.97,0.98,0.78))
@@ -5148,6 +5349,11 @@ func _draw_traffic() -> void:
             var rear_center:=_project(pos,8)-tangent.normalized()*18.0
             draw_circle(rear_center+Vector2(-5,0),3.4,Color("#ff364b"))
             draw_circle(rear_center+Vector2(5,0),3.4,Color("#ff364b"))
+        if bool(c.get("incident_yield",false)) and int(Time.get_ticks_msec()/330)%2==0:
+            var hazard_center:=_project(pos,8)
+            var side_vec:=Vector2(-tangent.y,tangent.x).normalized()
+            draw_circle(hazard_center+side_vec*8.0,2.8,Color("#ffb343"))
+            draw_circle(hazard_center-side_vec*8.0,2.8,Color("#ffb343"))
         var ind: int = int(c.get("indicator",0))
         if ind!=0 and int(Time.get_ticks_msec()/320)%2==0:
             var fwd := tangent.normalized()
