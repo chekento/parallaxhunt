@@ -32,3 +32,22 @@
 - Search subjects, reticle lock, zoom, hints and framing score
 - Persistent Photo Hunt score / replay loop
 - Next: richer 3D facade assets, occlusion-aware subject placement, saved photo thumbnails
+
+
+## Alpha 1.9 — world polish & city life
+- Expanded procedural façade vocabulary with eight façade families and seven roof silhouettes
+- Day/night-aware windows and richer city surface dressing
+- Road-surface details, additional street furniture and denser visual storytelling
+- Fixed 3D Photo Hunt buildings with façade-window layers, transparent materials and richer vehicle geometry
+- Scan-wave and high-speed presentation feedback
+- Seven repeatable city-job families including signal surveys and timed mobility audits
+- Active-job compass priority, objective distance and in-game clock in the HUD
+- 43 progression chapters plus broader completionist/endgame milestones
+
+### Next polish targets
+- Authored material/atlas kits for district-specific façades, vehicles and characters
+- Saved Photo Hunt thumbnails / gallery presentation
+- More landmark-specific 3D photo geometry and occlusion-aware target staging
+- Weather states, richer ambient soundscapes and district event beats
+- Additional NPC reactions, micro-events and systemic world interactions
+- Further mobile UX tuning based on Android playtesting
