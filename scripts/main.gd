@@ -34,6 +34,13 @@ const VEHICLE_SIZES := {
     "sport":Vector2(49,20),"hyper":Vector2(52,19)
 }
 
+const VS_ASPHALT: Texture2D = preload("res://assets/visual/tiles/asphalt_cinematic.svg")
+const VS_SIDEWALK: Texture2D = preload("res://assets/visual/tiles/sidewalk_cinematic.svg")
+const VS_PALM: Texture2D = preload("res://assets/visual/props/palm_comic.svg")
+const VS_NEON_SIGN: Texture2D = preload("res://assets/visual/props/neon_sign_comic.svg")
+const VS_ROOF_DETAIL: Texture2D = preload("res://assets/visual/props/roof_detail_comic.svg")
+const VISUAL_SLICE_RECT := Rect2(5250.0,3820.0,3650.0,2580.0)
+
 var rng := RandomNumberGenerator.new()
 var districts: Array = []
 var roads: Array = []
@@ -1517,7 +1524,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.19"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.20"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -4994,11 +5001,13 @@ func _draw() -> void:
     _draw_water()
     _draw_parks()
     _draw_roads()
+    _draw_vertical_slice_road_materials()
     _draw_buildings()
     _draw_landmarks()
     _draw_trees()
     _draw_vegetation_props()
     _draw_storefronts()
+    _draw_vertical_slice_architecture()
     _draw_named_npcs()
     _draw_story_collectibles()
     _draw_scan_points()
@@ -5111,6 +5120,113 @@ func _draw_sidewalk_tiles(road: Dictionary) -> void:
             draw_line(edge-half,edge+half,Color(0.78,0.82,0.82,0.16),1.2*scale,true)
             if k%12==3:
                 draw_circle(edge,2.2*scale,Color(0.92,0.78,0.44,0.24))
+
+func _in_visual_slice(world_pos: Vector2, margin: float = 0.0) -> bool:
+    return VISUAL_SLICE_RECT.grow(margin).has_point(world_pos)
+
+func _draw_rotated_texture(texture: Texture2D, center: Vector2, size: Vector2, angle: float, modulate: Color = Color.WHITE) -> void:
+    draw_set_transform(center,angle,Vector2.ONE)
+    draw_texture_rect(texture,Rect2(-size*0.5,size),false,modulate)
+    draw_set_transform(Vector2.ZERO,0.0,Vector2.ONE)
+
+func _draw_vertical_slice_road_materials() -> void:
+    if not _world_rect_visible(VISUAL_SLICE_RECT.grow(350.0)):
+        return
+    if graphics_quality==0:
+        return
+    var road_scale:=clampf(world_zoom,0.80,1.75)
+    for road in roads:
+        var pts: PackedVector2Array=road.points
+        for k in range(4,97,4):
+            var t:=float(k)/100.0
+            var wp:=_sample_polyline(pts,t)
+            if not _in_visual_slice(wp,180.0):
+                continue
+            var tan:=_polyline_tangent(pts,t)
+            var angle:=tan.angle()
+            var center:=_project(wp,0.25)
+            var seg_len:=125.0*road_scale
+            var asphalt_w:=maxf(24.0,float(road.width)-6.0)*road_scale
+            _draw_rotated_texture(VS_ASPHALT,center,Vector2(seg_len,asphalt_w),angle,Color(1,1,1,0.34))
+            var normal:=Vector2(-tan.y,tan.x)
+            var sidewalk_offset:=(float(road.width)*0.5+20.0)*world_zoom
+            var sidewalk_w:=23.0*road_scale
+            for side_sign in [-1.0,1.0]:
+                var sw_center:=center+normal*sidewalk_offset*float(side_sign)
+                _draw_rotated_texture(VS_SIDEWALK,sw_center,Vector2(seg_len,sidewalk_w),angle,Color(1,1,1,0.48))
+                draw_line(sw_center-tan*seg_len*0.48,sw_center+tan*seg_len*0.48,Color(0.95,0.88,0.72,0.12),1.2*road_scale,true)
+
+func _draw_vertical_slice_architecture() -> void:
+    if not _world_rect_visible(VISUAL_SLICE_RECT.grow(400.0)):
+        return
+    var quality_step:=1 if graphics_quality>=2 else 2
+    # Rooftop mechanical modules and stronger comic roof clutter.
+    var roof_index:=0
+    for b in buildings:
+        var center_world:=b.rect.get_center()
+        if not _in_visual_slice(center_world,120.0):
+            continue
+        if roof_index%quality_step==0 and (int(b.seed)&3)!=0:
+            var roof_screen:=_project(center_world,float(b.height)+3.0)
+            var scale:=clampf(world_zoom*0.42,0.56,1.12)
+            var module_size:=Vector2(86,59)*scale
+            draw_texture_rect(VS_ROOF_DETAIL,Rect2(roof_screen-module_size*0.5,module_size),false,Color(1,1,1,0.78))
+        if str(b.style) in ["center","glass","culture"] and (int(b.seed)&5)==1:
+            var facade_world:=Vector2(b.rect.get_center().x,b.rect.end.y+7.0)
+            var sign_pos:=_project(facade_world,float(b.height)*0.28)
+            var sign_scale:=clampf(world_zoom*0.33,0.48,0.92)
+            var sign_size:=Vector2(92,55)*sign_scale
+            draw_texture_rect(VS_NEON_SIGN,Rect2(sign_pos-sign_size*0.5,sign_size),false,Color(1,1,1,0.82))
+            draw_circle(sign_pos,sign_size.x*0.42,Color(1.0,0.22,0.72,0.018))
+        roof_index+=1
+
+    # Palm-lined boulevard modules inspired by dense warm-climate city streets.
+    var palm_positions: Array=[
+        Vector2(5520,4140),Vector2(5840,4140),Vector2(6180,4140),Vector2(6510,4140),
+        Vector2(6860,4140),Vector2(7210,4140),Vector2(7560,4140),Vector2(7920,4140),
+        Vector2(5520,5710),Vector2(5880,5710),Vector2(6250,5710),Vector2(6620,5710),
+        Vector2(7000,5710),Vector2(7380,5710),Vector2(7760,5710),Vector2(8140,5710)
+    ]
+    for i in range(0,palm_positions.size(),quality_step):
+        var wp:=Vector2(palm_positions[i])
+        if player_pos.distance_to(wp)>1850.0:
+            continue
+        var base:=_project(wp,0.0)
+        var scale:=clampf(world_zoom*0.34,0.48,0.96)
+        var size:=Vector2(80,111)*scale
+        draw_texture_rect(VS_PALM,Rect2(base+Vector2(-size.x*0.5,-size.y+8.0),size),false,Color(1,1,1,0.96))
+        draw_circle(base+Vector2(4,7),size.x*0.28,Color(0,0,0,0.11))
+
+    # Dense street-corner visual anchors: warm pools, neon signs and planter islands.
+    var corner_positions: Array=[
+        Vector2(5660,4480),Vector2(6450,4480),Vector2(7240,4480),Vector2(8030,4480),
+        Vector2(5660,5360),Vector2(6450,5360),Vector2(7240,5360),Vector2(8030,5360)
+    ]
+    for i in range(0,corner_positions.size(),quality_step):
+        var cp_world:=Vector2(corner_positions[i])
+        if player_pos.distance_to(cp_world)>1900.0:
+            continue
+        var cp:=_project(cp_world,5.0)
+        var glow:=0.55+0.45*sin(float(Time.get_ticks_msec())/420.0+float(i))
+        draw_circle(cp,24.0*clampf(world_zoom,0.8,1.6),Color(1.0,0.54,0.18,0.018+glow*0.012))
+        draw_rect(Rect2(cp-Vector2(15,7),Vector2(30,14)),Color("#4b3e35"),true)
+        draw_circle(cp+Vector2(-8,-10),8,Color("#3d7d4c"))
+        draw_circle(cp+Vector2(6,-12),10,Color("#4e9558"))
+        if i%2==0:
+            var sign_size:=Vector2(68,41)*clampf(world_zoom*0.28,0.42,0.72)
+            draw_texture_rect(VS_NEON_SIGN,Rect2(cp+Vector2(18,-54)-sign_size*0.5,sign_size),false,Color(1,1,1,0.76))
+
+    # Architectural dark ink line around the visual slice for a comic-render read.
+    var slice_corners: Array=[
+        VISUAL_SLICE_RECT.position,
+        Vector2(VISUAL_SLICE_RECT.end.x,VISUAL_SLICE_RECT.position.y),
+        VISUAL_SLICE_RECT.end,
+        Vector2(VISUAL_SLICE_RECT.position.x,VISUAL_SLICE_RECT.end.y)
+    ]
+    var screen_poly:=PackedVector2Array()
+    for q in slice_corners:
+        screen_poly.append(_project(Vector2(q),0.0))
+    draw_polyline(PackedVector2Array([screen_poly[0],screen_poly[1],screen_poly[2],screen_poly[3],screen_poly[0]]),Color(0.05,0.06,0.08,0.12),2.2,true)
 
 func _draw_district_ground() -> void:
     for d in districts:
@@ -5375,8 +5491,20 @@ func _draw_buildings() -> void:
             var fc: Color = b.wall.darkened(shade)
             fc.a = 0.95
             draw_colored_polygon(face,fc)
+            if _in_visual_slice(r.get_center(),80.0):
+                draw_polyline(PackedVector2Array([face[0],face[1],face[2],face[3],face[0]]),Color(0.025,0.030,0.038,0.60),1.8*clampf(world_zoom,0.85,1.55),true)
             _draw_facade_face(b,base[edge],base[next],top[next],top[edge],edge)
         draw_colored_polygon(roof_poly,b.roof)
+        if _in_visual_slice(r.get_center(),80.0):
+            var roof_inner:=PackedVector2Array()
+            var rc:=Vector2.ZERO
+            for rp in roof_poly:
+                rc+=rp
+            rc/=4.0
+            for rp in roof_poly:
+                roof_inner.append(rc+(rp-rc)*0.88)
+            draw_colored_polygon(roof_inner,Color(b.roof).lightened(0.035))
+            draw_polyline(PackedVector2Array([roof_poly[0],roof_poly[1],roof_poly[2],roof_poly[3],roof_poly[0]]),Color(0.02,0.025,0.03,0.72),2.2*clampf(world_zoom,0.85,1.55),true)
         var glow: Color = b.accent
         glow.a = 0.11 + minf(0.22,view_amount.length()*0.16)
         draw_polyline(PackedVector2Array([top[0],top[1],top[2],top[3],top[0]]),Color(1,1,1,0.12),1.2,true)
@@ -5745,8 +5873,14 @@ func _draw_storefronts() -> void:
             continue
         var c := _project(st.pos,6)
         var accent: Color = st.accent
-        draw_rect(Rect2(c-Vector2(30,13),Vector2(60,26)),Color(0.04,0.08,0.10,0.90),true)
-        draw_rect(Rect2(c-Vector2(30,13),Vector2(60,26)),Color(accent.r,accent.g,accent.b,0.62),false,2.0)
+        var slice_store:=_in_visual_slice(Vector2(st.pos),120.0)
+        var store_scale:=clampf(pow(world_zoom,0.26),0.95,1.24) if slice_store else 1.0
+        var store_half:=Vector2(30,13)*store_scale
+        draw_rect(Rect2(c-store_half,store_half*2.0),Color(0.025,0.055,0.07,0.94),true)
+        draw_rect(Rect2(c-store_half,store_half*2.0),Color(accent.r,accent.g,accent.b,0.70),false,2.0*store_scale)
+        if slice_store:
+            draw_rect(Rect2(c+Vector2(-store_half.x+5,store_half.y+3),Vector2(store_half.x*2.0-10,9*store_scale)),Color(accent.r,accent.g,accent.b,0.18),true)
+            draw_circle(c+Vector2(0,store_half.y+10),26*store_scale,Color(accent.r,accent.g,accent.b,0.015))
         var icon := "R" if st.kind=="restaurant" else ("C" if st.kind=="cafe" else ("S" if st.kind=="shop" else ("G" if st.kind=="garage" else "W")))
         draw_circle(c+Vector2(-20,0),7,accent)
         draw_string(ThemeDB.fallback_font,c+Vector2(-23,-5),icon,HORIZONTAL_ALIGNMENT_CENTER,8,9,Color("#102028"))
@@ -5809,11 +5943,16 @@ func _draw_trees() -> void:
             _draw_poly_ellipse(c,Vector2(t.r*0.55,t.r*1.55),0.0,t.tint.darkened(0.18))
             _draw_poly_ellipse(c+Vector2(-2,-7),Vector2(t.r*0.32,t.r*1.1),0.0,t.tint.lightened(0.07))
         elif species == "palm":
-            draw_line(c,c+Vector2(0,-18),Color("#806342"),3.0,true)
+            var trunk_width:=4.0*clampf(pow(world_zoom,0.25),0.95,1.25)
+            draw_line(c,c+Vector2(0,-18),Color("#382419"),trunk_width+2.0,true)
+            draw_line(c,c+Vector2(0,-18),Color("#8b6142"),trunk_width,true)
             var crown := c+Vector2(0,-21)
             for a in range(0,360,45):
                 var dir := Vector2.from_angle(deg_to_rad(float(a)))
-                draw_line(crown,crown+dir*t.r*1.3,t.tint,4.0,true)
+                var tip:=crown+dir*t.r*1.45
+                draw_line(crown,tip,Color("#15391f"),6.0,true)
+                draw_line(crown,tip,t.tint.lightened(0.06),3.6,true)
+            draw_circle(crown,t.r*0.28,Color("#2d6b3a"))
         elif species == "birch":
             draw_line(b,c,Color("#d7d0bc"),4.0,true)
             for off in [Vector2(-6,-4),Vector2(4,-8),Vector2(8,3),Vector2(-9,5)]:
