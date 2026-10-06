@@ -857,6 +857,7 @@ func _generate_traffic() -> void:
         elif archetype in ["service","maintenance"]:
             cruise*=0.90
         var reverse := rng.randf()<0.5
+        var response_route: Array=_new_response_route(road_index) if archetype=="response" else []
         traffic.append({
             "road":road_index,
             "t":t_value,
@@ -864,6 +865,8 @@ func _generate_traffic() -> void:
             "cruise":cruise,
             "class":cls,
             "archetype":archetype,
+            "response_route":response_route,
+            "response_route_index":0,
             "color":_car_color(cls),
             "reverse":reverse,
             "lane":rng.randi_range(0,1),
@@ -1035,6 +1038,14 @@ func _generate_visual_props() -> void:
             var nnk := Vector2(-ttk.y,ttk.x)
             var side_sign := 1.0 if int(float(pk)*100.0+float(ri))%2==0 else -1.0
             street_props.append({"type":"parking_bay","pos":ppk+nnk*side_sign*(float(rd5.width)*0.5+34.0),"rot":ttk.angle(),"tint":Color("#b9c6cc")})
+    # Animated flags and ventilation stacks make district skylines less static.
+    for di in range(districts.size()):
+        var d: Dictionary=districts[di]
+        var center:=Vector2(d.rect.get_center())
+        if str(d.style) in ["center","heritage","campus","expo","harbor"]:
+            street_props.append({"type":"flag","pos":center+Vector2(210,-180),"rot":0.0,"tint":Color(d.accent)})
+        if str(d.style) in ["industry","rail","terminal","data"]:
+            street_props.append({"type":"vent_stack","pos":center+Vector2(-190,160),"rot":0.0,"tint":Color(d.accent)})
     for i in range(220):
         var road_index := rng.randi_range(0, roads.size()-1)
         pedestrians.append({
@@ -1162,8 +1173,26 @@ func _build_transit_stops() -> void:
         var rd = roads[int(tv.road)]
         for si in range(4):
             var tt: float = 0.12 + float(si)*0.24
-            var pos := _sample_polyline(rd.points,tt)
-            transit_stops.append({"vehicle":vi,"t":tt,"pos":pos,"line":str(tv.line),"name":"%s · Halt %d" % [str(tv.line),si+1]})
+            var pos: Vector2 = _sample_polyline(rd.points,tt)
+            var stop_index: int = transit_stops.size()
+            var style: String = str(_district_at(pos).get("style","center"))
+            var base_waiting: int = 2 + (stop_index*3 + vi*5) % 5
+            if style in ["center","campus","terminal","expo"]:
+                base_waiting += 2
+            elif style in ["industry","rail","harbor"]:
+                base_waiting += 1
+            transit_stops.append({
+                "vehicle":vi,
+                "t":tt,
+                "pos":pos,
+                "line":str(tv.line),
+                "name":"%s · Halt %d" % [str(tv.line),si+1],
+                "waiting":base_waiting,
+                "arrivals":0,
+                "last_boarded":0,
+                "last_exited":0,
+                "demand_slot":-1
+            })
 
 func _build_social_setpieces() -> void:
     social_setpieces.clear()
@@ -1221,6 +1250,20 @@ func _build_social_setpieces() -> void:
                 "seed":di*47+17,
                 "count":5+(di%4)
             })
+
+    # District-authored scene identities beyond generic plazas.
+    for di in range(districts.size()):
+        var d: Dictionary=districts[di]
+        var center:=Vector2(d.rect.get_center())
+        var style:=str(d.style)
+        if style in ["harbor","industry","rail"]:
+            social_setpieces.append({"kind":"work_shift","pos":center+Vector2(180,-120),"seed":di*61+5,"count":4+(di%3)})
+        elif style=="campus":
+            social_setpieces.append({"kind":"campus_edge","pos":center+Vector2(-160,130),"seed":di*61+11,"count":5+(di%2)})
+        elif style in ["neon","culture"]:
+            social_setpieces.append({"kind":"nightlife_cluster","pos":center+Vector2(150,90),"seed":di*61+17,"count":5+(di%3)})
+        elif style in ["green","garden"]:
+            social_setpieces.append({"kind":"park_picnic","pos":center+Vector2(-120,-100),"seed":di*61+23,"count":4+(di%3)})
 
     # Rain shelters near selected cafés and transit stops.
     var shelter_count:=0
@@ -1284,7 +1327,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.15"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.16"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -3004,6 +3047,64 @@ func _nearest_road_t_to_point(road_index: int, target: Vector2) -> float:
             best_t=tt
     return best_t
 
+func _road_neighbors(road_index: int) -> Array:
+    var result: Array=[]
+    for j in junctions:
+        if bool(j.get("bridge",false)):
+            continue
+        var a: int=int(j.a)
+        var b: int=int(j.b)
+        if a==road_index and b not in result:
+            result.append(b)
+        elif b==road_index and a not in result:
+            result.append(a)
+    return result
+
+func _build_road_route(start_road: int, goal_road: int) -> Array:
+    if start_road==goal_road:
+        return [start_road]
+    var frontier: Array=[start_road]
+    var parent: Dictionary={start_road:-1}
+    var cursor: int=0
+    while cursor<frontier.size():
+        var current: int=int(frontier[cursor])
+        cursor+=1
+        for neighbor_value in _road_neighbors(current):
+            var neighbor: int=int(neighbor_value)
+            if parent.has(neighbor):
+                continue
+            parent[neighbor]=current
+            if neighbor==goal_road:
+                var path: Array=[goal_road]
+                var walk: int=current
+                while walk>=0:
+                    path.push_front(walk)
+                    walk=int(parent.get(walk,-1))
+                return path
+            frontier.append(neighbor)
+    return [start_road]
+
+func _new_response_route(start_road: int) -> Array:
+    if roads.size()<2:
+        return [start_road]
+    var goal: int=(start_road+5+rng.randi_range(0,maxi(1,roads.size()-2)))%roads.size()
+    if goal==start_road:
+        goal=(goal+1)%roads.size()
+    return _build_road_route(start_road,goal)
+
+func _response_route_next_road(car: Dictionary, junction: Dictionary) -> int:
+    var route: Array=Array(car.get("response_route",[]))
+    var index: int=int(car.get("response_route_index",0))
+    if route.size()<2 or index>=route.size()-1:
+        return -1
+    var current: int=int(car.road)
+    var next_road: int=int(route[index+1])
+    var a: int=int(junction.a)
+    var b: int=int(junction.b)
+    if (a==current and b==next_road) or (b==current and a==next_road):
+        return next_road
+    return -1
+
 func _response_priority_pressure(index: int, car: Dictionary) -> float:
     if str(car.get("archetype",""))=="response":
         return 0.0
@@ -3038,6 +3139,11 @@ func _update_traffic(delta: float) -> void:
         var response_priority:=str(c.get("archetype",""))=="response"
         if response_priority:
             target_speed*=1.22
+            var route: Array=Array(c.get("response_route",[]))
+            var route_index: int=int(c.get("response_route_index",0))
+            if route.is_empty() or route_index>=route.size()-1 or int(route[route_index])!=int(c.road):
+                c["response_route"]=_new_response_route(int(c.road))
+                c["response_route_index"]=0
         var response_pressure:=_response_priority_pressure(i,c)
         c["response_yield"]=response_pressure>0.0
         if response_pressure>0.0:
@@ -3118,9 +3224,11 @@ func _update_traffic(delta: float) -> void:
         if not j.is_empty() and float(c.turn_cooldown)<=0.0 and _junction_green(j,int(c.road)):
             var jt2: float = float(j.ta) if int(j.a)==int(c.road) else float(j.tb)
             var crossed: bool = (direction>0.0 and old_t<=jt2 and new_t>=jt2) or (direction<0.0 and old_t>=jt2 and new_t<=jt2)
-            if crossed and rng.randf()<0.30:
+            var forced_response_road: int=_response_route_next_road(c,j) if response_priority else -1
+            var should_turn: bool=forced_response_road>=0 or rng.randf()<0.30
+            if crossed and should_turn:
                 var old_road: int = int(c.road)
-                var new_road: int = int(j.b) if int(j.a)==old_road else int(j.a)
+                var new_road: int = forced_response_road if forced_response_road>=0 else (int(j.b) if int(j.a)==old_road else int(j.a))
                 var new_t_at_j: float = float(j.tb) if new_road==int(j.b) else float(j.ta)
                 # Choose the legal direction that best matches a real left/right turn instead of random teleporting.
                 var old_tangent := _polyline_tangent(roads[old_road].points,jt2)
@@ -3134,6 +3242,8 @@ func _update_traffic(delta: float) -> void:
                 if rng.randf()<0.48:
                     choose_reverse=not choose_reverse
                 c["road"]=new_road
+                if forced_response_road>=0:
+                    c["response_route_index"]=int(c.get("response_route_index",0))+1
                 c["t"]=new_t_at_j
                 c["reverse"]=choose_reverse
                 c["lane"]=rng.randi_range(0,1)
@@ -3265,12 +3375,47 @@ func _traffic_has_crossing_hazard(car: Dictionary) -> bool:
             return true
     return false
 
+func _nearest_rain_shelter(pos: Vector2, max_distance: float = 650.0) -> Vector2:
+    var best:=Vector2.ZERO
+    var best_dist: float=max_distance
+    for s in social_setpieces:
+        if str(s.kind)!="rain_shelter":
+            continue
+        var shelter_pos:=Vector2(s.pos)
+        var dist: float=pos.distance_to(shelter_pos)
+        if dist<best_dist:
+            best=shelter_pos
+            best_dist=dist
+    return best
+
+func _ped_should_seek_shelter(index: int, p: Dictionary) -> bool:
+    if _weather_state() not in ["rain","storm"]:
+        return false
+    if index%4==0:
+        return false
+    if str(p.get("state","walk")) in ["cross","alert","wave","shelter"]:
+        return false
+    return true
+
 func _update_pedestrians(delta: float) -> void:
     active_crossings_by_road.clear()
     for i in range(pedestrians.size()):
         var p: Dictionary = pedestrians[i]
         p["phase"]=fposmod(float(p.phase)+delta*5.0,TAU)
         var state:=str(p.get("state","walk"))
+        if _weather_state() not in ["rain","storm"] and state=="shelter":
+            p["state"]="walk"
+            p["pause"]=0.0
+            p["shelter_target"]=Vector2.ZERO
+            state="walk"
+        elif _ped_should_seek_shelter(i,p):
+            var current_pos:=_ped_world_pos(p)
+            var shelter:=_nearest_rain_shelter(current_pos,650.0)
+            if shelter!=Vector2.ZERO:
+                p["shelter_target"]=shelter
+                p["target_t"]=_nearest_road_t_to_point(int(p.road),shelter)
+                p["state"]="seek_shelter"
+                state="seek_shelter"
 
         if state=="cross":
             if not _crossing_vehicle_near(p,72.0):
@@ -3315,6 +3460,11 @@ func _update_pedestrians(delta: float) -> void:
             p["reverse"]=direction<0.0
             p["t"]=fposmod(float(p.t)+float(p.speed)*delta*direction,1.0)
         else:
+            if state=="seek_shelter" and _weather_state() in ["rain","storm"]:
+                p["state"]="shelter"
+                p["pause"]=rng.randf_range(5.0,11.0)
+                pedestrians[i]=p
+                continue
             # Arrive at a routine stop, then choose a social/idle action.
             var role: String = str(p.get("routine","work"))
             var dwell: float = rng.randf_range(2.0,5.0)
@@ -3440,8 +3590,10 @@ func _draw_social_setpieces() -> void:
         var accent: Color=Color(_district_at(pos).get("accent",Color("#9ad5ff")))
         if kind=="transit_wait":
             var arriving:=_transit_stop_has_arrival(int(s.stop_index))
-            var vi: int=int(transit_stops[int(s.stop_index)].vehicle)
+            var stop_data: Dictionary=transit_stops[int(s.stop_index)]
+            var vi: int=int(stop_data.vehicle)
             var tv: Dictionary=transit_vehicles[vi] if vi>=0 and vi<transit_vehicles.size() else {}
+            count=clampi(int(stop_data.get("waiting",count)),1,8)
             for k in range(count):
                 var off:=Vector2(float(k-(count-1)*0.5)*18.0,22.0+float(k%2)*5.0)
                 _draw_social_person(pos+off,accent,"wave" if arriving and k==0 else ("phone" if k==count-1 else "idle"),seed+k)
@@ -3460,7 +3612,7 @@ func _draw_social_setpieces() -> void:
                     var to:=pos+Vector2(float(k)*15.0+20.0,26.0)
                     _draw_social_person(from.lerp(to,phase),accent,"walk",seed+90+k)
                 var p:=_project(pos,5)
-                draw_string(ThemeDB.fallback_font,p+Vector2(-65,-42),"EIN-/AUSSTIEG",HORIZONTAL_ALIGNMENT_CENTER,130,10,Color("#72d7e6"))
+                draw_string(ThemeDB.fallback_font,p+Vector2(-80,-42),"EIN %d · AUS %d" % [int(stop_data.get("last_boarded",0)),int(stop_data.get("last_exited",0))],HORIZONTAL_ALIGNMENT_CENTER,160,10,Color("#72d7e6"))
         elif kind=="cafe_cluster":
             var center:=_project(pos,4)
             draw_circle(center,11,Color("#695646"))
@@ -3497,6 +3649,30 @@ func _draw_social_setpieces() -> void:
             for k in range(count):
                 var off:=Vector2(float(k-(count-1)*0.5)*16.0,8.0)
                 _draw_social_person(pos+off,accent,"phone" if k%2==0 else "idle",seed+k)
+        elif kind=="work_shift":
+            for k in range(count):
+                var off:=Vector2(float(k-(count-1)*0.5)*22.0,0)
+                _draw_social_person(pos+off,Color("#f0b84b"),"chat" if k%3==0 else "idle",seed+k)
+            var wp:=_project(pos,5)
+            draw_line(wp+Vector2(-42,20),wp+Vector2(42,20),Color("#d99a4d"),4.0,true)
+        elif kind=="campus_edge":
+            for k in range(count):
+                var a:=float(k)*TAU/float(maxi(1,count))
+                _draw_social_person(pos+Vector2.from_angle(a)*38.0,Color("#8fb8ff"),"phone" if k%2==0 else "chat",seed+k)
+            var cp:=_project(pos,4)
+            draw_circle(cp,13,Color("#4f735b"))
+        elif kind=="nightlife_cluster":
+            for k in range(count):
+                var off:=Vector2(float(k-(count-1)*0.5)*16.0,sin(float(k))*8.0)
+                _draw_social_person(pos+off,Color("#ff80ef"),"chat" if k%2==0 else "idle",seed+k)
+            var np:=_project(pos,12)
+            draw_circle(np+Vector2(0,-24),18,Color(1.0,0.35,0.82,0.05))
+        elif kind=="park_picnic":
+            var pp:=_project(pos,2)
+            draw_rect(Rect2(pp-Vector2(26,8),Vector2(52,16)),Color("#8fb87b"),true)
+            for k in range(count):
+                var a:=float(k)*TAU/float(maxi(1,count))
+                _draw_social_person(pos+Vector2.from_angle(a)*34.0,Color("#8ff0b4"),"sit",seed+k)
 
 func _draw_response_incidents() -> void:
     for i in range(response_incidents.size()):
@@ -3527,7 +3703,27 @@ func _draw_response_incidents() -> void:
         var pp:=_project(pos,20)
         draw_string(ThemeDB.fallback_font,pp+Vector2(-70,-42),"SERVICE-EINSATZ",HORIZONTAL_ALIGNMENT_CENTER,140,10,Color("#ffcf72"))
 
+func _update_transit_stop_demand() -> void:
+    var slot: int=int(floor(world_clock*2.0))
+    for si in range(transit_stops.size()):
+        var stop: Dictionary=transit_stops[si]
+        if int(stop.get("demand_slot",-1))==slot:
+            continue
+        stop["demand_slot"]=slot
+        var pos:=Vector2(stop.pos)
+        var style:=str(_district_at(pos).get("style","center"))
+        var hour_factor:=1
+        if (world_clock>=7.0 and world_clock<=9.5) or (world_clock>=16.0 and world_clock<=19.5):
+            hour_factor=2
+        var add_waiting: int=1+((si+slot*3)%2)*hour_factor
+        if style in ["center","campus","terminal","expo"]:
+            add_waiting+=1
+        stop["waiting"]=mini(14,int(stop.get("waiting",0))+add_waiting)
+        stop["arrivals"]=maxi(0,int(stop.get("arrivals",0))-1)
+        transit_stops[si]=stop
+
 func _update_transit(delta: float) -> void:
+    _update_transit_stop_demand()
     for i in range(transit_vehicles.size()):
         var tveh: Dictionary = transit_vehicles[i]
         var dwell: float = float(tveh.get("dwell",0.0))
@@ -3556,13 +3752,23 @@ func _update_transit(delta: float) -> void:
                 tveh["t"]=st
                 tveh["dwell"]=3.8
                 tveh["at_stop"]=true
-                tveh["stop_index"]=transit_stops.find(stop)
-                var stop_seed: int=int(tveh.get("boarding_seed",7))+int(tveh.stop_index)*13
-                var exiting: int=1+absi(stop_seed)%3
-                var boarding: int=1+absi(stop_seed/3)%4
-                tveh["exit_count"]=mini(exiting,int(tveh.get("passengers",0)))
+                var stop_index: int=transit_stops.find(stop)
+                tveh["stop_index"]=stop_index
+                var stop_data: Dictionary=transit_stops[stop_index]
+                var stop_seed: int=int(tveh.get("boarding_seed",7))+stop_index*13
+                var exiting: int=mini(1+absi(stop_seed)%4,int(tveh.get("passengers",0)))
+                var capacity: int=42 if str(tveh.kind)=="bus" else 58
+                var free_seats: int=maxi(0,capacity-(int(tveh.get("passengers",0))-exiting))
+                var waiting_now: int=int(stop_data.get("waiting",0))
+                var boarding: int=mini(waiting_now,mini(free_seats,2+absi(stop_seed/3)%5))
+                tveh["exit_count"]=exiting
                 tveh["board_count"]=boarding
-                tveh["passengers"]=maxi(0,int(tveh.get("passengers",0))-int(tveh.exit_count)+boarding)
+                tveh["passengers"]=maxi(0,int(tveh.get("passengers",0))-exiting+boarding)
+                stop_data["waiting"]=maxi(0,waiting_now-boarding)
+                stop_data["arrivals"]=mini(12,int(stop_data.get("arrivals",0))+exiting)
+                stop_data["last_boarded"]=boarding
+                stop_data["last_exited"]=exiting
+                transit_stops[stop_index]=stop_data
                 break
         transit_vehicles[i]=tveh
     if transit_riding>=0 and transit_riding<transit_vehicles.size():
@@ -5173,6 +5379,21 @@ func _draw_street_props() -> void:
             _draw_world_prop_neon(p)
         elif p.type == "garden_arch":
             _draw_world_prop_garden_arch(p)
+        elif p.type == "flag":
+            var fb:=_project(Vector2(p.pos),0)
+            var ft:=_project(Vector2(p.pos),42)
+            draw_line(fb,ft,Color("#7e8b91"),3.0,true)
+            var wind:=sin(float(Time.get_ticks_msec())/240.0+float(int(Vector2(p.pos).x)%19))*5.0
+            var flag:=PackedVector2Array([ft,ft+Vector2(26+wind,-4),ft+Vector2(22+wind,9),ft+Vector2(0,8)])
+            draw_colored_polygon(flag,Color(p.tint.r,p.tint.g,p.tint.b,0.76))
+        elif p.type == "vent_stack":
+            var vb:=_project(Vector2(p.pos),8)
+            draw_rect(Rect2(vb-Vector2(8,12),Vector2(16,24)),Color("#4b565b"),true)
+            draw_rect(Rect2(vb+Vector2(-11,-15),Vector2(22,5)),Color("#68767c"),true)
+            for steam_i in range(3):
+                var sy:=fposmod(float(Time.get_ticks_msec())*0.025+float(steam_i)*18.0,52.0)
+                var sx:=sin(float(Time.get_ticks_msec())/500.0+float(steam_i))*5.0
+                draw_circle(vb+Vector2(sx,-18-sy),4.0+sy*0.05,Color(0.80,0.86,0.88,0.11))
         elif p.type == "attraction":
             _draw_attraction(p)
 
@@ -5428,11 +5649,14 @@ func _draw_pedestrians() -> void:
             draw_circle(bubble+Vector2(3,0),1.0,Color("#34444b"))
         elif state=="alert":
             draw_string(ThemeDB.fallback_font,head+Vector2(-5,-11),"!",HORIZONTAL_ALIGNMENT_CENTER,10,13,Color("#ffcf69"))
+        elif state=="shelter":
+            draw_line(pelvis+Vector2(-4,0),pelvis+Vector2(4,0),Color("#72d7e6"),1.8,true)
+            draw_string(ThemeDB.fallback_font,head+Vector2(-12,-14),"☂",HORIZONTAL_ALIGNMENT_CENTER,24,11,Color("#b9e9ff"))
         elif state=="cross":
             draw_circle(base+Vector2(0,6),8,Color(0.95,0.82,0.35,0.06))
 
         var personal_seed := int(abs(pos.x*0.13+pos.y*0.07))
-        if weather in ["rain","storm"] and personal_seed%3!=0 and state!="sit":
+        if weather in ["rain","storm"] and personal_seed%3!=0 and state not in ["sit","shelter"]:
             var canopy := head+Vector2(0,-13)
             var umb_color: Color = [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
             draw_arc(canopy,10.5,PI,TAU,18,umb_color,3.4,true)
