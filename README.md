@@ -1,6 +1,26 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.18.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.19.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.19.0 — Visual Rebuild & Headtracking Fix
+
+- on-foot world zoom increases from 1.55x to 2.15x for a much denser pedestrian-scale view
+- transit / driving zoom targets were rebalanced separately so the close pedestrian view does not make vehicles unusable
+- the street camera is framed lower on screen in pedestrian mode so nearby façades and building height are visible immediately
+- the PMDD projection now keeps a small default vertical perspective bias even when the player is not touching the view controls
+- Photo Hunt starts from a slightly higher, downward-facing camera so architecture reads as 3D immediately
+- Android gravity, gyroscope and accelerometer project sensors are now explicitly enabled
+- the former gravity-only pseudo tracking is replaced by calibrated gyroscope + gravity sensor fusion with fast gyro response and slow drift correction
+- changing headtracking sensitivity automatically recenters the sensor baseline
+- the HUD / options surface now reports the active headtracking mode instead of claiming that merely detecting the front camera means face tracking is active
+- district ground fills now scale correctly with world zoom
+- roads, lane markings and sidewalk edge tiles now scale with the close world zoom instead of becoming visually too thin
+- a new district-specific procedural tile pass differentiates heritage cobbles, campus/cultural paving, polished glass/center slabs, greenery, waterfront boards, industrial concrete and technical/air/solar surfaces
+- sidewalk curb modules and reflector details add more street-scale texture
+- building generation now uses district-specific massing / façade / roof recipes instead of drawing from one global random style pool
+- heritage, green, glass, industrial, waterfront, campus, neon, terminal and other district types therefore produce more coherent architecture
+- small wall / roof material variations reduce the repeated procedural look without breaking district identity
+- vehicle screen size receives a restrained close-zoom compensation so the 2.15x pedestrian camera actually feels physically closer
 
 ## 1.18.0 — Cinematic Traffic & Visual Polish
 
