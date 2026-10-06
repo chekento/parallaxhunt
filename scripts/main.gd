@@ -3587,6 +3587,11 @@ func _draw_traffic_accidents() -> void:
         var p:=_project(pos,5)
         var pulse:=0.55+0.45*sin(float(Time.get_ticks_msec())/220.0)
         draw_circle(p,26.0+severity*12.0,Color(1.0,0.38,0.20,0.035+0.025*pulse))
+        draw_line(p+Vector2(-52,-18),p+Vector2(-12,-4),Color(0.04,0.05,0.06,0.30),3.0,true)
+        draw_line(p+Vector2(48,20),p+Vector2(10,6),Color(0.04,0.05,0.06,0.24),2.6,true)
+        if _weather_state() in ["rain","storm"]:
+            draw_circle(p+Vector2(4,15),34.0,Color(0.32,0.46,0.50,0.035))
+            draw_line(p+Vector2(-18,15),p+Vector2(18,15),Color(0.72,0.82,0.86,0.055),3.0,true)
         for k in range(6):
             var a:=float(k)*TAU/6.0+float(int(accident.id.hash())%11)*0.08
             var d:=Vector2.from_angle(a)
@@ -3602,6 +3607,22 @@ func _draw_traffic_accidents() -> void:
             for k in range(3):
                 var spark:=p+Vector2.from_angle(float(k)*2.1+age)*float(8+k*5)
                 draw_circle(spark,2.0,Color(1.0,0.70,0.25,0.55))
+        if graphics_quality>=1 and age<28.0:
+            for smoke_i in range(3):
+                var drift:=fposmod(age*10.0+float(smoke_i)*17.0,54.0)
+                var smoke_pos:=p+Vector2(sin(age*0.8+float(smoke_i))*7.0,-10.0-drift)
+                draw_circle(smoke_pos,6.0+drift*0.07,Color(0.52,0.57,0.58,0.055*(1.0-drift/60.0)))
+        var emergency_near:=false
+        for car_state in traffic:
+            if not _is_emergency_archetype(str(car_state.get("archetype",""))):
+                continue
+            if Vector2(_traffic_world_transform(car_state).pos).distance_to(pos)<180.0:
+                emergency_near=true
+                break
+        if emergency_near:
+            var siren:=0.5+0.5*sin(float(Time.get_ticks_msec())/120.0)
+            draw_circle(p+Vector2(-22,8),18,Color(1.0,0.18,0.23,0.012+(1.0-siren)*0.020))
+            draw_circle(p+Vector2(22,8),18,Color(0.18,0.52,1.0,0.012+siren*0.020))
         draw_string(ThemeDB.fallback_font,p+Vector2(-80,-48),"UNFALLSTELLE",HORIZONTAL_ALIGNMENT_CENTER,160,10,Color("#ffb36d"))
 
 func _update_traffic(delta: float) -> void:
@@ -4907,6 +4928,8 @@ func _draw_district_ground() -> void:
         var accent: Color = d.accent
         accent.a = 0.06
         var style: String = str(d.style)
+        var night_factor:=1.0-clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
+        var wet_ground:=_weather_state() in ["rain","storm"]
 
         if style in ["glass","center","neon"]:
             for x in range(int(r.position.x)+100, int(r.end.x), 280):
@@ -4915,6 +4938,12 @@ func _draw_district_ground() -> void:
                 draw_line(a,b,accent,2.0)
             for y in range(int(r.position.y)+180,int(r.end.y),420):
                 draw_line(_project(Vector2(r.position.x,y)),_project(Vector2(r.end.x,y)),Color(accent.r,accent.g,accent.b,0.035),1.0)
+            if night_factor>0.25:
+                for i in range(8):
+                    var glow_pos:=_project(r.position+Vector2(260+(i*607)%4600,360+(i*911)%2900))
+                    draw_circle(glow_pos,16+float(i%3)*6,Color(d.accent.r,d.accent.g,d.accent.b,0.012+night_factor*0.020))
+                    if wet_ground:
+                        draw_line(glow_pos,glow_pos+Vector2(0,34+float(i%4)*7),Color(d.accent.r,d.accent.g,d.accent.b,0.025+night_factor*0.025),5.0,true)
 
         elif style in ["green","garden"]:
             for i in range(14):
@@ -4969,6 +4998,9 @@ func _draw_district_ground() -> void:
                 var q := _project(r.position+Vector2(350+gx*820,420+(gx%2)*1450))
                 draw_rect(Rect2(q-Vector2(48,26),Vector2(96,52)),Color(accent.r,accent.g,accent.b,0.025),false,2.0)
                 draw_line(q+Vector2(-42,0),q+Vector2(42,0),Color(accent.r,accent.g,accent.b,0.035),1.0)
+                for hz in range(3):
+                    var hx:=q+Vector2(-32+float(hz)*30.0,34)
+                    draw_line(hx+Vector2(-8,5),hx+Vector2(8,-5),Color("#d8a84c",0.10),2.0,true)
 
         elif style=="campus":
             for i in range(10):
@@ -5026,6 +5058,9 @@ func _draw_road_surface_details(road: Dictionary) -> void:
     if graphics_quality<=0:
         return
     var pts: PackedVector2Array = road.points
+    var weather:=_weather_state()
+    var wet:=weather in ["rain","storm"]
+    var dark:=world_clock>18.0 or world_clock<6.5
     var step: int = 19 if graphics_quality==1 else 13
     for k in range(9,96,step):
         var t := float(k)/100.0
@@ -5050,6 +5085,16 @@ func _draw_road_surface_details(road: Dictionary) -> void:
         else:
             var edge := _project(wp-normal*float(road.width)*0.40,1.0)
             draw_circle(edge,2.2,Color(0.90,0.78,0.48,0.40))
+        if dark:
+            var stud:=_project(wp-normal*float(road.width)*0.34,1.1)
+            draw_circle(stud,2.0,Color(0.96,0.82,0.48,0.34 if not wet else 0.52))
+            if wet:
+                draw_circle(stud,5.0,Color(1.0,0.78,0.42,0.035))
+        if wet and (k+int(road.width))%3==0:
+            var puddle_center:=_project(wp+normal*float(road.width)*0.27,0.9)
+            var puddle_w:=16.0+float(k%5)*3.0
+            _draw_poly_ellipse(puddle_center,Vector2(puddle_w,5.0+float(k%3)),tan.angle(),Color(0.42,0.66,0.76,0.055))
+            draw_line(puddle_center-tan*puddle_w*0.55,puddle_center+tan*puddle_w*0.55,Color(0.78,0.90,0.94,0.055),1.0,true)
 
 func _draw_junction_overlays() -> void:
     for j in junctions:
@@ -5157,6 +5202,7 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
     var facade := str(b.get("facade","windows"))
     var daylight := clampf(sin((world_clock-6.0)/24.0*TAU)*0.5+0.5,0.0,1.0)
     var night_factor := 1.0-daylight
+    var wet_facade:=_weather_state() in ["rain","storm"]
     var window_color := Color("#ffdca0") if b.style in ["heritage","harbor","terminal"] else Color("#9cddff")
     if b.style == "neon":
         window_color = b.accent.lightened(0.12)
@@ -5223,6 +5269,17 @@ func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Ve
         draw_line(a.lerp(d,0.55),bb.lerp(c,0.55),Color(b.accent.r,b.accent.g,b.accent.b,0.40+0.22*pulse),2.5)
     elif b.style in ["green","garden"]:
         draw_line(a.lerp(d,0.32),bb.lerp(c,0.32),Color(0.48,0.83,0.55,0.34),3.0)
+    if wet_facade and b.style in ["glass","center","neon","terminal","expo"]:
+        for sheen_i in range(1,4):
+            var u:=float(sheen_i)/4.0
+            var p0:=a.lerp(bb,u)
+            var p1:=d.lerp(c,u)
+            draw_line(p0.lerp(p1,0.08),p0.lerp(p1,0.92),Color(0.72,0.90,1.0,0.035+night_factor*0.025),1.2,true)
+    if night_factor>0.38 and b.style in ["center","neon","terminal","culture","expo"]:
+        var sign_center:=a.lerp(bb,0.50).lerp(d.lerp(c,0.50),0.22)
+        var sign_half:=minf(28.0,face_len*0.14)
+        var sign_pulse:=0.72+0.28*sin(float(Time.get_ticks_msec())/410.0+float(int(b.seed)%23))
+        draw_line(sign_center-(bb-a).normalized()*sign_half,sign_center+(bb-a).normalized()*sign_half,Color(b.accent.r,b.accent.g,b.accent.b,0.20+sign_pulse*0.18),3.0,true)
 
 func _draw_roof_detail(b: Dictionary, top: Array) -> void:
     var center: Vector2 = (top[0]+top[1]+top[2]+top[3])/4.0
@@ -6589,6 +6646,9 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     ])
     draw_colored_polygon(pts,color)
     draw_polyline(PackedVector2Array([pts[0],pts[1],pts[2],pts[3],pts[0]]),Color(1,1,1,0.20),1.2,true)
+    # Body shoulder line and hood highlight improve silhouette separation.
+    draw_line(center-f*sz.x*.28+side*sz.y*.34,center+f*sz.x*.36+side*sz.y*.34,Color(1,1,1,0.10),1.3,true)
+    draw_line(center+f*sz.x*.12-side*sz.y*.28,center+f*sz.x*.42-side*sz.y*.16,Color(1,1,1,0.075),1.1,true)
 
     var cabin_shift: float = 0.0
     var cabin_scale: float = 0.26
@@ -6612,6 +6672,7 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     var wind_d := cabin_center-f*cabin_len+side*glass_w
     draw_colored_polygon(PackedVector2Array([wind_a,wind_b,wind_c,wind_d]),Color(0.58,0.82,0.92,0.72))
     draw_line(wind_a,wind_b,Color(1,1,1,0.24),1.0)
+    draw_line(wind_d.lerp(wind_a,0.30),wind_c.lerp(wind_b,0.30),Color(0.88,0.97,1.0,0.13),1.0,true)
 
     var front_l := center+f*sz.x*.49+side*sz.y*.25
     var front_r := center+f*sz.x*.49-side*sz.y*.25
@@ -6625,11 +6686,21 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
     draw_circle(front_r,2.6 if player_car else 2.4,Color("#ffe8ae"))
     draw_circle(rear_l,3.2 if braking else 2.2,rear_color)
     draw_circle(rear_r,3.2 if braking else 2.2,rear_color)
-    if player_car and (world_clock>18.2 or world_clock<6.4 or _weather_state() in ["rain","storm","mist"]):
-        var beam_l := PackedVector2Array([front_l-side*3.0,front_l+side*3.0,front_l+f*78.0+side*19.0,front_l+f*78.0-side*19.0])
-        var beam_r := PackedVector2Array([front_r-side*3.0,front_r+side*3.0,front_r+f*78.0+side*19.0,front_r+f*78.0-side*19.0])
-        draw_colored_polygon(beam_l,Color(1.0,0.92,0.68,0.055))
-        draw_colored_polygon(beam_r,Color(1.0,0.92,0.68,0.055))
+    var dark_or_bad:=world_clock>18.2 or world_clock<6.4 or _weather_state() in ["rain","storm","mist"]
+    if not parked and dark_or_bad:
+        var beam_len:=78.0 if player_car else 48.0
+        var beam_width:=19.0 if player_car else 12.0
+        var beam_alpha:=0.055 if player_car else 0.026
+        var beam_l := PackedVector2Array([front_l-side*3.0,front_l+side*3.0,front_l+f*beam_len+side*beam_width,front_l+f*beam_len-side*beam_width])
+        var beam_r := PackedVector2Array([front_r-side*3.0,front_r+side*3.0,front_r+f*beam_len+side*beam_width,front_r+f*beam_len-side*beam_width])
+        draw_colored_polygon(beam_l,Color(1.0,0.92,0.68,beam_alpha))
+        draw_colored_polygon(beam_r,Color(1.0,0.92,0.68,beam_alpha))
+        if _weather_state() in ["rain","storm"]:
+            var reflect_alpha:=0.045 if player_car else 0.024
+            draw_line(front_l+Vector2(0,3),front_l+Vector2(-f.x*9.0,26),Color(1.0,0.87,0.58,reflect_alpha),5.0,true)
+            draw_line(front_r+Vector2(0,3),front_r+Vector2(-f.x*9.0,26),Color(1.0,0.87,0.58,reflect_alpha),5.0,true)
+            draw_line(rear_l+Vector2(0,3),rear_l+Vector2(f.x*6.0,20),Color(1.0,0.22,0.18,reflect_alpha*0.90),4.0,true)
+            draw_line(rear_r+Vector2(0,3),rear_r+Vector2(f.x*6.0,20),Color(1.0,0.22,0.18,reflect_alpha*0.90),4.0,true)
     if player_car and abs(vehicle_velocity)>210.0 and abs(move_vec.x)>0.48:
         for skid_side in [-1.0,1.0]:
             var wheel_rear := center-f*sz.x*.36+side*sz.y*.42*float(skid_side)
@@ -6686,6 +6757,9 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
         if archetype=="maintenance":
             draw_circle(center+f*1.0-Vector2(0,sz.y*.64),3.0,Color("#ffb12d") if int(Time.get_ticks_msec()/330)%2==0 else Color("#6f5224"))
     elif archetype=="ambulance":
+        var amb_pulse:=0.5+0.5*sin(float(Time.get_ticks_msec())/110.0)
+        draw_circle(center,24.0,Color(0.20,0.55,1.0,0.018+amb_pulse*0.018))
+        draw_circle(center+Vector2(8,0),20.0,Color(1.0,0.18,0.24,0.014+(1.0-amb_pulse)*0.016))
         draw_line(center-f*sz.x*.34-side*sz.y*.47,center+f*sz.x*.34-side*sz.y*.47,Color("#48bfa9"),3.0,true)
         draw_line(center-f*sz.x*.34+side*sz.y*.47,center+f*sz.x*.34+side*sz.y*.47,Color("#48bfa9"),3.0,true)
         var amb_flash:=int(Time.get_ticks_msec()/150)%2==0 and not parked
@@ -6696,6 +6770,9 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
         draw_line(center+f*sz.x*.12+Vector2(0,-6),center+f*sz.x*.12+Vector2(0,6),Color("#3abf9f"),2.2,true)
         draw_line(center+f*sz.x*.12+Vector2(-6,0),center+f*sz.x*.12+Vector2(6,0),Color("#3abf9f"),2.2,true)
     elif archetype=="response":
+        var response_pulse:=0.5+0.5*sin(float(Time.get_ticks_msec())/125.0)
+        draw_circle(center,21.0,Color(0.18,0.48,1.0,0.015+response_pulse*0.016))
+        draw_circle(center+Vector2(7,0),18.0,Color(1.0,0.18,0.28,0.012+(1.0-response_pulse)*0.014))
         var flash:=int(Time.get_ticks_msec()/180)%2==0 and not parked
         draw_rect(Rect2(center+f*2.0-Vector2(8,sz.y*.65),Vector2(16,4)),Color("#46545d"),true)
         draw_circle(center+f*2.0-side*4.0-Vector2(0,sz.y*.63),2.4,Color("#ff4057") if flash else Color("#5b3138"))
@@ -6727,6 +6804,10 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
         draw_line(center-f*sz.x*.22-side*sz.y*.46,center+f*sz.x*.26-side*sz.y*.46,Color("#72f0d2"),1.8,true)
 
     if not parked:
+        if _is_emergency_archetype(archetype) and _weather_state() in ["rain","storm"]:
+            var reflect_pulse:=0.5+0.5*sin(float(Time.get_ticks_msec())/130.0)
+            draw_line(center+Vector2(-8,6),center+Vector2(-11,38),Color(1.0,0.16,0.22,0.025+reflect_pulse*0.030),8.0,true)
+            draw_line(center+Vector2(8,6),center+Vector2(11,38),Color(0.18,0.55,1.0,0.025+(1.0-reflect_pulse)*0.030),8.0,true)
         var tail := center-f*sz.x*.62
         draw_line(tail,tail-f*(30 if cls in ["sport","hyper"] else 22),Color(0.35,0.85,1.0,0.11),4.0,true)
         if _weather_state() in ["rain","storm"]:
@@ -9226,6 +9307,11 @@ func _draw_ambient_overlay() -> void:
             var x0 := 22.0 if left_side else size.x-22.0
             var dir := 1.0 if left_side else -1.0
             draw_line(Vector2(x0,yy),Vector2(x0+dir*(32.0+float(i%4)*9.0),yy-12.0),Color(0.72,0.90,1.0,0.10+speed_strength*0.20),2.0,true)
+    if (_weather_state() in ["rain","storm"]) and (world_clock>18.0 or world_clock<6.5):
+        draw_rect(Rect2(0,size.y*0.62,size.x,size.y*0.38),Color(0.04,0.10,0.14,0.025),true)
+        for glow_i in range(5):
+            var gx:=fposmod(float(glow_i*337)+float(Time.get_ticks_msec())*0.006,size.x)
+            draw_circle(Vector2(gx,size.y*0.78+float(glow_i%2)*70),28+float(glow_i%3)*10,Color(0.22,0.52,0.72,0.010))
     var edge_alpha := 0.13
     draw_rect(Rect2(0,0,size.x,72),Color(0,0,0,edge_alpha))
     draw_rect(Rect2(0,size.y-92,size.x,92),Color(0,0,0,edge_alpha))
