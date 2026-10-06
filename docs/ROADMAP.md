@@ -234,3 +234,31 @@
 - additional hospital / emergency missions and medical-response city events
 - district-specific soundscapes for loading docks, hospitals, transfer hubs and nightlife
 - lower-end Android profiling for transfer hubs, emergency dispatch and dense loading scenes
+
+
+## Alpha 1.18 — cinematic traffic & visual polish
+- Rare emergent AI vehicle-to-vehicle collisions based on actual spatial conflicts
+- Weather-sensitive but intentionally low accident probability
+- Temporary crashed-car obstacles with damage, debris, hazards and cleanup
+- Dynamic crashes integrated into the existing ambulance / response target system
+- Emergency dispatch and traffic yielding around newly created crash scenes
+- Dedicated accident markers on the city map
+- Traffic-wide night / bad-weather headlight beams
+- Wet-road headlight, brake-light and emergency-light reflections
+- Stronger vehicle body, hood and glass highlights
+- Pulsing red/blue emergency light spill
+- Puddles, road studs and stronger wet asphalt sheen
+- Stronger district night-light pools and industrial hazard texture
+- Wet façade sheen and illuminated lower-floor signage
+- Accident smoke, sparks, scuffs and debris kept deliberately non-gratuitous
+- Graphics-quality-aware implementation for Android stability
+
+### Next quality targets
+- collision-aware AI incident creation for pedestrian near-misses and stalled vehicles
+- emergency scene lifecycle with towing, lane reopening and cleanup crews
+- more realistic siren / horn proximity audio and emergency approach cues
+- visual damage states for a wider range of vehicle body shapes
+- enhanced wet-road reflections around neon districts and tunnel/underpass zones
+- more authored building façades, street furniture and district-specific materials
+- performance profiling of dynamic accidents during rain/storm crowd scenarios
+- player-facing traffic-safety tutorial and optional stronger pedestrian protection assist
