@@ -77,6 +77,7 @@ var photo_flash_alpha: float = 0.0
 var photo_mode: bool = false
 var active_photo_index: int = -1
 var photo_targets: Array = []
+var photo_occluders: Array = []
 var photo_found: Dictionary = {}
 var photo_scores: Dictionary = {}
 var photo_yaw: float = 0.0
@@ -1602,7 +1603,7 @@ func _run_photo_smoke_test() -> void:
     _start_photo_challenge(0)
     await get_tree().process_frame
     await get_tree().process_frame
-    if not photo_mode or photo_viewport==null or photo_camera==null or photo_targets.size()<3:
+    if not photo_mode or photo_viewport==null or photo_camera==null or photo_targets.size()<3 or photo_occluders.is_empty():
         push_error("PHOTO_SMOKE: photo mode failed to initialize")
         get_tree().quit(42)
         return
@@ -1734,6 +1735,7 @@ func _photo_clear_3d_scene() -> void:
     photo_dynamic_peds.clear()
     photo_dynamic_transit.clear()
     photo_targets.clear()
+    photo_occluders.clear()
 
 func _photo_material(color: Color, metallic: float = 0.0, roughness: float = 0.72) -> StandardMaterial3D:
     var mat := StandardMaterial3D.new()
@@ -1819,6 +1821,7 @@ func _photo_build_scene(index: int) -> void:
         var size := Vector3(rect.size.x*0.10,h,rect.size.y*0.10)
         var body := _photo_box("Building_%d" % bi,local,size,Color(b.wall))
         var roof := _photo_box("Roof_%d" % bi,local+Vector3(0,h*0.52,0),Vector3(size.x*0.94,0.35,size.z*0.94),Color(b.roof))
+        photo_occluders.append({"center":local,"size":size})
         var detail_limit: int = 18 if graphics_quality>=2 else 10
         if built < detail_limit:
             _photo_add_building_details(b,local,size,h,bi)
@@ -1832,6 +1835,10 @@ func _photo_build_scene(index: int) -> void:
         var lp: Vector2 = Vector2(l.pos)
         if lp.distance_to(center)>radius*1.25:
             continue
+        var lh:=maxf(8.0,float(l.h)*0.085)
+        var lsz:=Vector2(l.size)*0.10
+        var lcenter:=_photo_local(lp,center,lh*0.5)
+        photo_occluders.append({"center":lcenter,"size":Vector3(maxf(8.0,lsz.x*0.78),lh,maxf(8.0,lsz.y*0.78))})
         _photo_make_landmark(l,center)
 
     # Trees as trunk/crown 3D forms.
@@ -1874,7 +1881,7 @@ func _photo_build_scene(index: int) -> void:
         var wp: Vector2 = Vector2(tf.pos)
         if wp.distance_to(center)>radius:
             continue
-        var car_node := _photo_make_car("Traffic_%d" % ti,wp,Vector2(tf.tangent).angle(),str(trf["class"]),Color(trf.color),center,null)
+        var car_node := _photo_make_car("Traffic_%d" % ti,wp,Vector2(tf.tangent).angle(),str(trf["class"]),Color(trf.color),center,null,str(trf.get("archetype","")))
         photo_dynamic_cars[ti]=car_node
         traffic_count+=1
         if traffic_count>30:
@@ -2076,7 +2083,7 @@ func _photo_make_landmark(l: Dictionary, center: Vector2) -> void:
         _photo_box("Landmark_%s" % str(l.name),base+Vector3(0,h*0.5,0),Vector3(maxf(8.0,sz.x),h,maxf(8.0,sz.y)),Color(l.accent).darkened(0.42))
         _photo_box("LandmarkCap_%s" % str(l.name),base+Vector3(0,h*1.03,0),Vector3(maxf(6.0,sz.x*0.72),1.0,maxf(6.0,sz.y*0.72)),accent)
 
-func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls: String, color: Color, center: Vector2, parent: Node3D = null) -> Node3D:
+func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls: String, color: Color, center: Vector2, parent: Node3D = null, archetype: String = "") -> Node3D:
     var root := Node3D.new()
     root.name=name_text
     (photo_world_root if parent==null else parent).add_child(root)
@@ -2098,9 +2105,55 @@ func _photo_make_car(name_text: String, world_pos: Vector2, heading: float, cls:
         _photo_box(name_text+"_Spoiler",Vector3(-sz.x*0.40,1.82,0),Vector3(0.22,0.18,sz.y*0.82),Color("#1b2428"),root)
     elif cls=="pickup":
         _photo_box(name_text+"_Bed",Vector3(-sz.x*0.28,1.35,0),Vector3(sz.x*0.34,0.35,sz.y*0.82),color.darkened(0.18),root)
+    if archetype=="response":
+        _photo_box(name_text+"_Lightbar",Vector3(0,2.72,0),Vector3(1.8,0.18,0.42),Color("#6f7b80"),root)
+        _photo_box(name_text+"_Red",Vector3(-0.48,2.84,0),Vector3(0.55,0.16,0.34),Color("#ff4057"),root)
+        _photo_box(name_text+"_Blue",Vector3(0.48,2.84,0),Vector3(0.55,0.16,0.34),Color("#55aaff"),root)
+    elif archetype in ["service","maintenance"]:
+        _photo_box(name_text+"_RackL",Vector3(-0.6,2.70,-sz.y*0.28),Vector3(2.8,0.16,0.16),Color("#252e32"),root)
+        _photo_box(name_text+"_RackR",Vector3(-0.6,2.70,sz.y*0.28),Vector3(2.8,0.16,0.16),Color("#252e32"),root)
+        if archetype=="maintenance":
+            _photo_box(name_text+"_Amber",Vector3(0,2.92,0),Vector3(0.40,0.28,0.40),Color("#ffb12d"),root)
+    elif archetype=="taxi":
+        _photo_box(name_text+"_Taxi",Vector3(0,2.74,0),Vector3(1.15,0.26,0.48),Color("#f2cf4f"),root)
+    elif archetype=="courier":
+        _photo_box(name_text+"_CourierStripe",Vector3(0,1.28,sz.y*0.51),Vector3(sz.x*0.68,0.20,0.12),Color("#72d7e6"),root)
     root.position=_photo_local(world_pos,center,0.0)
     root.rotation.y=-heading+PI*0.5
     return root
+
+func _photo_position_occluded(target_pos: Vector3) -> bool:
+    var cam:=Vector3(0,6.2,0)
+    var from2:=Vector2(cam.x,cam.z)
+    var to2:=Vector2(target_pos.x,target_pos.z)
+    var seg:=to2-from2
+    var seg_len_sq:=seg.length_squared()
+    if seg_len_sq<0.001:
+        return false
+    for occ in photo_occluders:
+        var center:=Vector3(occ.center)
+        var size:=Vector3(occ.size)
+        var center2:=Vector2(center.x,center.z)
+        var t:=clampf((center2-from2).dot(seg)/seg_len_sq,0.0,1.0)
+        if t<=0.055 or t>=0.93:
+            continue
+        var closest:=from2+seg*t
+        var horizontal_radius:=maxf(size.x,size.z)*0.52
+        var ray_y:=lerpf(cam.y,target_pos.y,t)
+        if closest.distance_to(center2)<horizontal_radius and abs(ray_y-center.y)<size.y*0.56:
+            return true
+    return false
+
+func _photo_find_visible_target_position(base: Vector3, variant: int) -> Vector3:
+    var angles: Array=[0.0,0.32,-0.32,0.62,-0.62,0.94,-0.94,1.28,-1.28,PI]
+    var base_xz:=Vector2(base.x,base.z)
+    for attempt in range(angles.size()):
+        var rotated:=base_xz.rotated(float(angles[attempt]))
+        var candidate:=Vector3(rotated.x,base.y+float(attempt/6)*1.5,rotated.y)
+        if not _photo_position_occluded(candidate):
+            return candidate
+    var outward:=base_xz.normalized()*maxf(36.0,base_xz.length()*1.32)
+    return Vector3(outward.x,base.y+5.0,outward.y)
 
 func _photo_spawn_targets(index: int, center: Vector2) -> void:
     var ph: Dictionary = photo_points[index]
@@ -2136,6 +2189,7 @@ func _photo_spawn_targets(index: int, center: Vector2) -> void:
         var p: Vector3 = Vector3(t.pos)
         p.x += float((offset_seed+i*7)%13)-6.0
         p.z += float((offset_seed+i*11)%17)-8.0
+        p=_photo_find_visible_target_position(p,i)
         t["pos"]=p
         t["key"]="%s_%d" % [id,i]
         var root := Node3D.new()
@@ -2287,6 +2341,8 @@ func _photo_center_target() -> Dictionary:
             continue
         var node: Node3D = t.node
         if photo_camera.is_position_behind(node.global_position):
+            continue
+        if _photo_position_occluded(node.global_position):
             continue
         var screen := photo_camera.unproject_position(node.global_position)
         var d: float = screen.distance_to(center)
