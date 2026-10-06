@@ -186,6 +186,8 @@ var active_job: Dictionary = {}
 var side_job_sites: Array = []
 var named_npcs: Array = []
 var city_micro_events: Array = []
+var micro_event_seen: Dictionary = {}
+var city_reputation := 0
 var caches: Array = []
 var glyphs: Array = []
 var npc_flags: Dictionary = {}
@@ -228,7 +230,12 @@ var reward_body: Label
 var interact_button: Button
 var scan_button: Button
 var sfx_player: AudioStreamPlayer
+var ambient_player: AudioStreamPlayer
+var weather_player: AudioStreamPlayer
 var sounds := {}
+var ambient_sounds := {}
+var current_ambient_key := ""
+var current_weather_audio_key := ""
 var last_secret_sound_ms := -99999
 
 func _ready() -> void:
@@ -263,6 +270,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
     _update_sensor(delta)
+    _update_ambient_audio(delta)
     if main_menu_active:
         world_clock = fposmod(world_clock + delta * 0.006,24.0)
         queue_redraw()
@@ -1094,7 +1102,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.10"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.11"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2326,6 +2334,15 @@ func _build_audio() -> void:
     sfx_player = AudioStreamPlayer.new()
     sfx_player.volume_db = -7.0
     add_child(sfx_player)
+
+    ambient_player = AudioStreamPlayer.new()
+    ambient_player.volume_db = -30.0
+    add_child(ambient_player)
+
+    weather_player = AudioStreamPlayer.new()
+    weather_player.volume_db = -36.0
+    add_child(weather_player)
+
     sounds["collect"] = _make_chime([659.0, 988.0], [0.06, 0.11], 0.12)
     sounds["secret"] = _make_chime([784.0, 1175.0, 1568.0], [0.09, 0.11, 0.16], 0.16)
     sounds["scan"] = _make_chime([310.0, 465.0, 620.0], [0.05, 0.07, 0.09], 0.09)
@@ -2337,6 +2354,18 @@ func _build_audio() -> void:
     sounds["hack_click"] = _make_chime([520.0],[0.025],0.055)
     sounds["error"] = _make_chime([190.0,145.0],[0.055,0.09],0.08)
     sounds["impact"] = _make_chime([95.0,72.0],[0.035,0.055],0.11)
+    sounds["city_event"] = _make_chime([392.0,523.0,659.0],[0.04,0.05,0.09],0.08)
+
+    ambient_sounds["urban"] = _make_ambient_loop(42.0,2.0,0.052)
+    ambient_sounds["heritage"] = _make_ambient_loop(38.0,1.0,0.045)
+    ambient_sounds["green"] = _make_ambient_loop(34.0,3.0,0.040)
+    ambient_sounds["water"] = _make_ambient_loop(30.0,4.0,0.050)
+    ambient_sounds["industrial"] = _make_ambient_loop(46.0,5.0,0.052)
+    ambient_sounds["neon"] = _make_ambient_loop(54.0,7.0,0.045)
+    ambient_sounds["campus"] = _make_ambient_loop(40.0,6.0,0.040)
+    ambient_sounds["open"] = _make_ambient_loop(28.0,4.0,0.038)
+    ambient_sounds["rain"] = _make_ambient_loop(62.0,11.0,0.060)
+    ambient_sounds["storm"] = _make_ambient_loop(26.0,13.0,0.070)
 
 func _make_chime(freqs: Array, durations: Array, amp: float) -> AudioStreamWAV:
     var rate := 22050
@@ -2369,6 +2398,116 @@ func _make_chime(freqs: Array, durations: Array, amp: float) -> AudioStreamWAV:
     wav.stereo = false
     wav.data = data
     return wav
+
+func _make_ambient_loop(base_freq: float, activity: float, amp: float) -> AudioStreamWAV:
+    var rate := 16000
+    var duration := 2.0
+    var samples := int(rate*duration)
+    var data := PackedByteArray()
+    data.resize(samples*2)
+    for i in range(samples):
+        var t := float(i)/float(rate)
+        var sample := (
+            sin(TAU*base_freq*t)*0.34
+            + sin(TAU*(base_freq+24.0)*t)*0.13
+            + sin(TAU*(4.0+activity)*t)*0.09
+            + sin(TAU*(91.0+activity*11.0)*t)*0.035
+            + sin(TAU*(143.0+activity*7.0)*t)*0.022
+        )*amp
+        var iv := int(clampf(sample,-1.0,1.0)*32767.0)
+        if iv<0:
+            iv+=65536
+        data[i*2]=iv&255
+        data[i*2+1]=(iv>>8)&255
+    var wav := AudioStreamWAV.new()
+    wav.format=AudioStreamWAV.FORMAT_16_BITS
+    wav.mix_rate=rate
+    wav.stereo=false
+    wav.loop_mode=AudioStreamWAV.LOOP_FORWARD
+    wav.loop_begin=0
+    wav.loop_end=samples
+    wav.data=data
+    return wav
+
+func _ambient_profile_for_style(style: String) -> String:
+    if style=="heritage":
+        return "heritage"
+    if style in ["green","garden","wind"]:
+        return "green"
+    if style in ["canal","harbor","coast"]:
+        return "water"
+    if style in ["industry","rail","terminal","data","solar"]:
+        return "industrial"
+    if style in ["neon","astro","glass"]:
+        return "neon"
+    if style in ["campus","culture","expo","center"]:
+        return "campus"
+    if style in ["air","ring"]:
+        return "open"
+    return "urban"
+
+func _update_ambient_audio(_delta: float) -> void:
+    if ambient_player==null or weather_player==null:
+        return
+    if not sound_enabled or main_menu_active:
+        if ambient_player.playing:
+            ambient_player.stop()
+        if weather_player.playing:
+            weather_player.stop()
+        current_ambient_key=""
+        current_weather_audio_key=""
+        return
+
+    var district := _district_at(player_pos)
+    var profile := _ambient_profile_for_style(str(district.get("style","center")))
+    if profile!=current_ambient_key:
+        current_ambient_key=profile
+        ambient_player.stop()
+        ambient_player.stream=ambient_sounds.get(profile,ambient_sounds.get("urban"))
+        ambient_player.play()
+    elif not ambient_player.playing:
+        ambient_player.play()
+
+    var night := world_clock>=19.0 or world_clock<6.0
+    var base_db := -29.0
+    if night:
+        base_db=-27.0
+    if interior_active:
+        base_db=-36.0
+    elif photo_mode:
+        base_db=-31.0
+    elif current_vehicle>=0:
+        base_db=-25.5
+    ambient_player.volume_db=base_db
+    ambient_player.pitch_scale=1.0
+    if current_vehicle>=0:
+        var cls := str(parked_cars[current_vehicle].get("class","sedan"))
+        var max_speed := maxf(1.0,float(VEHICLE_SPEEDS.get(cls,420.0)))
+        ambient_player.pitch_scale=1.0+clampf(abs(vehicle_velocity)/max_speed,0.0,1.0)*0.035
+
+    var state := _weather_state()
+    var weather_key := ""
+    if state=="rain":
+        weather_key="rain"
+    elif state=="storm":
+        weather_key="storm"
+    if weather_key=="":
+        if weather_player.playing:
+            weather_player.stop()
+        current_weather_audio_key=""
+    else:
+        if weather_key!=current_weather_audio_key:
+            current_weather_audio_key=weather_key
+            weather_player.stop()
+            weather_player.stream=ambient_sounds[weather_key]
+            weather_player.play()
+        elif not weather_player.playing:
+            weather_player.play()
+        weather_player.volume_db=-26.0 if state=="rain" else -21.5
+        if interior_active:
+            weather_player.volume_db-=9.0
+        elif current_vehicle>=0:
+            weather_player.volume_db-=4.0
 
 func _play_sfx(name: String) -> void:
     if not sound_enabled:
@@ -2839,11 +2978,37 @@ func _update_district() -> void:
     var name: String = d.get("name","Megacity")
     if name != current_district:
         current_district = name
-        district_banner.text = name
+        district_banner.text = "%s · %s" % [name,_district_identity_label(str(d.get("style","center")))]
         district_banner.modulate = Color(1,1,1,1)
         var tw := create_tween()
-        tw.tween_interval(1.0)
-        tw.tween_property(district_banner, "modulate:a", 0.0, 0.65)
+        tw.tween_interval(1.15)
+        tw.tween_property(district_banner, "modulate:a", 0.0, 0.70)
+
+func _district_identity_label(style: String) -> String:
+    var labels := {
+        "heritage":"HERITAGE CORE",
+        "culture":"CULTURE LOOP",
+        "glass":"GLASS CANYON",
+        "green":"BIO URBAN",
+        "solar":"SOLAR RIDGE",
+        "canal":"WATERSIDE",
+        "center":"CITY CORE",
+        "harbor":"HARBOR LIFE",
+        "industry":"INDUSTRIAL GRID",
+        "terminal":"TRANSIT NODE",
+        "garden":"GARDEN CITY",
+        "campus":"CAMPUS WALK",
+        "astro":"NIGHT SKY",
+        "ring":"OUTER LOOP",
+        "neon":"NIGHT DISTRICT",
+        "expo":"EXPO AXIS",
+        "air":"OPEN SKY",
+        "wind":"WIND PARK",
+        "data":"DATA GRID",
+        "coast":"COAST WALK",
+        "rail":"RAIL WORKS"
+    }
+    return str(labels.get(style,"MEGACITY"))
 
 func _update_ui() -> void:
     if photo_mode:
@@ -2874,7 +3039,7 @@ func _update_ui() -> void:
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     var clock_h := int(floor(world_clock))
     var clock_m := int(floor((world_clock-float(clock_h))*60.0))
-    status_label.text = "%s · %s · %02d:%02d · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),world_zoom,credits,int(energy),jobs_done]
+    status_label.text = "%s · %s · %02d:%02d · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d · Stadtruf %d/%d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),world_zoom,credits,int(energy),jobs_done,city_reputation,city_micro_events.size()]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
     interact_button.text = "INTERACT" if near.is_empty() else str(near.get("action","INTERACT"))
@@ -2911,6 +3076,8 @@ func _interact() -> void:
         return
     if n.type == "race":
         _start_race(int(n.index))
+    elif n.type == "micro_event":
+        _join_micro_event(int(n.index))
         return
     elif n.type == "interior_floor":
         _toggle_interior_floor()
@@ -3043,6 +3210,15 @@ func _nearest_interactable() -> Dictionary:
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
     var best := {}
     var bd := 999999.0
+    for ei in range(city_micro_events.size()):
+        var event: Dictionary = city_micro_events[ei]
+        if not _micro_event_active(ei,event):
+            continue
+        var de: float = player_pos.distance_to(Vector2(event.pos))
+        if de<118.0 and de<bd:
+            var seen := bool(micro_event_seen.get(str(event.label),false))
+            best={"type":"micro_event","index":ei,"action":"NOCHMAL MITMACHEN" if seen else "MITMACHEN"}
+            bd=de
     for ni in range(named_npcs.size()):
         var dn: float = player_pos.distance_to(Vector2(named_npcs[ni].pos))
         if dn < 82.0 and dn < bd:
@@ -3883,6 +4059,68 @@ func _talk_named_npc(index: int) -> void:
     dialogue_panel.visible=true
     move_vec=Vector2.ZERO
 
+func _join_micro_event(index: int) -> void:
+    if index<0 or index>=city_micro_events.size():
+        return
+    var event: Dictionary = city_micro_events[index]
+    if not _micro_event_active(index,event):
+        _notify("Das Ereignis ist gerade vorbei.")
+        return
+    var kind := str(event.type)
+    var label := str(event.label)
+    var first_time := not bool(micro_event_seen.get(label,false))
+    var energy_gain := 4.0
+    var flavor := "Du bleibst einen Moment und nimmst die Stimmung der Stadt mit."
+    if kind in ["yoga","run_club"]:
+        energy_gain=14.0
+        flavor="Du machst kurz mit. Bewegung, Rhythmus und ein bisschen Fokus."
+    elif kind=="foodtruck":
+        if credits>=6:
+            credits-=6
+            energy_gain=18.0
+            flavor="Ein schneller Street-Food-Stopp. -6 CR, dafür ordentlich Energie."
+        else:
+            energy_gain=3.0
+            flavor="Du schaust vorbei, aber für einen Snack fehlen gerade die Credits."
+    elif kind in ["busker","boardwalk_music"]:
+        energy_gain=7.0
+        if credits>=3:
+            credits-=3
+            flavor="Du hörst zu und wirfst 3 CR in den Hut."
+        else:
+            flavor="Du bleibst für einen Song. Kostenlos, aber nicht umsonst."
+    elif kind in ["maintenance","repair_crew"]:
+        energy_gain=2.0
+        flavor="Du hilfst kurz bei der Absicherung. Die Crew merkt sich das."
+    elif kind=="street_market":
+        energy_gain=8.0
+        flavor="Ein Rundgang über den Markt bringt neue Eindrücke und lokale Tipps."
+    elif kind=="drone_show":
+        energy_gain=6.0
+        flavor="Die Drohnenformation legt für einen Moment eine zweite Ebene über die Skyline."
+    elif kind=="street_art":
+        energy_gain=5.0
+        flavor="Du beobachtest, wie das Mural Schicht für Schicht entsteht."
+    elif kind=="fountain_show":
+        energy_gain=6.0
+        flavor="Licht, Wasser und Perspektive greifen für ein paar Minuten ineinander."
+    elif kind=="campus_group":
+        energy_gain=5.0
+        flavor="Du hörst bei der offenen Runde zu und bekommst neue Stadtgerüchte mit."
+
+    energy=minf(100.0,energy+energy_gain)
+    if first_time:
+        micro_event_seen[label]=true
+        city_reputation+=1
+        credits+=10
+        _play_sfx("city_event")
+        _show_reward_popup("STADTLEBEN · %s" % label,"%s\n+10 CR · Stadtruf %d/%d" % [flavor,city_reputation,city_micro_events.size()],Color(event.accent))
+    else:
+        _play_sfx("collect")
+        _notify("%s · +%d Energie" % [label,int(energy_gain)])
+    _save_game()
+    _check_milestones()
+
 func _npc_context_line(npc: Dictionary) -> String:
     var id := str(npc.id)
     var trust := int(npc_trust.get(id,0))
@@ -4348,6 +4586,7 @@ func _draw_attraction(p: Dictionary) -> void:
     draw_string(ThemeDB.fallback_font,c+Vector2(-72,52),str(p.name),HORIZONTAL_ALIGNMENT_CENTER,144,14,Color(0.88,0.96,0.95,0.82))
 
 func _draw_pedestrians() -> void:
+    var weather := _weather_state()
     for ped in pedestrians:
         var rd = roads[ped.road]
         var pos := _sample_polyline(rd.points,float(ped.t))
@@ -4363,11 +4602,12 @@ func _draw_pedestrians() -> void:
         var pelvis := _project(pos,10)
         var head := _project(pos,19)
         var phase := float(ped.phase)
-        var bob := sin(phase)*1.4
+        var paused := float(ped.get("pause",0.0))>0.0
+        var bob := 0.0 if paused else sin(phase)*1.4
         head.y += bob
         pelvis.y += bob*0.5
         draw_circle(base+Vector2(2,5),5.5,Color(0,0,0,0.18))
-        var swing := sin(phase)*4.0
+        var swing := 0.0 if paused else sin(phase)*4.0
         var side_dir := normal.normalized()
         draw_line(pelvis+Vector2(0,1),pelvis+Vector2(swing*0.35,9),ped.color,4.0,true)
         draw_line(pelvis+Vector2(-2,7),pelvis+Vector2(-swing,15),Color("#7b8790"),2.3,true)
@@ -4375,6 +4615,7 @@ func _draw_pedestrians() -> void:
         draw_line(pelvis+Vector2(0,2),pelvis+Vector2(swing*0.8,-3),ped.color.darkened(0.12),2.2,true)
         draw_circle(head,4.8,ped.skin)
         draw_arc(head+Vector2(0,-1),4.7,PI,TAU,12,ped.hair,2.4,true)
+
         if ped.role == "runner":
             draw_line(pelvis+Vector2(-4,2),pelvis+Vector2(4,2),Color("#73f3ce"),1.4)
         elif ped.role == "worker":
@@ -4384,6 +4625,18 @@ func _draw_pedestrians() -> void:
         if ped.bag:
             var bag_pos := pelvis + side_dir*5.5 + Vector2(0,2)
             draw_rect(Rect2(bag_pos-Vector2(2.5,2.5),Vector2(5,6)),Color("#5f4f47"),true)
+
+        var personal_seed := int(abs(pos.x*0.13+pos.y*0.07))
+        if paused and personal_seed%4==0:
+            var phone_pos := pelvis+Vector2(5,-5)
+            draw_rect(Rect2(phone_pos-Vector2(2,3),Vector2(4,6)),Color("#a9dcff"),true)
+            draw_line(pelvis+Vector2(1,-1),phone_pos,Color(ped.skin),1.6,true)
+
+        if weather in ["rain","storm"] and personal_seed%3!=0:
+            var canopy := head+Vector2(0,-13)
+            var umb_color := [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
+            draw_arc(canopy,10.5,PI,TAU,18,umb_color,3.4,true)
+            draw_line(canopy+Vector2(0,1),pelvis+Vector2(3,7),Color("#aebac0"),1.4,true)
 
 func _draw_traffic() -> void:
     for c in traffic:
@@ -4638,9 +4891,29 @@ func _draw_car(pos: Vector2, heading: float, cls: String, color: Color, parked: 
         draw_line(center-f*sz.x*.10-side*sz.y*.45,center-f*sz.x*.10+side*sz.y*.45,Color(0.98,0.88,0.34,0.58),2.0)
     elif livery==1:
         draw_line(center-f*sz.x*.28,center+f*sz.x*.30,Color(1,1,1,0.16),1.2)
+    elif livery==2 and cls not in ["sport","hyper"]:
+        draw_rect(Rect2(center-Vector2(5,sz.y*.64),Vector2(10,5)),Color("#f0c94e"),true)
+        draw_line(center-f*sz.x*.18-side*sz.y*.47,center+f*sz.x*.18-side*sz.y*.47,Color("#f0c94e"),2.0,true)
+    elif livery==3:
+        draw_line(center-f*sz.x*.30+side*sz.y*.46,center+f*sz.x*.30+side*sz.y*.46,Color("#62c9ff"),2.3,true)
+    elif livery==4 and cls in ["suv","van","pickup"]:
+        draw_line(center-f*sz.x*.18-side*sz.y*.30,center+f*sz.x*.18-side*sz.y*.30,Color("#20282c"),2.4,true)
+        draw_line(center-f*sz.x*.18+side*sz.y*.30,center+f*sz.x*.18+side*sz.y*.30,Color("#20282c"),2.4,true)
+    elif livery==5 and cls in ["sedan","executive","suv","van"]:
+        var flash_on := int(Time.get_ticks_msec()/260)%2==0 and not parked
+        draw_rect(Rect2(center+f*2.0-Vector2(7,sz.y*.61),Vector2(14,4)),Color("#5a6871"),true)
+        draw_circle(center+f*2.0-side*4.0-Vector2(0,sz.y*.59),2.0,Color("#ff5a6d") if flash_on else Color("#66333d"))
+        draw_circle(center+f*2.0+side*4.0-Vector2(0,sz.y*.59),2.0,Color("#66baff") if flash_on else Color("#334c66"))
+    elif livery==6:
+        draw_line(center-f*sz.x*.22-side*sz.y*.46,center+f*sz.x*.26-side*sz.y*.46,Color("#72f0d2"),1.8,true)
+
     if not parked:
         var tail := center-f*sz.x*.62
         draw_line(tail,tail-f*(30 if cls in ["sport","hyper"] else 22),Color(0.35,0.85,1.0,0.11),4.0,true)
+        if _weather_state() in ["rain","storm"]:
+            var spray_alpha := 0.10 if _weather_state()=="rain" else 0.15
+            draw_line(rear_l,rear_l-f*12.0+side*4.0,Color(0.72,0.86,0.92,spray_alpha),3.0,true)
+            draw_line(rear_r,rear_r-f*12.0-side*4.0,Color(0.72,0.86,0.92,spray_alpha),3.0,true)
 
 func _draw_car_wheels(center: Vector2, f: Vector2, side: Vector2, sz: Vector2) -> void:
     for ax in [0.28,-0.28]:
@@ -5829,6 +6102,8 @@ func _save_game() -> void:
         "npc_flags":npc_flags,
         "npc_trust":npc_trust,
         "npc_contracts_done":npc_contracts_done,
+        "micro_event_seen":micro_event_seen,
+        "city_reputation":city_reputation,
         "active_npc_contract":_serialize_contract(active_npc_contract),
         "transit_trip_count":transit_trip_count,
         "vertical_flags":vertical_flags,
@@ -5894,6 +6169,8 @@ func _load_game(slot: int = selected_save_slot) -> void:
     npc_flags = Dictionary(d.get("npc_flags",{}))
     npc_trust = Dictionary(d.get("npc_trust",{}))
     npc_contracts_done = Dictionary(d.get("npc_contracts_done",{}))
+    micro_event_seen = Dictionary(d.get("micro_event_seen",{}))
+    city_reputation = int(d.get("city_reputation",micro_event_seen.size()))
     active_npc_contract = _deserialize_contract(Dictionary(d.get("active_npc_contract",{})))
     transit_trip_count = int(d.get("transit_trip_count",0))
     vertical_flags = Dictionary(d.get("vertical_flags",{}))
@@ -6390,7 +6667,10 @@ func _check_milestones() -> void:
         ["races_all",race_completed.size()>=race_sites.size() and race_sites.size()>0,240,"City Circuit"],
         ["jobs_10",jobs_done>=10,120,"City Professional"],
         ["jobs_25",jobs_done>=25,260,"City Professional II"],
-        ["tuning_12",_total_upgrade_count()>=12,210,"Tuning Specialist"]
+        ["tuning_12",_total_upgrade_count()>=12,210,"Tuning Specialist"],
+        ["citylife_4",micro_event_seen.size()>=4,55,"City Regular"],
+        ["citylife_8",micro_event_seen.size()>=8,110,"Local Pulse"],
+        ["citylife_all",micro_event_seen.size()>=city_micro_events.size() and city_micro_events.size()>0,190,"Megacity Insider"]
     ]
     for m in milestones:
         var id := str(m[0])
@@ -6896,8 +7176,15 @@ func _draw_city_micro_events() -> void:
                 var q := p+Vector2.from_angle(a)*24.0
                 draw_circle(q,5,Color("#d6ad92"))
                 draw_line(q+Vector2(0,5),q+Vector2(0,16),Color(accent.r,accent.g,accent.b,0.55),3.0,true)
-        if player_pos.distance_to(wp)<520.0:
-            draw_string(ThemeDB.fallback_font,p+Vector2(-90,48),"LIVE · %s" % str(e.label),HORIZONTAL_ALIGNMENT_CENTER,180,12,Color(accent.r,accent.g,accent.b,0.88))
+        var event_distance := player_pos.distance_to(wp)
+        if event_distance<520.0:
+            var seen := bool(micro_event_seen.get(str(e.label),false))
+            var tag := "LIVE · %s" % str(e.label)
+            if not seen:
+                tag="NEU · "+tag
+            draw_string(ThemeDB.fallback_font,p+Vector2(-100,48),tag,HORIZONTAL_ALIGNMENT_CENTER,200,12,Color(accent.r,accent.g,accent.b,0.92))
+        if event_distance<135.0:
+            draw_arc(p,40.0+sin(Time.get_ticks_msec()/230.0)*3.0,0,TAU,32,Color(accent.r,accent.g,accent.b,0.24),2.0,true)
 
 func _draw_ambient_overlay() -> void:
     var size := get_viewport_rect().size
