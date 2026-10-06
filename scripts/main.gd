@@ -1134,7 +1134,9 @@ func _generate_transit() -> void:
             "line":"B%d" % (12 + i * 4),
             "dwell":0.0,
             "at_stop":false,
-            "stop_index":-1
+            "stop_index":-1,
+            "passengers":10+i*3,
+            "boarding_seed":i*31+7
         })
     var tram_routes := [1, 7, 10]
     for i in range(tram_routes.size()):
@@ -1148,7 +1150,9 @@ func _generate_transit() -> void:
             "line":"T%d" % (2 + i),
             "dwell":0.0,
             "at_stop":false,
-            "stop_index":-1
+            "stop_index":-1,
+            "passengers":14+i*4,
+            "boarding_seed":i*37+13
         })
 
 func _build_transit_stops() -> void:
@@ -1206,6 +1210,34 @@ func _build_social_setpieces() -> void:
             "count":3+(i%3)
         })
 
+    # Authored crowd pockets in plazas, heritage markets and nightlife zones.
+    for di in range(districts.size()):
+        var d: Dictionary=districts[di]
+        var style:=str(d.style)
+        if style in ["center","heritage","neon","expo","harbor","campus"]:
+            social_setpieces.append({
+                "kind":"plaza_crowd" if style not in ["heritage","harbor"] else "market_crowd",
+                "pos":Vector2(d.rect.get_center())+Vector2((di%3-1)*140.0,((di*2)%3-1)*120.0),
+                "seed":di*47+17,
+                "count":5+(di%4)
+            })
+
+    # Rain shelters near selected cafés and transit stops.
+    var shelter_count:=0
+    for si in range(social_setpieces.size()):
+        var base: Dictionary=social_setpieces[si]
+        if str(base.kind) not in ["transit_wait","cafe_cluster"]:
+            continue
+        social_setpieces.append({
+            "kind":"rain_shelter",
+            "pos":Vector2(base.pos)+Vector2(22,-18),
+            "seed":int(base.seed)+503,
+            "count":3+(shelter_count%3)
+        })
+        shelter_count+=1
+        if shelter_count>=10:
+            break
+
     var incident_indices: Array=[5,18,31,44,57,70]
     for ii in range(incident_indices.size()):
         if junctions.is_empty():
@@ -1252,7 +1284,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.14"
+    title.text = "PARALLAX HUNT · NATIVE FEATURE ALPHA 1.15"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2972,6 +3004,28 @@ func _nearest_road_t_to_point(road_index: int, target: Vector2) -> float:
             best_t=tt
     return best_t
 
+func _response_priority_pressure(index: int, car: Dictionary) -> float:
+    if str(car.get("archetype",""))=="response":
+        return 0.0
+    var road_index:=int(car.road)
+    var car_t:=float(car.t)
+    var reverse:=bool(car.reverse)
+    for k in range(traffic.size()):
+        if k==index:
+            continue
+        var other: Dictionary=traffic[k]
+        if str(other.get("archetype",""))!="response":
+            continue
+        if int(other.road)!=road_index or bool(other.reverse)!=reverse:
+            continue
+        var direction: float=-1.0 if reverse else 1.0
+        var gap: float=(car_t-float(other.t))*direction
+        if gap<0.0:
+            gap+=1.0
+        if gap>0.0 and gap<0.075:
+            return 1.0-clampf(gap/0.075,0.0,1.0)
+    return 0.0
+
 func _update_traffic(delta: float) -> void:
     for i in range(traffic.size()):
         var c: Dictionary = traffic[i]
@@ -2981,6 +3035,13 @@ func _update_traffic(delta: float) -> void:
             c["indicator"]=0
         var direction: float = -1.0 if bool(c.reverse) else 1.0
         var target_speed: float = float(c.cruise)
+        var response_priority:=str(c.get("archetype",""))=="response"
+        if response_priority:
+            target_speed*=1.22
+        var response_pressure:=_response_priority_pressure(i,c)
+        c["response_yield"]=response_pressure>0.0
+        if response_pressure>0.0:
+            target_speed*=lerpf(1.0,0.18,response_pressure)
 
         # Car-following on the active lane.
         var best_gap: float = 999.0
@@ -3042,7 +3103,10 @@ func _update_traffic(delta: float) -> void:
             if signed_gap<0.0:
                 signed_gap+=1.0
             if signed_gap<0.020 and not _junction_green(j,int(c.road)):
-                target_speed=0.0
+                if response_priority:
+                    target_speed*=0.72
+                else:
+                    target_speed=0.0
 
         var speed_now: float = float(c.speed)
         speed_now=move_toward(speed_now,target_speed,delta*0.08)
@@ -3376,12 +3440,27 @@ func _draw_social_setpieces() -> void:
         var accent: Color=Color(_district_at(pos).get("accent",Color("#9ad5ff")))
         if kind=="transit_wait":
             var arriving:=_transit_stop_has_arrival(int(s.stop_index))
+            var vi: int=int(transit_stops[int(s.stop_index)].vehicle)
+            var tv: Dictionary=transit_vehicles[vi] if vi>=0 and vi<transit_vehicles.size() else {}
             for k in range(count):
                 var off:=Vector2(float(k-(count-1)*0.5)*18.0,22.0+float(k%2)*5.0)
                 _draw_social_person(pos+off,accent,"wave" if arriving and k==0 else ("phone" if k==count-1 else "idle"),seed+k)
-            if arriving:
+            if arriving and not tv.is_empty():
+                var rd=roads[int(tv.road)]
+                var vehicle_pos:=_sample_polyline(rd.points,float(tv.t))
+                var phase:=clampf(float(tv.get("dwell",0.0))/3.8,0.0,1.0)
+                var boarding_count:=mini(2,int(tv.get("board_count",1)))
+                var exit_count:=mini(2,int(tv.get("exit_count",1)))
+                for k in range(boarding_count):
+                    var from:=pos+Vector2(float(k)*14.0-8.0,18.0)
+                    var to:=vehicle_pos+Vector2(float(k)*8.0,8.0)
+                    _draw_social_person(from.lerp(to,1.0-phase),accent,"walk",seed+70+k)
+                for k in range(exit_count):
+                    var from:=vehicle_pos+Vector2(float(k)*8.0,8.0)
+                    var to:=pos+Vector2(float(k)*15.0+20.0,26.0)
+                    _draw_social_person(from.lerp(to,phase),accent,"walk",seed+90+k)
                 var p:=_project(pos,5)
-                draw_string(ThemeDB.fallback_font,p+Vector2(-55,-42),"ANKUNFT",HORIZONTAL_ALIGNMENT_CENTER,110,10,Color("#72d7e6"))
+                draw_string(ThemeDB.fallback_font,p+Vector2(-65,-42),"EIN-/AUSSTIEG",HORIZONTAL_ALIGNMENT_CENTER,130,10,Color("#72d7e6"))
         elif kind=="cafe_cluster":
             var center:=_project(pos,4)
             draw_circle(center,11,Color("#695646"))
@@ -3394,6 +3473,30 @@ func _draw_social_setpieces() -> void:
             for k in range(count):
                 var off:=Vector2(float(k)*15.0-float(count)*7.5,0)
                 _draw_social_person(pos+off,accent,"phone" if k%3==0 else "idle",seed+k)
+        elif kind in ["plaza_crowd","market_crowd"]:
+            for k in range(count):
+                var a:=float(k)*TAU/float(maxi(1,count))
+                var radius:=34.0+float(k%3)*12.0
+                var off:=Vector2.from_angle(a)*radius
+                var state:="chat" if k%3==0 else ("phone" if k%4==0 else "idle")
+                _draw_social_person(pos+off,accent,state,seed+k)
+            var cp:=_project(pos,5)
+            if kind=="market_crowd":
+                for k in range(3):
+                    var q:=cp+Vector2(float(k-1)*26.0,20)
+                    draw_rect(Rect2(q-Vector2(11,5),Vector2(22,10)),Color("#6b4f3d"),true)
+                    draw_colored_polygon(PackedVector2Array([q+Vector2(-14,-5),q+Vector2(14,-5),q+Vector2(10,-14),q+Vector2(-10,-14)]),Color(accent.r,accent.g,accent.b,0.62))
+        elif kind=="rain_shelter":
+            if _weather_state() not in ["rain","storm"]:
+                continue
+            var sp:=_project(pos,7)
+            draw_line(sp+Vector2(-28,8),sp+Vector2(-28,-20),Color("#596970"),2.5,true)
+            draw_line(sp+Vector2(28,8),sp+Vector2(28,-20),Color("#596970"),2.5,true)
+            draw_line(sp+Vector2(-32,-20),sp+Vector2(32,-20),Color("#7c8d94"),4.0,true)
+            draw_colored_polygon(PackedVector2Array([sp+Vector2(-34,-21),sp+Vector2(34,-21),sp+Vector2(26,-30),sp+Vector2(-26,-30)]),Color(accent.r,accent.g,accent.b,0.36))
+            for k in range(count):
+                var off:=Vector2(float(k-(count-1)*0.5)*16.0,8.0)
+                _draw_social_person(pos+off,accent,"phone" if k%2==0 else "idle",seed+k)
 
 func _draw_response_incidents() -> void:
     for i in range(response_incidents.size()):
@@ -3451,9 +3554,15 @@ func _update_transit(delta: float) -> void:
                 crossed = (old_t>=st and new_t<=st) or (new_t>old_t and (st<=old_t or st>=new_t))
             if crossed:
                 tveh["t"]=st
-                tveh["dwell"]=3.2
+                tveh["dwell"]=3.8
                 tveh["at_stop"]=true
                 tveh["stop_index"]=transit_stops.find(stop)
+                var stop_seed: int=int(tveh.get("boarding_seed",7))+int(tveh.stop_index)*13
+                var exiting: int=1+absi(stop_seed)%3
+                var boarding: int=1+absi(stop_seed/3)%4
+                tveh["exit_count"]=mini(exiting,int(tveh.get("passengers",0)))
+                tveh["board_count"]=boarding
+                tveh["passengers"]=maxi(0,int(tveh.get("passengers",0))-int(tveh.exit_count)+boarding)
                 break
         transit_vehicles[i]=tveh
     if transit_riding>=0 and transit_riding<transit_vehicles.size():
@@ -4461,6 +4570,13 @@ func _draw_storefronts() -> void:
         elif st.kind in ["restaurant","cafe"]:
             draw_circle(c+Vector2(-10,23),5,Color("#5f4b3e"))
             draw_circle(c+Vector2(10,23),5,Color("#5f4b3e"))
+            var awn_wave:=sin(float(Time.get_ticks_msec())/520.0+float(int(st.pos.x+st.pos.y)%13))*3.0
+            var awn:=PackedVector2Array([c+Vector2(-28,13),c+Vector2(28,13),c+Vector2(23+awn_wave,19),c+Vector2(-23+awn_wave,19)])
+            draw_colored_polygon(awn,Color(accent.r,accent.g,accent.b,0.42))
+            if st.kind=="restaurant":
+                for steam_i in range(2):
+                    var sy:=fposmod(float(Time.get_ticks_msec())*0.018+float(steam_i)*14.0,28.0)
+                    draw_arc(c+Vector2(18+steam_i*5,10-sy),4.0+sy*0.05,0.2,2.7,10,Color(0.86,0.91,0.92,0.18),1.4,true)
 
 func _draw_vegetation_props() -> void:
     for v in vegetation_props:
@@ -5125,7 +5241,8 @@ func _draw_world_prop_boardwalk(p: Dictionary) -> void:
 func _draw_world_prop_market(p: Dictionary) -> void:
     var c := _project(Vector2(p.pos),8)
     draw_rect(Rect2(c-Vector2(24,8),Vector2(48,24)),Color("#5d4436"),true)
-    var awn := PackedVector2Array([c+Vector2(-30,-8),c+Vector2(30,-8),c+Vector2(22,-22),c+Vector2(-22,-22)])
+    var sway:=sin(float(Time.get_ticks_msec())/480.0+float(int(Vector2(p.pos).x)%17))*3.0
+    var awn := PackedVector2Array([c+Vector2(-30,-8),c+Vector2(30,-8),c+Vector2(22+sway,-22),c+Vector2(-22+sway,-22)])
     draw_colored_polygon(awn,Color(p.tint.r,p.tint.g,p.tint.b,0.75))
     for x in [-14,0,14]:
         draw_circle(c+Vector2(x,8),3,Color("#ffd77a"))
@@ -5149,7 +5266,8 @@ func _draw_world_prop_gantry(p: Dictionary) -> void:
 func _draw_world_prop_neon(p: Dictionary) -> void:
     var c := _project(Vector2(p.pos),12)
     draw_line(c+Vector2(0,24),c+Vector2(0,-38),Color("#454b55"),4.0)
-    draw_arc(c+Vector2(0,-38),15,0,TAU,20,Color(p.tint.r,p.tint.g,p.tint.b,0.88),3.0,true)
+    var neon_pulse:=0.72+0.28*sin(float(Time.get_ticks_msec())/300.0+float(int(Vector2(p.pos).y)%11))
+    draw_arc(c+Vector2(0,-38),15,0,TAU,20,Color(p.tint.r,p.tint.g,p.tint.b,0.62+0.26*neon_pulse),3.0,true)
     draw_circle(c+Vector2(0,-38),28,Color(p.tint.r,p.tint.g,p.tint.b,0.06))
 
 func _draw_world_prop_garden_arch(p: Dictionary) -> void:
@@ -5354,6 +5472,11 @@ func _draw_traffic() -> void:
             var side_vec:=Vector2(-tangent.y,tangent.x).normalized()
             draw_circle(hazard_center+side_vec*8.0,2.8,Color("#ffb343"))
             draw_circle(hazard_center-side_vec*8.0,2.8,Color("#ffb343"))
+        if bool(c.get("response_yield",false)) and int(Time.get_ticks_msec()/260)%2==0:
+            var ry_center:=_project(pos,8)
+            var ry_side:=Vector2(-tangent.y,tangent.x).normalized()
+            draw_circle(ry_center+ry_side*8.0,2.8,Color("#ffb343"))
+            draw_circle(ry_center-ry_side*8.0,2.8,Color("#ffb343"))
         var ind: int = int(c.get("indicator",0))
         if ind!=0 and int(Time.get_ticks_msec()/320)%2==0:
             var fwd := tangent.normalized()
@@ -5451,6 +5574,12 @@ func _draw_transit_vehicle(pos: Vector2, heading: float, tv: Dictionary) -> void
     else:
         draw_line(center+f*9-side*width*0.48,center+f*9+side*width*0.48,Color(1,1,1,0.16),2.0)
         draw_rect(Rect2(center+f*22-side*width*0.47-Vector2(4,6),Vector2(8,12)),Color(0.12,0.15,0.18,0.55),true)
+    if bool(tv.get("at_stop",false)):
+        var door_phase:=0.5+0.5*sin(float(Time.get_ticks_msec())/260.0)
+        var door_center:=center-f*length*0.08+side*width*0.50
+        draw_rect(Rect2(door_center-Vector2(4+door_phase*3.0,7),Vector2(8+door_phase*6.0,14)),Color(0.08,0.12,0.15,0.82),true)
+        draw_line(door_center+Vector2(-5-door_phase*3.0,-6),door_center+Vector2(-5-door_phase*3.0,6),Color("#a8d8ec"),1.2,true)
+        draw_line(door_center+Vector2(5+door_phase*3.0,-6),door_center+Vector2(5+door_phase*3.0,6),Color("#a8d8ec"),1.2,true)
     draw_string(ThemeDB.fallback_font,center-f*2+Vector2(-18,-21),str(tv.line),HORIZONTAL_ALIGNMENT_CENTER,36,11,Color.WHITE)
 
 func _draw_parked_cars() -> void:
@@ -7978,6 +8107,13 @@ func _draw_city_micro_events() -> void:
                 var q := p+Vector2.from_angle(a)*24.0
                 draw_circle(q,5,Color("#d6ad92"))
                 draw_line(q+Vector2(0,5),q+Vector2(0,16),Color(accent.r,accent.g,accent.b,0.55),3.0,true)
+        if kind in ["busker","boardwalk_music","street_art","drone_show","fountain_show"] and graphics_quality>=1:
+            var spectator_count:=4 if graphics_quality==1 else 7
+            for sk in range(spectator_count):
+                var angle:=float(sk)*TAU/float(spectator_count)
+                var radius:=58.0+float(sk%2)*12.0
+                var spectator_pos:=wp+Vector2.from_angle(angle)*radius
+                _draw_social_person(spectator_pos,accent,"phone" if sk%3==0 else "idle",i*101+sk)
         var event_distance := player_pos.distance_to(wp)
         if event_distance<520.0:
             var seen := bool(micro_event_seen.get(str(e.label),false))
