@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="260" height="360" viewBox="0 0 260 360">
+<defs><linearGradient id="t" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#4e3426"/><stop offset=".48" stop-color="#9a6843"/><stop offset="1" stop-color="#4b3023"/></linearGradient></defs>
+<ellipse cx="130" cy="337" rx="52" ry="11" fill="#081014" opacity=".34"/>
+<path d="M126 322C117 264 122 210 132 139" fill="none" stroke="#241712" stroke-width="25" stroke-linecap="round"/>
+<path d="M126 322C117 264 122 210 132 139" fill="none" stroke="url(#t)" stroke-width="18" stroke-linecap="round"/>
+<g stroke="#193c25" stroke-width="13" stroke-linecap="round" fill="none">
+ <path d="M132 140C84 93 41 89 12 102"/><path d="M132 140C78 126 42 137 18 161"/>
+ <path d="M132 140C95 70 87 38 96 13"/><path d="M132 140C145 68 172 31 205 17"/>
+ <path d="M132 140C184 86 218 80 250 92"/><path d="M132 140C185 126 218 138 247 165"/>
+ <path d="M132 140C153 90 151 49 142 15"/>
+</g>
+<g stroke="#49a85d" stroke-width="7" stroke-linecap="round" fill="none" opacity=".95">
+ <path d="M132 140C84 93 41 89 12 102"/><path d="M132 140C78 126 42 137 18 161"/>
+ <path d="M132 140C95 70 87 38 96 13"/><path d="M132 140C145 68 172 31 205 17"/>
+ <path d="M132 140C184 86 218 80 250 92"/><path d="M132 140C185 126 218 138 247 165"/>
+ <path d="M132 140C153 90 151 49 142 15"/>
+</g>
+<circle cx="129" cy="143" r="22" fill="#335d38" stroke="#17251a" stroke-width="6"/>
+</svg>
