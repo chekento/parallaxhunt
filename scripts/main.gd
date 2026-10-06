@@ -7593,6 +7593,9 @@ func _draw_map_overlay() -> void:
         if _micro_event_active(ei,event):
             var event_col: Color=Color(event.accent)
             _draw_map_marker(_map_point(Vector2(event.pos),map_rect),event_col,"●")
+    for ii in range(response_incidents.size()):
+        if _incident_active(ii):
+            _draw_map_marker(_map_point(Vector2(response_incidents[ii].pos),map_rect),Color("#ffb65a"),"⚠")
     for ts in transit_stops:
         _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
     if not active_job.is_empty():
@@ -7622,6 +7625,7 @@ func _draw_map_overlay() -> void:
         ["↓","Sublevel / Untergrundknoten",Color("#ffb66f")],
         ["J","Nebenjob-Board",Color("#8de9aa")],
         ["●","Aktives Live-Event",Color("#ffb66f")],
+        ["⚠","Aktiver Service-/Response-Einsatz",Color("#ffb65a")],
         ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
         ["◆","Persönlicher NPC-Auftrag",Color("#ff9fe8")],
         ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
@@ -7635,7 +7639,11 @@ func _draw_map_overlay() -> void:
     for ei in range(city_micro_events.size()):
         if _micro_event_active(ei,city_micro_events[ei]):
             active_events+=1
-    draw_string(ThemeDB.fallback_font,Vector2(70,1315),"Stadtteile: %d · Landmarken: %d · POIs: %d · Live jetzt: %d" % [districts.size(),landmarks.size(),storefronts.size(),active_events],HORIZONTAL_ALIGNMENT_LEFT,900,17,Color("#c7d6de"))
+    var active_incidents:=0
+    for ii in range(response_incidents.size()):
+        if _incident_active(ii):
+            active_incidents+=1
+    draw_string(ThemeDB.fallback_font,Vector2(70,1315),"Stadtteile: %d · Landmarken: %d · POIs: %d · Live: %d · Einsätze: %d" % [districts.size(),landmarks.size(),storefronts.size(),active_events,active_incidents],HORIZONTAL_ALIGNMENT_LEFT,900,17,Color("#c7d6de"))
     draw_string(ThemeDB.fallback_font,Vector2(70,1360),"MAP erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
 
 func _draw_map_marker(p: Vector2, color: Color, glyph: String) -> void:
