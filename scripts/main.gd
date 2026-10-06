@@ -4634,7 +4634,7 @@ func _draw_pedestrians() -> void:
 
         if weather in ["rain","storm"] and personal_seed%3!=0:
             var canopy := head+Vector2(0,-13)
-            var umb_color := [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
+            var umb_color: Color = [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
             draw_arc(canopy,10.5,PI,TAU,18,umb_color,3.4,true)
             draw_line(canopy+Vector2(0,1),pelvis+Vector2(3,7),Color("#aebac0"),1.4,true)
 
