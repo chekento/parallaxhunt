@@ -1553,6 +1553,25 @@ func _build_photo_3d_system() -> void:
     photo_crosshair.mouse_filter=Control.MOUSE_FILTER_IGNORE
     photo_ui_layer.add_child(photo_crosshair)
 
+func _photo_apply_lighting() -> void:
+    if photo_environment==null or photo_sun==null:
+        return
+    var hour: float = fposmod(world_clock,24.0)
+    var daylight: float = clampf(sin((hour-6.0)/12.0*PI),0.0,1.0)
+    var twilight: float = clampf(1.0-abs(hour-18.5)/2.5,0.0,1.0)
+    if hour<6.0:
+        twilight=maxf(twilight,clampf(1.0-abs(hour-5.5)/2.0,0.0,1.0))
+    var day_sky := Color("#9cc5d8")
+    var dusk_sky := Color("#7d7892")
+    var night_sky := Color("#101927")
+    var sky: Color = night_sky.lerp(dusk_sky,twilight*0.72).lerp(day_sky,daylight)
+    photo_environment.background_color=sky
+    photo_environment.ambient_light_color=Color("#7f91aa").lerp(Color("#d8e7ec"),daylight)
+    photo_environment.ambient_light_energy=0.34+daylight*0.46+twilight*0.10
+    photo_sun.light_energy=0.10+daylight*1.10
+    photo_sun.light_color=Color("#ffb987").lerp(Color("#fff6db"),daylight)
+    photo_sun.rotation_degrees=Vector3(-18.0-daylight*42.0,-40.0+hour*5.0,0.0)
+
 func _photo_clear_3d_scene() -> void:
     if photo_world_root==null:
         return
@@ -5529,7 +5548,6 @@ func _save_game() -> void:
         "photos":photo_points.map(func(x): return bool(x.taken)),
         "photo_found":photo_found,
         "photo_scores":photo_scores,
-        "photo_scores":photo_scores,
         "scan_collect_count":scan_collect_count,
         "scan_points":scan_points.map(func(x): return bool(x.taken)),
         "visited_districts":visited_districts,
@@ -5592,7 +5610,6 @@ func _load_game(slot: int = selected_save_slot) -> void:
         for i in range(mini(scan_taken.size(),scan_points.size())):
             scan_points[i]["taken"]=bool(scan_taken[i])
     photo_found = Dictionary(d.get("photo_found",{}))
-    photo_scores = Dictionary(d.get("photo_scores",{}))
     photo_scores = Dictionary(d.get("photo_scores",{}))
     var photo_taken = d.get("photos",[])
     if photo_taken is Array:
