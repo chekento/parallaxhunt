@@ -1,6 +1,18 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.9.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.10.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.10.0 — World Alive
+
+- dynamic clear, mist, rain and storm states tied into the world clock
+- wet-road sheen, rain streaks, mist layers and restrained lightning feedback
+- weather now appears in the HUD and influences NPC city advice
+- 12 rotating district micro-events including buskers, food trucks, yoga sessions, drone shows, street markets, live murals, repair crews, run clubs and campus meetups
+- nearby active micro-events receive a LIVE label without turning every ambient beat into a quest marker
+- NPC greetings now react to trust, time of day, current district and weather
+- player vehicle headlights activate at night and in poor visibility
+- braking brightens tail lights and aggressive high-speed steering leaves short skid marks
+- visual systems remain graphics-quality aware for mobile performance
 
 ## 1.9.0 — World Polish & City Life
 
