@@ -1,6 +1,26 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.17.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.18.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.18.0 — Cinematic Traffic & Visual Polish
+
+- AI traffic can now very rarely produce real vehicle-to-vehicle collisions when two moving cars actually enter a spatial conflict
+- accident probability stays low in clear weather and rises modestly in rain, mist and storms
+- crashed cars become persistent temporary road obstacles with hazards, visible damage, debris, skid traces and a timed cleanup cycle
+- dynamic accident scenes are routed into the existing emergency target system instead of using a separate fake-event layer
+- ambulances and city-response vehicles can be dispatched to those newly created traffic accidents alongside the existing service incidents
+- traffic slows around dynamic crash sites and uses hazards while passing
+- active AI crashes appear on the city map with a dedicated accident marker
+- moving traffic now uses broader headlight-beam rendering at night and in bad weather, not only the player car
+- wet roads receive headlight, brake-light and emergency-light reflections
+- vehicle bodies gain stronger shoulder/hood highlights plus improved glass reflections for clearer silhouettes
+- ambulance and response vehicles cast subtle pulsing red/blue light spill
+- roads gain wet puddles, reflective studs and stronger rain/storm sheen
+- urban/glass/neon districts receive more night-light pools and wet-ground color reflections
+- industrial/harbor surfaces gain additional hazard markings and visual texture
+- glass, center, neon, terminal and expo façades gain wet sheen and stronger low-level illuminated signage
+- accident scenes gain smoke, sparks, scuff marks, debris and nearby emergency-light spill while remaining non-gratuitous
+- the visual pass remains graphics-quality-aware so the Android target is still protected
 
 ## 1.17.0 — Emergency City & Connected Transit
 
