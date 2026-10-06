@@ -203,3 +203,34 @@
 - traffic density / crowd density controls in settings
 - performance telemetry for lower-end devices and dense weather/event combinations
 - stronger Photo Hunt anchoring to live world props and incident scenes
+
+
+## Alpha 1.17 — emergency city & connected transit
+- Avoidable but real traffic collisions with the on-foot player
+- AI pedestrian braking plus collision detection when a vehicle reaches the player at meaningful speed
+- Short rescue / ambulance / hospital transition after an accident
+- Persistent accident count and respawn outside Parallax Stadtklinikum
+- New Bioquartier hospital landmark with bespoke 2D / 3D geometry and ambulance bay
+- Fully explorable hospital interior with triage, waiting, treatment and observation areas
+- Dedicated ambulance fleet alongside city-response vehicles
+- Multi-vehicle dispatch to concrete active incident positions
+- Ambulance return-to-hospital behavior after incident service
+- Graph-routed emergency movement and existing right-of-way behavior
+- Real bus/tram transfer hubs generated from shared road junctions
+- Transfer-window tracking, transfer count, map markers and HUD feedback
+- Cross-road shelter routing for free pedestrians in rain and storms
+- Animated courier delivery/loading cycles at shops, cafés and restaurants
+- Dock loading, pallets, forklifts and workers in harbor / industrial / rail areas
+- Additional authored district-signature street scenes across all district styles
+
+### Next quality targets
+- collision-aware incident creation for AI traffic and non-player pedestrians without making accidents common
+- more nuanced injury / recovery presentation while keeping the game non-gratuitous
+- true hospital-to-incident ambulance arrival visualization before the player cutscene transition
+- transit destination planning and transfer suggestions based on a chosen map destination
+- route-aware passenger transfers between lines rather than transfer-count tracking only
+- delivery schedules tied to shop opening hours and district logistics demand
+- interactive loading jobs for the player and NPC callbacks after completed deliveries
+- additional hospital / emergency missions and medical-response city events
+- district-specific soundscapes for loading docks, hospitals, transfer hubs and nightlife
+- lower-end Android profiling for transfer hubs, emergency dispatch and dense loading scenes
