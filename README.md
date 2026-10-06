@@ -1,6 +1,25 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.19.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.20.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.20.0 — Modular City Vertical Slice
+
+- first real high-detail modular visual slice added directly around the normal downtown start area
+- existing SVG styleboards are no longer only documentation: new asphalt, sidewalk, palm, neon-sign and rooftop-detail SVG modules are loaded as live Godot textures
+- streets inside the slice receive repeated cinematic asphalt modules instead of relying exclusively on flat procedural fills
+- sidewalks inside the slice receive modular slab textures and brighter curb-edge separation
+- a palm-lined boulevard layer adds denser warm-climate street identity inspired by the supplied reference direction without copying the source art
+- selected roofs now receive actual mechanical rooftop modules with vents, antennae and equipment blocks
+- center / glass / culture façades receive live neon-sign modules and localized glow pools
+- storefronts inside the slice scale more aggressively at close pedestrian zoom and receive stronger illuminated lower-floor structure
+- buildings in the slice gain heavier dark comic outlines, refined roof insets and stronger silhouette separation
+- existing procedural palms were upgraded with a denser comic silhouette even outside the slice
+- the visual slice uses the existing 2.5D PMDD projection and close pedestrian camera from 1.19 instead of requiring an engine migration
+- Android export, runtime smoke and 3D Photo Hunt smoke all pass with the new SVG preload / texture rendering path
+
+### Engine decision after the slice
+
+Godot remains the active engine. The limiting factor was the former procedural-art pipeline, not Godot itself. The 1.20 slice proves that the project can mix the existing simulation / PMDD code with real modular visual assets on Android. The next visual work should therefore scale this modular 2.5D pipeline across the remaining districts rather than restart the project in another engine.
 
 ## 1.19.0 — Visual Rebuild & Headtracking Fix
 
