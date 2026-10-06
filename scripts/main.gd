@@ -4050,7 +4050,7 @@ func _draw_district_signature_scene(s: Dictionary) -> void:
             draw_line(c+Vector2(-24,-28+float(k)*14),c+Vector2(24,-28+float(k)*14),Color(accent.r,accent.g,accent.b,0.35+0.10*sin(t*2.0+float(k))),2.0,true)
     else:
         draw_arc(c,32,0,TAU,24,accent,3.0,true)
-    draw_string(ThemeDB.fallback_font,c+Vector2(-80,58),district.upper(),HORIZONTAL_ALIGNMENT_CENTER,160,10,Color(accent.r,accent.g,accent.b,0.78))
+    draw_string(ThemeDB.fallback_font,c+Vector2(-80,58),district.to_upper(),HORIZONTAL_ALIGNMENT_CENTER,160,10,Color(accent.r,accent.g,accent.b,0.78))
 
 func _draw_social_setpieces() -> void:
     for i in range(social_setpieces.size()):
