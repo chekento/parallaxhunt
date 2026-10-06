@@ -1,6 +1,38 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.8.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+**Parallax Hunt 1.9.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype.
+
+## 1.9.0 — World Polish & City Life
+
+### Visual world polish
+- eight procedural façade families: windows, striped, balconies, mixed, grid, arches, structural ribs and living façades
+- seven roof variants including antenna roofs and usable-looking terrace silhouettes
+- façade windows now vary between cool glass and warm occupied interiors according to the day/night cycle
+- richer road surfaces with manholes, drainage grates, repaired asphalt patches and roadside reflectors
+- 54 additional street-life props distributed along the city: planters, utility cabinets, café tables, construction cones and hydrants
+- improved dawn/dusk grading, scan-wave feedback, subtle high-speed streaks and stronger screen-edge ambience
+
+### 3D Photo Hunt polish
+- nearby procedural buildings now receive real 3D façade-window layers instead of plain boxes
+- transparent glass/light materials are supported in the native photo scene
+- living-façade, rib and rooftop antenna details carry into the fixed 3D Photo Challenges
+- photo-scene cars now have wheels, headlights, tail lights and class-specific details such as spoilers and pickup beds
+- detail density respects the selected graphics-quality level
+
+### Gameplay & UX
+- city job board expanded from five to seven job families
+- new Street-Signal Survey jobs tie the SCAN collection system into repeatable city work
+- new Timed Mobility Audit jobs integrate the race/time-trial system into the job economy
+- robust fallback jobs prevent exhausted finite activities from creating impossible contracts
+- active city jobs now always receive objective-compass priority
+- HUD shows active-job distance plus the live in-game clock
+- job acceptance now receives a dedicated reward-style presentation
+
+### Long-term progression
+- mission progression expanded to 43 chapters
+- new endgame goals: Signal Sweep, Photo Virtuoso, City Circuit, Security Master, District Complete, Tuning Specialist and City Professional II
+- total Photo Hunt framing score is now a progression metric
+- new mastery milestones reward full-district exploration, all hacking terminals, all races, 25 jobs, 4500 photo points and deeper tuning investment
 
 ## 1.8.0 — Fixed 3D Photo Hunt
 
