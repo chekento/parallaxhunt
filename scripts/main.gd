@@ -5163,7 +5163,7 @@ func _draw_vertical_slice_architecture() -> void:
     # Rooftop mechanical modules and stronger comic roof clutter.
     var roof_index:=0
     for b in buildings:
-        var center_world:=b.rect.get_center()
+        var center_world: Vector2=Rect2(b.rect).get_center()
         if not _in_visual_slice(center_world,120.0):
             continue
         if roof_index%quality_step==0 and (int(b.seed)&3)!=0:
@@ -5949,7 +5949,7 @@ func _draw_trees() -> void:
             var crown := c+Vector2(0,-21)
             for a in range(0,360,45):
                 var dir := Vector2.from_angle(deg_to_rad(float(a)))
-                var tip:=crown+dir*t.r*1.45
+                var tip: Vector2=crown+dir*float(t.r)*1.45
                 draw_line(crown,tip,Color("#15391f"),6.0,true)
                 draw_line(crown,tip,t.tint.lightened(0.06),3.6,true)
             draw_circle(crown,t.r*0.28,Color("#2d6b3a"))
