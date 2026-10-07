@@ -1,6 +1,18 @@
 # Native Roadmap
 
-## 1.21.0 — current delivered build
+## 1.22.0 — current delivered build
+
+- Authored four-direction character art for the player, pedestrians and contacts.
+- Nearest remaining collection targets, mission progress bar, next-action text and goal/edge markers.
+- Geometric circuit tiles, powered-state feedback, one-tile hints and replay session protection.
+- Stone paving, procedural dusk sky, local street lights, palms, cafe furniture, benches and roof variation in native Photo Hunt.
+- Proximity-ordered building detail, street-height photo camera and facade/roof/road subject anchors.
+- Persistent photo hint/miss feedback and protection against stale photo completion timers.
+- Experience smoke checks accompany the existing city, save/reward and all-25-site photo checks.
+
+Next priorities are physical-device camera and frame-time measurements, additional character walking frames, district-specific facade artwork and mission route refinement. Native 3D remains the stationary photo scene; street exploration uses the 2.5D renderer.
+
+## 1.21.0 — previous delivered build
 
 - Expanded authored street blocks, facade/asphalt/vehicle atlases and sidewalk ensembles across the city.
 - Close pedestrian camera with stable depth, consistent object scaling and wall sliding.

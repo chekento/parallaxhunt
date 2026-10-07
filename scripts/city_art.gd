@@ -3,6 +3,46 @@ extends RefCounted
 const ASPHALT = preload("res://assets/visual/materials/asphalt_ink.png")
 const FACADES = preload("res://assets/visual/materials/facades_ink.png")
 const VEHICLES = preload("res://assets/visual/materials/vehicles_ink.png")
+const CHARACTERS = preload("res://assets/visual/materials/characters_ink.png")
+
+static func character_direction(heading: float) -> int:
+    var forward=Vector2.from_angle(heading)
+    if absf(forward.x)>absf(forward.y):
+        return 3 if forward.x>0 else 1
+    return 0 if forward.y>0 else 2
+
+static func draw_character(g: Node2D, pos: Vector2, heading: float, outfit: int, phase: float, state: String, tint: Color = Color.WHITE) -> void:
+    var scale: float=g.world_zoom
+    var foot: Vector2=g._project(pos)
+    var moving: bool=state in ["walk","cross","run"]
+    var bob: float=absf(sin(phase))*0.9*scale if moving else 0.0
+    var lean: float=sin(phase)*0.018 if moving else 0.0
+    var cell: Vector2=CHARACTERS.get_size()/4.0
+    var source:=Rect2(Vector2(character_direction(heading),clampi(outfit,0,3))*cell,cell)
+    var size:=Vector2(32.0,38.0)*scale
+    var anchor:=foot+Vector2(0,-bob)
+    g._draw_poly_ellipse(foot+Vector2(1,2)*scale,Vector2(5.4,2.8)*scale,0,Color(0,0,0,0.26))
+    g.draw_set_transform(anchor,lean,Vector2.ONE)
+    # Each direction uses the same foot pivot; no sprite rotates flat on the road.
+    g.draw_texture_rect_region(CHARACTERS,Rect2(-Vector2(size.x*0.5,size.y*0.95),size),source,tint)
+    g.draw_set_transform(Vector2.ZERO,0,Vector2.ONE)
+    var head: Vector2=anchor-Vector2(0,33)*scale
+    if state=="chat":
+        g.draw_circle(head+Vector2(8,-3)*scale,4.0*scale,Color("#e9f0e8"))
+        for dot in [-1,0,1]:
+            g.draw_circle(head+Vector2(8+dot*2,-3)*scale,0.5*scale,Color("#35434a"))
+    elif state=="alert":
+        g.draw_string(ThemeDB.fallback_font,head+Vector2(-3,-3)*scale,"!",HORIZONTAL_ALIGNMENT_CENTER,8*scale,int(10*scale),Color("#ffd275"))
+    elif state=="phone":
+        g.draw_rect(Rect2(anchor-Vector2(-5,19)*scale,Vector2(2,3.4)*scale),Color("#a5eff3"))
+    if g._weather_state() in ["rain","storm"] and outfit!=2 and state!="sit":
+        var canopy=head+Vector2(0,-6)*scale
+        g.draw_line(canopy,anchor-Vector2(2,12)*scale,Color("#9eaaa9"),0.8*scale,true)
+        g.draw_circle(canopy,8.5*scale,Color("#153143"))
+        for wedge in range(6):
+            var a=float(wedge)*TAU/6.0
+            var b=float(wedge+1)*TAU/6.0
+            g.draw_colored_polygon(PackedVector2Array([canopy,canopy+Vector2.from_angle(a)*8*scale,canopy+Vector2.from_angle(b)*8*scale]),Color("#578c9a") if wedge%2==0 else Color("#366775"))
 
 static func facade_region(style: String, seed_value: int) -> Vector2:
     if style=="center" and seed_value%3==0:

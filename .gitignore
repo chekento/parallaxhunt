@@ -8,3 +8,6 @@ build/
 android/build/
 *.keystore
 signing/
+__pycache__/
+BUILD.txt
+validation/

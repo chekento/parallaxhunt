@@ -1,6 +1,8 @@
 extends Node2D
 
 const CityArt = preload("res://scripts/city_art.gd")
+const WireTile = preload("res://scripts/wire_tile.gd")
+const PhotoArt = preload("res://scripts/photo_art.gd")
 const WORLD_SIZE := Vector2(26000.0, 18000.0)
 const WALK_SPEED := 165.0
 const VEHICLE_CLASSES := ["micro","hatch","sedan","executive","suv","pickup","van","delivery","sport","hyper"]
@@ -123,10 +125,14 @@ var photo_crosshair: Label
 var photo_flash_rect: ColorRect
 var photo_world_root: Node3D
 var photo_environment: Environment
+var photo_sky_material: ProceduralSkyMaterial
 var photo_sun: DirectionalLight3D
 var photo_camera: Camera3D
 var photo_target_label: Label
 var photo_status_label: Label
+var photo_feedback: String = ""
+var photo_feedback_until: int = 0
+var photo_session: int = 0
 var photo_shutter_button: Button
 var photo_exit_button: Button
 var photo_hint_button: Button
@@ -177,6 +183,9 @@ var game_status: Label
 var game_grid: GridContainer
 var game_controls: HBoxContainer
 var game_type: String = ""
+var game_moves: int = 0
+var game_hints: int = 0
+var minigame_session: int = 0
 var game_target: Array = []
 var game_current: Array = []
 var game_secret: Array = []
@@ -274,6 +283,8 @@ var look_now := Vector2.ZERO
 var move_vec := Vector2.ZERO
 
 var mission_label: Label
+var objective_label: Label
+var mission_progress_bar: ProgressBar
 var detail_label: Label
 var status_label: Label
 var district_banner: Label
@@ -333,6 +344,16 @@ func _ready() -> void:
         call_deferred("_run_art_capture")
     if "--photo-smoke" in OS.get_cmdline_user_args():
         call_deferred("_run_photo_smoke_test")
+    if "--experience-smoke" in OS.get_cmdline_user_args():
+        call_deferred("_run_experience_smoke_test")
+
+func _exit_tree() -> void:
+    for player in [sfx_player,ambient_player,weather_player]:
+        if is_instance_valid(player):
+            player.stop()
+            player.stream=null
+    sounds.clear()
+    ambient_sounds.clear()
 
 func _process(delta: float) -> void:
     delta=minf(delta,0.10)
@@ -1583,7 +1604,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · 1.21"
+    title.text = "PARALLAX HUNT · 1.22"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -1591,6 +1612,20 @@ func _build_ui() -> void:
     mission_label.text = "Echoes in the Megacity"
     mission_label.add_theme_font_size_override("font_size", 30)
     vb.add_child(mission_label)
+    mission_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    mission_label.custom_minimum_size.x=630
+    mission_progress_bar=ProgressBar.new()
+    mission_progress_bar.custom_minimum_size=Vector2(0,5)
+    mission_progress_bar.show_percentage=false
+    var track:=StyleBoxFlat.new()
+    track.bg_color=Color("#193341")
+    track.set_corner_radius_all(3)
+    var fill:=StyleBoxFlat.new()
+    fill.bg_color=Color("#73f3ce")
+    fill.set_corner_radius_all(3)
+    mission_progress_bar.add_theme_stylebox_override("background",track)
+    mission_progress_bar.add_theme_stylebox_override("fill",fill)
+    vb.add_child(mission_progress_bar)
     detail_label = Label.new()
     detail_label.text = "Echo-Signale bergen und Perspektivverstecke entdecken."
     detail_label.visible=hud_details_visible
@@ -1619,6 +1654,16 @@ func _build_ui() -> void:
     recenter_button.size=Vector2(90,76)
     recenter_button.pressed.connect(_recenter_headtracking)
     layer.add_child(recenter_button)
+    objective_label=Label.new()
+    objective_label.position=Vector2(140,392)
+    objective_label.size=Vector2(800,80)
+    objective_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+    objective_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    objective_label.add_theme_font_size_override("font_size",23)
+    objective_label.add_theme_color_override("font_shadow_color",Color("#07131c"))
+    objective_label.add_theme_constant_override("shadow_offset_x",2)
+    objective_label.add_theme_constant_override("shadow_offset_y",2)
+    layer.add_child(objective_label)
 
     status_label = Label.new()
     status_label.position = Vector2(20, 205)
@@ -1772,6 +1817,10 @@ func _build_ui() -> void:
     gsb.corner_radius_top_right = 24
     gsb.corner_radius_bottom_left = 24
     gsb.corner_radius_bottom_right = 24
+    gsb.content_margin_left=30
+    gsb.content_margin_right=30
+    gsb.content_margin_top=30
+    gsb.content_margin_bottom=26
     game_panel.add_theme_stylebox_override("panel",gsb)
     var gvb := VBoxContainer.new()
     gvb.add_theme_constant_override("separation",14)
@@ -2150,6 +2199,52 @@ func _restore_collectible_flags(items: Array, flags: Variant, field: String, leg
         for i in range(mini(items.size(),legacy_count)):
             items[i][field]=true
 
+func _run_experience_smoke_test() -> void:
+    main_menu_active=false
+    main_menu_panel.visible=false
+    selected_save_slot=3
+    assert(CityArt.character_direction(0)==3 and CityArt.character_direction(PI)==1)
+    assert(CityArt.character_direction(PI*0.5)==0 and CityArt.character_direction(-PI*0.5)==2)
+    var target:=_closest_uncollected(fragments,"taken")
+    assert(target!=Vector2.ZERO and player_pos.distance_to(target)<100)
+    for fragment in fragments:
+        if Vector2(fragment.pos)==target:
+            fragment["taken"]=true
+    assert(_closest_uncollected(fragments,"taken")!=target,"Collected signals must leave the objective route")
+    _update_ui()
+    assert(not objective_label.text.is_empty() and mission_progress_bar.max_value>0)
+    assert(_localized_action("ENTER CAR")=="EINSTEIGEN")
+    var site: Dictionary=mission_sites.filter(func(m): return str(m.id)=="centerWarmup")[0]
+    _start_minigame(site)
+    game_current=game_target.duplicate()
+    assert(_wire_solved(),"Generated wire circuit must have a real source-to-target path")
+    game_current[0]=_rotate_wire_mask(int(game_current[0]))
+    assert(not _wire_solved(),"Disconnected source must break the circuit")
+    var credits_before:=credits
+    _wire_hint()
+    assert(game_hints==1 and _wire_solved() and credits==credits_before+35)
+    _wire_hint()
+    _on_wire_cell(0)
+    assert(game_hints==1 and credits==credits_before+35,"Finished circuit must grant one reward")
+    _close_minigame()
+    _start_minigame(site)
+    await get_tree().create_timer(0.8).timeout
+    assert(minigame_open,"A stale completion timer must not close a newly opened replay")
+    _close_minigame()
+    _start_photo_challenge(0)
+    await get_tree().process_frame
+    assert(photo_environment.background_mode==Environment.BG_SKY and photo_sky_material!=null)
+    assert(photo_world_root.get_children().any(func(n): return n.name.begins_with("StreetEnsemble_")),"Photo street furniture must exist")
+    _photo_hint()
+    var hint_text:=photo_status_label.text
+    _photo_refresh_labels()
+    assert(photo_status_label.text==hint_text and photo_feedback_until>Time.get_ticks_msec(),"Photo hint must survive label refresh")
+    _exit_photo_mode()
+    _reset_game_state()
+    await get_tree().create_timer(1.2).timeout
+    print("EXPERIENCE_SMOKE_OK · directional art / nearest objectives / real circuits / hints / session guards / photo dressing")
+    get_tree().quit()
+
 func _run_city_smoke_test() -> void:
     main_menu_active=false
     main_menu_panel.visible=false
@@ -2227,6 +2322,17 @@ func _run_art_capture() -> void:
     await RenderingServer.frame_post_draw
     get_viewport().get_texture().get_image().save_png("res://build/photo-hunt.png")
     _exit_photo_mode()
+    reward_panel.visible=false
+    player_pos=Vector2(5200,4380)
+    current_vehicle=-1
+    camera_pos=player_pos
+    var warmup: Dictionary=mission_sites.filter(func(site): return str(site.id)=="centerWarmup")[0]
+    _start_minigame(warmup)
+    await get_tree().create_timer(0.3).timeout
+    await RenderingServer.frame_post_draw
+    get_viewport().get_texture().get_image().save_png("res://build/hacking.png")
+    _close_minigame()
+    await get_tree().create_timer(1.2).timeout
     get_tree().quit()
 
 func _run_photo_smoke_test() -> void:
@@ -2299,6 +2405,15 @@ func _build_photo_3d_system() -> void:
     env.ambient_light_color=Color("#d8e7ec")
     env.ambient_light_energy=0.72
     env.tonemap_mode=Environment.TONE_MAPPER_FILMIC
+    photo_sky_material=ProceduralSkyMaterial.new()
+    photo_sky_material.sky_curve=0.25
+    photo_sky_material.ground_curve=0.20
+    photo_sky_material.sun_angle_max=8
+    var sky:=Sky.new()
+    sky.sky_material=photo_sky_material
+    sky.radiance_size=Sky.RADIANCE_SIZE_128
+    env.sky=sky
+    env.background_mode=Environment.BG_SKY
     world_env.environment=env
     photo_world_root.add_child(world_env)
 
@@ -2377,15 +2492,22 @@ func _photo_apply_lighting() -> void:
     elif weather=="storm":
         sky=sky.lerp(Color("#303b4a"),0.70)
     photo_environment.background_color=sky
+    if photo_sky_material!=null:
+        photo_sky_material.sky_top_color=sky.darkened(0.32)
+        photo_sky_material.sky_horizon_color=sky.lerp(Color("#dcb4a0"),twilight*0.45).lightened(0.18)
+        photo_sky_material.ground_bottom_color=Color("#28363b")
+        photo_sky_material.ground_horizon_color=photo_sky_material.sky_horizon_color
+        photo_sky_material.sky_energy_multiplier=0.8
     photo_environment.ambient_light_color=Color("#7f91aa").lerp(Color("#d8e7ec"),daylight)
-    photo_environment.ambient_light_energy=(0.34+daylight*0.46+twilight*0.10)*(1.0-weather_strength*0.20)
-    photo_environment.fog_enabled=weather in ["mist","rain","storm"]
+    photo_environment.ambient_light_energy=(0.50+daylight*0.30+twilight*0.18)*(1.0-weather_strength*0.20)
+    photo_environment.fog_enabled=true
+    photo_environment.fog_sky_affect=0.12
     if photo_environment.fog_enabled:
         photo_environment.fog_light_color=sky.lightened(0.12)
-        photo_environment.fog_density=0.012 if weather=="mist" else (0.006 if weather=="rain" else 0.010)
+        photo_environment.fog_density=0.008 if weather=="mist" else (0.004 if weather=="rain" else (0.006 if weather=="storm" else 0.0013))
     else:
         photo_environment.fog_density=0.0
-    photo_sun.light_energy=(0.10+daylight*1.10)*(1.0-weather_strength*0.38)
+    photo_sun.light_energy=(0.25+daylight*1.10+twilight*0.35)*(1.0-weather_strength*0.38)
     photo_sun.light_color=Color("#ffb987").lerp(Color("#fff6db"),daylight)
     photo_sun.rotation_degrees=Vector3(-18.0-daylight*42.0,-40.0+hour*5.0,0.0)
 
@@ -2457,7 +2579,10 @@ func _photo_build_scene(index: int) -> void:
         ground_color=Color("#465651")
     elif photo_weather=="mist":
         ground_color=Color("#56615c")
-    _photo_box("Ground",Vector3(0,-0.35,0),Vector3(260,0.6,260),ground_color)
+    var ground:=_photo_box("Ground",Vector3(0,-0.35,0),Vector3(320,0.6,320),ground_color)
+    var district_style: String=str(_district_at(center).style)
+    if district_style not in ["green","garden","wind"] and graphics_quality>0:
+        ground.material_override=PhotoArt.paving_material(district_style)
 
     # Roads become real 3D slabs around the fixed observation point.
     for ri in range(roads.size()):
@@ -2497,6 +2622,8 @@ func _photo_build_scene(index: int) -> void:
                     walk_color=Color("#536067")
                 var walk := _photo_box("Walk_%d_%d_%d" % [ri,k,int(side_sign)],(la+lb)*0.5+off,Vector3(2.0,0.24,length),walk_color)
                 walk.rotation.y=slab.rotation.y
+                if graphics_quality>0:
+                    walk.material_override=PhotoArt.paving_material(str(_district_at(center).style))
             var lane := _photo_box("Lane_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.25,0),Vector3(0.16,0.05,length*0.92),Color(0.92,0.90,0.72,0.65))
             lane.rotation.y=slab.rotation.y
 
@@ -2517,8 +2644,10 @@ func _photo_build_scene(index: int) -> void:
 
     # Nearby procedural buildings become 3D masses with roof caps and windows.
     var built: int = 0
-    for bi in range(buildings.size()):
-        var b: Dictionary = buildings[bi]
+    var local_buildings: Array=buildings.filter(func(b): return Rect2(b.rect).get_center().distance_to(center)<radius)
+    local_buildings.sort_custom(func(a,b): return Rect2(a.rect).get_center().distance_squared_to(center)<Rect2(b.rect).get_center().distance_squared_to(center))
+    for bi in range(local_buildings.size()):
+        var b: Dictionary = local_buildings[bi]
         var rect: Rect2 = b.rect
         var bc: Vector2 = rect.get_center()
         if bc.distance_to(center)>radius:
@@ -2529,9 +2658,11 @@ func _photo_build_scene(index: int) -> void:
         var body := _photo_box("Building_%d" % bi,local,size,Color(b.wall))
         var roof := _photo_box("Roof_%d" % bi,local+Vector3(0,h*0.52,0),Vector3(size.x*0.94,0.35,size.z*0.94),Color(b.roof))
         photo_occluders.append({"center":local,"size":size})
-        var detail_limit: int = 18 if graphics_quality>=2 else 10
+        var detail_limit: int = 26 if graphics_quality>=2 else 14
         if built < detail_limit:
             _photo_add_building_details(b,local,size,h,bi)
+        if built<20:
+            PhotoArt.add_roof(self,local,size,h,b)
         built+=1
         if built>55:
             break
@@ -2567,6 +2698,8 @@ func _photo_build_scene(index: int) -> void:
         tree_count+=1
         if tree_count>38:
             break
+
+    PhotoArt.add_streets(self,center,radius)
 
     # Static parked cars.
     var parked_count: int = 0
@@ -2630,15 +2763,7 @@ func _photo_build_scene(index: int) -> void:
         var ped_root := Node3D.new()
         ped_root.name="Ped_%d" % pi
         photo_world_root.add_child(ped_root)
-        _photo_box("Body",Vector3(0,1.7,0),Vector3(0.8,2.0,0.6),Color(ped.color),ped_root)
-        var head_mesh := SphereMesh.new()
-        head_mesh.radius=0.48
-        head_mesh.height=0.96
-        var head_node := MeshInstance3D.new()
-        head_node.mesh=head_mesh
-        head_node.position=Vector3(0,3.1,0)
-        head_node.material_override=_photo_material(Color(ped.skin))
-        ped_root.add_child(head_node)
+        PhotoArt.person(self,ped_root,ped)
         ped_root.position=_photo_local(pp,center,0.0)
         ped_root.rotation.y=-tan.angle()+PI*0.5
         photo_dynamic_peds[pi]=ped_root
@@ -2908,6 +3033,57 @@ func _photo_find_visible_target_position(base: Vector3, variant: int) -> Vector3
     var safe:=Vector2.from_angle(float(variant)*TAU/3.0-PI*0.5)*6.0
     return Vector3(safe.x,base.y,safe.y)
 
+func _photo_anchor_subject(base: Vector3, kind: String) -> Dictionary:
+    if kind=="rarecar":
+        var spot_center:=Vector2(photo_points[active_photo_index].pos)
+        var best_road:=INF
+        var road_result: Dictionary={}
+        for road in roads:
+            var points: PackedVector2Array=road.points
+            for i in range(points.size()-1):
+                var a:=Vector2(_photo_local(points[i],spot_center).x,_photo_local(points[i],spot_center).z)
+                var b:=Vector2(_photo_local(points[i+1],spot_center).x,_photo_local(points[i+1],spot_center).z)
+                var delta:=b-a
+                var near:=a+delta*clampf((Vector2(base.x,base.z)-a).dot(delta)/maxf(0.1,delta.length_squared()),0,1)
+                var pos:=Vector3(near.x,1.25,near.y)
+                var distance:=base.distance_squared_to(pos)
+                if pos.length()<85 and distance<best_road and not _photo_position_occluded(pos):
+                    best_road=distance
+                    road_result={"pos":pos,"rotation":-delta.angle()}
+        return road_result
+    if kind not in ["window","neoncode","cat","antenna","bird"]:
+        return {}
+    var result: Dictionary={}
+    var best:=INF
+    for occluder in photo_occluders:
+        var center: Vector3=occluder.center
+        var half: Vector3=Vector3(occluder.size)*0.5
+        if center.length()>90 or half.x<3 or half.z<3:
+            continue
+        var roof: float=center.y+half.y
+        var positions: Array[Vector3]=[]
+        var rotations: Array[float]=[]
+        if kind in ["cat","antenna","bird"]:
+            var towards: Vector3=(photo_camera.position-center).normalized()
+            positions.append(Vector3(center.x+towards.x*half.x*0.80,roof+0.85,center.z+towards.z*half.z*0.80))
+            rotations.append(0)
+        else:
+            for side in range(4):
+                var angle:=float(side)*PI*0.5
+                var normal:=Vector3(sin(angle),0,cos(angle))
+                var extent:=half.x if side%2==1 else half.z
+                var point:=center+normal*(extent+0.45)
+                point.y=clampf(base.y,2.0,maxf(2.0,roof-1.6))
+                positions.append(point)
+                rotations.append(angle)
+        for i in range(positions.size()):
+            var pos:=positions[i]
+            var distance:=base.distance_squared_to(pos)
+            if distance<best and not _photo_position_occluded(pos):
+                best=distance
+                result={"pos":pos,"rotation":rotations[i]}
+    return result
+
 func _photo_spawn_targets(index: int, center: Vector2) -> void:
     var ph: Dictionary = photo_points[index]
     var id: String = str(ph.id)
@@ -2943,13 +3119,18 @@ func _photo_spawn_targets(index: int, center: Vector2) -> void:
         p.x += float((offset_seed+i*7)%13)-6.0
         p.z += float((offset_seed+i*11)%17)-8.0
         p=_photo_find_visible_target_position(p,i)
+        var anchor:=_photo_anchor_subject(p,str(t.kind))
+        if not anchor.is_empty():
+            p=anchor.pos
         t["pos"]=p
         t["key"]="%s_%d" % [id,i]
         var root := Node3D.new()
         root.name="PhotoTarget_%d" % i
         root.position=p
+        root.rotation.y=float(anchor.get("rotation",0))
         photo_world_root.add_child(root)
         _photo_build_target_visual(root,str(t.kind),i)
+        root.visible=not bool(photo_found.get(str(t.key),false))
         t["node"]=root
         photo_targets.append(t)
 
@@ -2977,8 +3158,8 @@ func _photo_build_target_visual(root: Node3D, kind: String, variant: int) -> voi
             for dz in [-1.5,1.5]:
                 _photo_box("Rotor",Vector3(dx,0,dz),Vector3(1.8,0.15,1.8),Color("#35464f"),root)
     elif kind=="rarecar":
-        _photo_box("RareBody",Vector3.ZERO,Vector3(5.4,1.2,2.1),Color("#ff4f65"),root)
-        _photo_box("RareCabin",Vector3(-0.3,1.0,0),Vector3(2.4,0.8,1.65),Color("#68efd7"),root)
+        var car:=_photo_make_car("RareSubject",Vector2.ZERO,0,"hyper",Color("#ff4f65"),Vector2.ZERO,root)
+        car.position.y=-1.25
     elif kind=="cat":
         _photo_box("CatBody",Vector3.ZERO,Vector3(1.4,0.8,2.2),Color("#51473f"),root)
         _photo_box("CatHead",Vector3(0,0.6,-1.25),Vector3(1.0,1.0,1.0),Color("#5d5147"),root)
@@ -3003,6 +3184,9 @@ func _start_photo_challenge(index: int) -> void:
     if index<0 or index>=photo_points.size():
         return
     active_photo_index=index
+    photo_session+=1
+    photo_feedback=""
+    photo_feedback_until=0
     if bool(photo_points[index].taken):
         var replay_id: String = str(photo_points[index].id)
         for i in range(3):
@@ -3011,7 +3195,7 @@ func _start_photo_challenge(index: int) -> void:
     photo_viewport.render_target_update_mode=SubViewport.UPDATE_ALWAYS
     var initial_dir: Vector2 = Vector2(photo_points[index].dir).normalized()
     photo_yaw=atan2(-initial_dir.x,-initial_dir.y)
-    photo_pitch=-0.17
+    photo_pitch=-0.045
     photo_fov=66.0
     photo_drag_touch=-1
     move_vec=Vector2.ZERO
@@ -3037,6 +3221,7 @@ func _start_photo_challenge(index: int) -> void:
     _show_reward_popup("PHOTO CHALLENGE",str(photo_points[index].label)+"\nFinde und fotografiere alle versteckten Motive.",Color("#ffb3e6"))
 
 func _exit_photo_mode() -> void:
+    photo_session+=1
     photo_mode=false
     photo_viewport.render_target_update_mode=SubViewport.UPDATE_DISABLED
     active_photo_index=-1
@@ -3044,6 +3229,7 @@ func _exit_photo_mode() -> void:
     photo_view_rect.visible=false
     _photo_show_ui(false)
     _photo_clear_3d_scene()
+    reward_panel.visible=false
     queue_redraw()
 
 func _photo_show_ui(show: bool) -> void:
@@ -3078,7 +3264,7 @@ func _photo_update_camera() -> void:
     if photo_camera==null:
         return
     var head: Vector2=camera_head_view if camera_tracking_enabled and Time.get_ticks_msec()-camera_head_last_ms<700 else sensor_view
-    photo_camera.position=Vector3(head.x*0.85,7.0-head.y*0.55,-camera_head_depth*0.45)
+    photo_camera.position=Vector3(head.x*0.85,3.1-head.y*0.55,-camera_head_depth*0.45)
     photo_camera.rotation=Vector3(clampf(photo_pitch+head.y*0.14,-1.30,0.65),photo_yaw-head.x*0.16,0)
     photo_camera.fov=photo_fov
 
@@ -3121,7 +3307,7 @@ func _photo_shutter() -> void:
     _play_sfx("photo")
     var target := _photo_center_target()
     if target.is_empty():
-        photo_status_label.text="Kein Suchmotiv sauber im Sucher."
+        _photo_set_feedback("Noch kein Motiv im Sucher · drehe die Kamera oder nutze HINWEIS.")
         return
     var key := str(target.key)
     var node: Node3D = target.node
@@ -3158,7 +3344,7 @@ func _photo_refresh_labels() -> void:
     for t in photo_targets:
         score_sum+=int(photo_scores.get(str(t.key),0))
     photo_target_label.text="%s\nMotive %d / %d · Score %d/300 · %s" % [str(photo_points[active_photo_index].label),found_count,photo_targets.size(),score_sum,_weather_label()]
-    photo_status_label.text=("Noch suchen: "+", ".join(remaining)) if not remaining.is_empty() else "Alle Motive gefunden."
+    photo_status_label.text=photo_feedback if Time.get_ticks_msec()<photo_feedback_until else (("Noch suchen: "+", ".join(remaining)) if not remaining.is_empty() else "Alle Motive gefunden.")
     if photo_crosshair!=null:
         photo_crosshair.modulate=Color("#73f3ce") if not _photo_center_target().is_empty() else Color(1,1,1,0.82)
 
@@ -3167,13 +3353,24 @@ func _photo_hint() -> void:
         return
     for t in photo_targets:
         if not bool(photo_found.get(str(t.key),false)):
-            photo_status_label.text="HINWEIS · "+str(t.hint)
+            var node: Node3D=t.node
+            var delta:=node.global_position-photo_camera.global_position
+            var angle:=wrapf(atan2(-delta.x,-delta.z)-photo_camera.rotation.y,-PI,PI)
+            var turn: String="Drehe nach links" if angle>0.12 else ("Drehe nach rechts" if angle< -0.12 else "In deiner Blickrichtung")
+            var height: String=" · höher schauen" if delta.y>3 else (" · tiefer schauen" if delta.y< -3 else "")
+            _photo_set_feedback("%s%s · %s\n%s" % [turn,height,str(t.label),str(t.hint)],6500)
             return
+
+func _photo_set_feedback(message: String, duration: int = 4000) -> void:
+    photo_feedback=message
+    photo_feedback_until=Time.get_ticks_msec()+duration
+    photo_status_label.text=message
 
 func _complete_photo_challenge() -> void:
     if active_photo_index<0:
         return
     var ph: Dictionary = photo_points[active_photo_index]
+    var session:=photo_session
     var quality: int = 0
     for t in photo_targets:
         quality+=int(photo_scores.get(str(t.key),0))
@@ -3190,7 +3387,8 @@ func _complete_photo_challenge() -> void:
         _save_game()
         _show_reward_popup("PHOTO REPLAY","%s\nNeuer Spot-Score: %d/300" % [str(ph.label),quality],Color("#ffb3e6"))
     await get_tree().create_timer(0.85).timeout
-    _exit_photo_mode()
+    if photo_mode and photo_session==session:
+        _exit_photo_mode()
 
 func _update_photo_3d_scene(_delta: float) -> void:
     _photo_update_camera()
@@ -5087,6 +5285,7 @@ func _district_identity_label(style: String) -> String:
 
 func _update_ui() -> void:
     if photo_mode:
+        objective_label.visible=false
         mission_label.text="PHOTO CHALLENGE"
         detail_label.text="Position fixiert · Kamera drehen, zoomen und versteckte Motive fotografieren."
         status_label.text="3D FOTO-MODUS · Bewegung gesperrt · Kamera aktiv"
@@ -5094,11 +5293,17 @@ func _update_ui() -> void:
         scan_button.disabled=true
         return
     scan_button.disabled=false
+    objective_label.visible=not (main_menu_active or map_open or missions_open or collection_open or minigame_open or interior_active or dialogue_panel.visible or commerce_panel.visible)
+    var target:=_current_objective_pos()
+    var objective_distance: int=int(player_pos.distance_to(target)/10) if target!=Vector2.ZERO else 0
+    objective_label.text=("%s · %d m\n%s" % [_current_objective_label(),objective_distance,_objective_action()]) if target!=Vector2.ZERO else "Die Stadt gehört dir · neue Aufträge und Motive entdecken"
     if tracking_label!=null:
         tracking_label.text=("KOPF · "+camera_tracking_state) if camera_tracking_enabled else "PERSPEKTIVE · Touch / Neigung"
         tracking_label.modulate=Color("#73f3ce") if camera_tracking_state=="Gesicht erkannt" and camera_tracking_enabled else Color("#9cb9c4")
     var chapter: Dictionary = Dictionary(native_chapters[mini(native_chapter,native_chapters.size()-1)]) if native_chapters.size()>0 else {"title":"Explore","desc":""}
     mission_label.text = "%s · %d/%d" % [str(chapter.title),mini(_chapter_progress(chapter),int(chapter.get("goal",1))),int(chapter.get("goal",1))]
+    mission_progress_bar.max_value=maxf(1,float(chapter.get("goal",1)))
+    mission_progress_bar.value=minf(_chapter_progress(chapter),mission_progress_bar.max_value)
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
     elif not active_job.is_empty():
@@ -5108,20 +5313,20 @@ func _update_ui() -> void:
         detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m%s · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance,(" · "+task_text if task_text!="" else "")]
     else:
         detail_label.text = "Links bewegen · rechts Perspektive · Headtracking %s · MAP/MISSIONS für Übersicht." % camera_status
-    var mode: String = "Inside · %s" % interior_name if interior_active else "On foot"
+    var mode: String = "Innenraum · %s" % interior_name if interior_active else "Zu Fuß"
     if current_vehicle >= 0:
         var drive_cls: String = str(parked_cars[current_vehicle]["class"])
         var group: String = str(VEHICLE_SPEED_GROUP.get(drive_cls,"ROAD"))
         var speed_kmh: int = int(abs(vehicle_velocity)*0.42)
-        mode = "Driving · %s · %s · %d km/h" % [drive_cls.capitalize(),group,speed_kmh]
+        mode = "%s · %s · %d km/h" % [drive_cls.capitalize(),group,speed_kmh]
     elif transit_riding >= 0 and transit_riding < transit_vehicles.size():
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     var clock_h := int(floor(world_clock))
     var clock_m := int(floor((world_clock-float(clock_h))*60.0))
-    status_label.text = "%s · %s · %02d:%02d · %s · Zoom %.2fx\n%d CR · Energie %d%% · Jobs %d · Stadtruf %d/%d · Umstiege %d" % [("Interior" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),world_zoom,credits,int(energy),jobs_done,city_reputation,city_micro_events.size(),transit_transfer_count]
+    status_label.text = "%s · %s · %02d:%02d · %s\n%d CR · Energie %d%% · Stadtruf %d" % [("Innenraum" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),credits,int(energy),city_reputation]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
-    interact_button.text = "INTERACT" if near.is_empty() else str(near.get("action","INTERACT"))
+    interact_button.text = "AKTION" if near.is_empty() else _localized_action(str(near.get("action","AKTION")))
 
 func _scan() -> void:
     scan_time = 2.2
@@ -6297,17 +6502,19 @@ func _draw_trees() -> void:
             draw_circle(c+Vector2(7,-1),t.r*0.48,t.tint)
 
 func _draw_named_npcs() -> void:
-    for npc in named_npcs:
-        if player_pos.distance_to(Vector2(npc.pos))>1700.0:
+    for i in range(named_npcs.size()):
+        var npc: Dictionary=named_npcs[i]
+        var pos:=Vector2(npc.pos)
+        var foot:=_project(pos)
+        if not _tile_visible(foot,120):
             continue
-        var p := _project(Vector2(npc.pos),16)
-        var accent: Color = npc.accent
-        draw_circle(p+Vector2(3,8),8,Color(0,0,0,0.18))
-        draw_line(p+Vector2(0,3),p+Vector2(0,15),accent,5.0,true)
-        draw_circle(p,5,Color("#e8ba96"))
-        draw_arc(p+Vector2(0,-1),5.1,PI,TAU,12,accent.darkened(0.55),2.2,true)
-        draw_circle(p+Vector2(0,-16),5,Color(accent.r,accent.g,accent.b,0.28))
-        draw_string(ThemeDB.fallback_font,p+Vector2(-45,-28),str(npc.name),HORIZONTAL_ALIGNMENT_CENTER,90,11,Color.WHITE)
+        var accent: Color=npc.accent
+        var heading: float=(player_pos-pos).angle() if pos.distance_to(player_pos)<160 else PI*0.5
+        CityArt.draw_character(self,pos,heading,1+i%3,0,"idle",accent.lightened(0.78))
+        var top:=foot-Vector2(0,43)*world_zoom
+        var width: float=110*clampf(world_zoom,1,1.8)
+        draw_rect(Rect2(top-Vector2(width*0.5,21),Vector2(width,32)),Color(0.025,0.075,0.10,0.87))
+        draw_string(ThemeDB.fallback_font,top+Vector2(-width*0.5,0),str(npc.name),HORIZONTAL_ALIGNMENT_CENTER,width,18,Color("#e9f6f4"))
 
 func _draw_story_collectibles() -> void:
     for c in caches:
@@ -7019,108 +7226,18 @@ func _draw_attraction(p: Dictionary) -> void:
     draw_string(ThemeDB.fallback_font,c+Vector2(-72,52),str(p.name),HORIZONTAL_ALIGNMENT_CENTER,144,14,Color(0.88,0.96,0.95,0.82))
 
 func _draw_pedestrians() -> void:
-    var weather := _weather_state()
+    var distance_limit: float=[900.0,1300.0,1700.0][graphics_quality]
     for ped in pedestrians:
         var pos:=_ped_world_pos(ped)
-        var ped_draw_distance: float = [900.0,1300.0,1700.0][graphics_quality]
-        if player_pos.distance_to(pos) > ped_draw_distance:
+        if player_pos.distance_to(pos)>distance_limit or not _tile_visible(_project(pos),110):
             continue
-        var rd=roads[int(ped.road)]
-        var tan:=_polyline_tangent(rd.points,float(ped.t))
+        var rd: Dictionary=roads[int(ped.road)]
+        var tangent:=_polyline_tangent(rd.points,float(ped.t))
         if bool(ped.reverse):
-            tan*=-1.0
-        var normal:=Vector2(-tan.y,tan.x)
-        var base := _project(pos,0)
-        var pelvis := _project(pos,10)
-        var head := _project(pos,19)
-        var body_scale:=clampf(world_zoom,0.85,2.65)
-        draw_set_transform(pelvis*(1.0-body_scale),0.0,Vector2.ONE*body_scale)
-        base=pelvis+(base-pelvis)/body_scale
-        head=pelvis+(head-pelvis)/body_scale
-        var phase := float(ped.phase)
-        var state:=str(ped.get("state","walk"))
-        var moving:=state in ["walk","cross"]
-        var bob := sin(phase)*1.4 if moving else 0.0
-        if state=="sit":
-            pelvis.y+=5.0
-            head.y+=7.0
-        head.y += bob
-        pelvis.y += bob*0.5
-        draw_circle(base+Vector2(2,5),5.5,Color(0,0,0,0.18))
-        var swing := sin(phase)*4.0 if moving else 0.0
-        var side_dir := normal.normalized()
-
-        if state=="sit":
-            draw_line(pelvis+Vector2(0,1),pelvis+Vector2(0,11),ped.color,4.0,true)
-            draw_line(pelvis+Vector2(-2,9),pelvis+Vector2(-9,14),Color("#7b8790"),2.5,true)
-            draw_line(pelvis+Vector2(2,9),pelvis+Vector2(9,14),Color("#697783"),2.5,true)
-            draw_line(pelvis+Vector2(-9,14),pelvis+Vector2(-5,20),Color("#7b8790"),2.2,true)
-            draw_line(pelvis+Vector2(9,14),pelvis+Vector2(5,20),Color("#697783"),2.2,true)
-        else:
-            draw_line(pelvis+Vector2(0,1),pelvis+Vector2(swing*0.35,9),ped.color,4.0,true)
-            draw_line(pelvis+Vector2(-2,7),pelvis+Vector2(-swing,15),Color("#7b8790"),2.3,true)
-            draw_line(pelvis+Vector2(2,7),pelvis+Vector2(swing,15),Color("#697783"),2.3,true)
-
-        var arm_swing:=swing*0.8
-        if state=="chat":
-            arm_swing=sin(phase*0.55)*7.0
-        draw_line(pelvis+Vector2(0,2),pelvis+Vector2(arm_swing,-3),ped.color.darkened(0.12),2.2,true)
-        draw_circle(head,4.8,ped.skin)
-        draw_arc(head+Vector2(0,-1),4.7,PI,TAU,12,ped.hair,2.4,true)
-
-        if ped.role == "runner":
-            draw_line(pelvis+Vector2(-4,2),pelvis+Vector2(4,2),Color("#73f3ce"),1.4)
-        elif ped.role == "worker":
-            draw_rect(Rect2(pelvis+Vector2(-4,-1),Vector2(8,3)),Color("#ffd46d"),true)
-        elif ped.role == "student":
-            draw_circle(pelvis+side_dir*5.0,3.0,Color("#88a9d9"))
-        if ped.bag:
-            var bag_pos := pelvis + side_dir*5.5 + Vector2(0,2)
-            draw_rect(Rect2(bag_pos-Vector2(2.5,2.5),Vector2(5,6)),Color("#5f4f47"),true)
-
-        var ped_style:=str(_district_at(pos).get("style","center"))
-        if ped_style=="neon":
-            draw_line(pelvis+Vector2(-4,1),pelvis+Vector2(4,1),Color("#ff80ef"),1.7,true)
-            draw_circle(head+Vector2(4,0),1.5,Color("#67d9ff"))
-        elif ped_style in ["green","garden"]:
-            draw_line(head+Vector2(-4,-6),head+Vector2(4,-6),Color("#8ff0b4"),2.2,true)
-        elif ped_style in ["industry","rail","terminal"]:
-            draw_line(pelvis+Vector2(-4,5),pelvis+Vector2(4,5),Color("#ffd46d"),2.0,true)
-        elif ped_style=="campus":
-            draw_rect(Rect2(pelvis+Vector2(-6,-1),Vector2(4,8)),Color("#6688aa"),true)
-        elif ped_style=="heritage":
-            draw_arc(head+Vector2(0,-3),6.0,PI,TAU,12,Color("#76584b"),2.6,true)
-        elif ped_style in ["canal","harbor","coast"]:
-            draw_line(pelvis+Vector2(-4,0),pelvis+Vector2(4,0),Color("#72d7e6"),1.7,true)
-
-        if state=="phone":
-            var phone_pos := pelvis+Vector2(5,-5)
-            draw_rect(Rect2(phone_pos-Vector2(2,3),Vector2(4,6)),Color("#a9dcff"),true)
-            draw_line(pelvis+Vector2(1,-1),phone_pos,Color(ped.skin),1.6,true)
-        elif state=="wave":
-            draw_line(pelvis+Vector2(0,2),pelvis+Vector2(10,-11),ped.color.darkened(0.08),2.5,true)
-            draw_circle(pelvis+Vector2(11,-12),2.0,Color(ped.skin))
-        elif state=="chat":
-            var bubble:=head+Vector2(8,-14)
-            draw_circle(bubble,7,Color(0.92,0.97,0.98,0.78))
-            draw_circle(bubble+Vector2(-3,0),1.0,Color("#34444b"))
-            draw_circle(bubble,1.0,Color("#34444b"))
-            draw_circle(bubble+Vector2(3,0),1.0,Color("#34444b"))
-        elif state=="alert":
-            draw_string(ThemeDB.fallback_font,head+Vector2(-5,-11),"!",HORIZONTAL_ALIGNMENT_CENTER,10,13,Color("#ffcf69"))
-        elif state=="shelter":
-            draw_line(pelvis+Vector2(-4,0),pelvis+Vector2(4,0),Color("#72d7e6"),1.8,true)
-            draw_string(ThemeDB.fallback_font,head+Vector2(-12,-14),"☂",HORIZONTAL_ALIGNMENT_CENTER,24,11,Color("#b9e9ff"))
-        elif state=="cross":
-            draw_circle(base+Vector2(0,6),8,Color(0.95,0.82,0.35,0.06))
-
-        var personal_seed := int(abs(pos.x*0.13+pos.y*0.07))
-        if weather in ["rain","storm"] and personal_seed%3!=0 and state not in ["sit","shelter"]:
-            var canopy := head+Vector2(0,-13)
-            var umb_color: Color = [Color("#6ea6ce"),Color("#d86f86"),Color("#6fc49a"),Color("#d4b869")][personal_seed%4]
-            draw_arc(canopy,10.5,PI,TAU,18,umb_color,3.4,true)
-            draw_line(canopy+Vector2(0,1),pelvis+Vector2(3,7),Color("#aebac0"),1.4,true)
-        draw_set_transform(Vector2.ZERO,0.0,Vector2.ONE)
+            tangent*=-1
+        var outfit:=2 if str(ped.role)=="worker" else (3 if str(ped.role) in ["student","runner"] else 1)
+        var tint: Color=Color(ped.color).lightened(0.78)
+        CityArt.draw_character(self,pos,tangent.angle(),outfit,float(ped.phase),str(ped.get("state","walk")),tint)
 
 func _draw_traffic() -> void:
     for c in traffic:
@@ -7537,46 +7654,15 @@ func _draw_collectibles() -> void:
             draw_string(ThemeDB.fallback_font,p2+Vector2(-60,-22),s.label,HORIZONTAL_ALIGNMENT_CENTER,120,14,Color.WHITE)
 
 func _draw_player() -> void:
-    if current_vehicle >= 0:
-        var c = parked_cars[current_vehicle]
-        _draw_car(player_pos,player_heading,c["class"],c.color,false)
+    if current_vehicle>=0:
+        var car: Dictionary=parked_cars[current_vehicle]
+        _draw_car(player_pos,player_heading,car["class"],car.color,false)
         return
-    var foot := _project(player_pos,0)
-    var pelvis := _project(player_pos,10)
-    var chest := _project(player_pos,17)
-    var head := _project(player_pos,24)
-    var body_scale:=clampf(world_zoom,0.85,2.65)
-    draw_set_transform(pelvis*(1.0-body_scale),0.0,Vector2.ONE*body_scale)
-    foot=pelvis+(foot-pelvis)/body_scale
-    chest=pelvis+(chest-pelvis)/body_scale
-    head=pelvis+(head-pelvis)/body_scale
-    var f := Vector2.from_angle(player_heading)
-    var side := Vector2(-f.y,f.x)
-    var walking := move_vec.length() > 0.08
-    var phase: float = float(Time.get_ticks_msec())/95.0 if walking else 0.0
-    var swing: float = sin(phase)*5.0 if walking else 0.0
-    var bob: float = abs(sin(float(phase)))*1.5 if walking else 0.0
-    pelvis.y -= bob
-    chest.y -= bob
-    head.y -= bob
-    _draw_poly_ellipse(foot+Vector2(3,5),Vector2(9,5),player_heading,Color(0,0,0,0.24))
-    var left_leg := pelvis + f*5.0 + side*swing
-    var right_leg := pelvis + f*5.0 - side*swing
-    draw_line(pelvis,left_leg+Vector2(0,7),Color("#5c6974"),3.0,true)
-    draw_line(pelvis,right_leg+Vector2(0,7),Color("#687886"),3.0,true)
-    var torso := PackedVector2Array([chest+f*7+side*6,chest+f*7-side*6,pelvis-side*6,pelvis+side*6])
-    draw_colored_polygon(torso,Color("#e8f2f6"))
-    draw_polyline(PackedVector2Array([torso[0],torso[1],torso[2],torso[3],torso[0]]),Color(0.2,0.35,0.42,0.45),1.0,true)
-    draw_line(chest+side*4,chest-side*swing+Vector2(0,7),Color("#cfdde4"),2.4,true)
-    draw_line(chest-side*4,chest+side*swing+Vector2(0,7),Color("#cfdde4"),2.4,true)
-    draw_circle(head,5.2,Color("#e8ba96"))
-    draw_arc(head+Vector2(0,-1),5.3,PI,TAU,14,Color("#263039"),2.5,true)
-    draw_line(chest-f*2-side*6,chest-f*2+side*6,Color("#73f3ce"),1.8,true)
-    # small tech pack that visually anchors the PMDD theme
-    var pack := chest - f*4.0
-    draw_rect(Rect2(pack-Vector2(3,4),Vector2(6,8)),Color("#20343f"),true)
-    draw_circle(pack+Vector2(0,-1),1.6,Color("#73f3ce"))
-    draw_set_transform(Vector2.ZERO,0.0,Vector2.ONE)
+    var walking:=move_vec.length()>0.08
+    var phase: float=float(Time.get_ticks_msec())/95.0 if walking else 0.0
+    var foot:=_project(player_pos)
+    draw_arc(foot,8*world_zoom,0,TAU,32,Color(0.45,0.95,0.82,0.40),1.0*world_zoom,true)
+    CityArt.draw_character(self,player_pos,player_heading,0,phase,"walk" if walking else "idle")
 
 func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vector2) -> void:
     if kind in ["garage","workshop","home"]:
@@ -7970,11 +8056,14 @@ func _game_button(text_value: String, callback: Callable, active: bool = false) 
     return b
 
 func _start_minigame(site: Dictionary) -> void:
+    minigame_session+=1
     var sid := str(site.id)
     active_mission_replay = bool(hack_done.get(sid,false))
     active_mission_site = site
     game_type = str(site.game)
     minigame_finishing=false
+    game_moves=0
+    game_hints=0
     minigame_open = true
     map_open = false
     missions_open = false
@@ -7999,6 +8088,7 @@ func _start_minigame(site: Dictionary) -> void:
         _init_lightsout()
 
 func _close_minigame() -> void:
+    minigame_session+=1
     minigame_open = false
     game_panel.visible = false
     active_mission_site = {}
@@ -8009,6 +8099,7 @@ func _finish_minigame() -> void:
     if active_mission_site.is_empty() or minigame_finishing:
         return
     minigame_finishing=true
+    var session:=minigame_session
     var sid: String = str(active_mission_site.id)
     var site_name: String = str(active_mission_site.name)
     var site_reward: String = str(active_mission_site.reward)
@@ -8024,7 +8115,7 @@ func _finish_minigame() -> void:
     _haptic(55)
     game_status.text = "ERFOLG · %s · +%d Credits" % [("Replay abgeschlossen" if was_replay else "%s erhalten" % site_reward),reward_credits]
     await get_tree().create_timer(0.65).timeout
-    if not minigame_open or str(active_mission_site.get("id",""))!=sid:
+    if not minigame_open or minigame_session!=session or str(active_mission_site.get("id",""))!=sid:
         return
     _close_minigame()
     _show_reward_popup("HACK ERFOLGREICH",("%s\n%s · +%d CR" % [site_name,("Replay" if was_replay else site_reward),reward_credits]),Color("#ffdf75"))
@@ -8105,26 +8196,29 @@ func _init_wire() -> void:
         game_current[i]=mask
 
     game_status.text = "Verbinde SOURCE links mit TARGET rechts. Alle %d Leitungsfelder müssen Teil des Netzes sein." % total
+    var hint:=_game_button("HINWEIS",_wire_hint)
+    hint.custom_minimum_size=Vector2(250,75)
+    hint.add_theme_font_size_override("font_size",22)
+    game_controls.add_child(hint)
     _render_wire()
 
 func _render_wire() -> void:
     for child in game_grid.get_children():
         child.queue_free()
-    var cols: int = int(game_secret[1])
-    var end_index: int = int(game_secret[0])
+    var reachable:=_wire_reachable_cells()
+    var cols: int=int(game_secret[1])
+    var end_index: int=int(game_secret[0])
     for i in range(game_current.size()):
-        var idx := i
-        var label := _wire_symbol(int(game_current[i]))
-        if i==0:
-            label="S "+label
-        elif i==end_index:
-            label=label+" T"
-        var button := _game_button(label,_on_wire_cell.bind(idx))
-        if _wire_reachable_cells().has(i):
-            button.modulate=Color("#73f3ce")
+        var button:=WireTile.new()
+        button.mask=int(game_current[i])
+        button.powered=reachable.has(i)
+        button.source=i==0
+        button.target=i==end_index
+        button.disabled=minigame_finishing
+        button.pressed.connect(_on_wire_cell.bind(i))
         game_grid.add_child(button)
-    game_info.text = "%s · Netz %d×%d" % [("REPLAY" if active_mission_replay else "HACKING-SUBMISSION"),cols,cols]
-    await get_tree().process_frame
+    game_info.text="NETZWERK %d × %d · %d/%d unter Strom\n%d Drehungen · %d Hinweise · %s" % [cols,cols,reachable.size(),game_current.size(),game_moves,game_hints,("12 CR Replay" if active_mission_replay else "35 CR + "+str(active_mission_site.reward))]
+    game_status.text="Tippe eine Kachel zum Drehen. Verbinde S mit T und bringe das gesamte Netz zum Leuchten."
 
 func _wire_reachable_cells() -> Array:
     var out: Array = []
@@ -8174,11 +8268,28 @@ func _wire_solved() -> bool:
     return reachable.size()==game_current.size() and reachable.has(end_index) and (int(game_current[end_index])&2)!=0
 
 func _on_wire_cell(index: int) -> void:
+    if minigame_finishing or not minigame_open:
+        return
+    game_moves+=1
     game_current[index]=_rotate_wire_mask(int(game_current[index]))
     _play_sfx("hack_click")
     _render_wire()
     if _wire_solved():
         _finish_minigame()
+
+func _wire_hint() -> void:
+    if minigame_finishing or game_type!="wire" or not minigame_open:
+        return
+    for i in range(game_current.size()):
+        if int(game_current[i])!=int(game_target[i]):
+            game_current[i]=game_target[i]
+            game_hints+=1
+            _play_sfx("scan")
+            _render_wire()
+            game_status.text="Eine Kachel stimmt jetzt. Folge der grünen Leitung ab S."
+            if _wire_solved():
+                _finish_minigame()
+            return
 
 func _init_slide() -> void:
     game_grid.columns = 3
@@ -9338,6 +9449,38 @@ func _check_milestones() -> void:
             _notify("MEILENSTEIN · %s · +%d CR" % [str(m[3]),int(m[2])])
             _save_game()
 
+func _closest_uncollected(items: Array, field: String) -> Vector2:
+    var result:=Vector2.ZERO
+    var best:=INF
+    for item in items:
+        if bool(item.get(field,false)):
+            continue
+        var pos:=Vector2(item.pos)
+        var distance:=player_pos.distance_squared_to(pos)
+        if distance<best:
+            best=distance
+            result=pos
+    return result
+
+func _localized_action(action: String) -> String:
+    return {"INTERACT":"AKTION","EXIT":"VERLASSEN","USE":"BENUTZEN","EXIT CAR":"AUSSTEIGEN","ENTER CAR":"EINSTEIGEN","PHOTO CHALLENGE":"FOTO-SUCHE","PHOTO REPLAY":"FOTO WIEDERHOLEN","COLLECT":"BERGEN"}.get(action,action)
+
+func _objective_action() -> String:
+    if not active_race.is_empty():
+        return "Nächsten Kontrollpunkt passieren"
+    if not active_job.is_empty():
+        return str(active_job.get("task","Zum markierten Ziel fahren und den Auftrag erfüllen"))
+    if not active_npc_contract.is_empty():
+        return "Persönlichen Auftrag erfüllen · Gesprächspartner auf der Karte"
+    if native_chapters.is_empty():
+        return "Straßen, Dächer und versteckte Perspektiven erkunden"
+    var chapter: Dictionary=native_chapters[mini(native_chapter,native_chapters.size()-1)]
+    var kind:=str(chapter.kind)
+    var near:=_nearest_interactable()
+    if not near.is_empty() and _current_objective_pos().distance_to(player_pos)<90:
+        return "AKTION · "+_localized_action(str(near.get("action","BERGEN")))
+    return {"frag":"Zum leuchtenden Signal gehen und BERGEN tippen","secret":"Perspektive ändern, bis das Versteck sichtbar wird","cache":"Datenkoffer finden und öffnen","glyph":"Stadtsigil am markierten Ort sichern","hack":"Terminal erreichen und sein Rätsel lösen","hack_count":"Ein noch offenes Terminal hacken","photo":"FOTO-SUCHE starten · drei Motive finden","vehicles":"Ein neues Fahrzeug ausprobieren","relay":"Dachzugang finden und Relay aktivieren","sublevel":"Untergrundzugang finden und Knoten aktivieren","npc":"Mit dem markierten Kontakt sprechen"}.get(kind,str(chapter.get("desc","Ziel erreichen")))
+
 func _current_objective_pos() -> Vector2:
     if not active_race.is_empty():
         var rr: Dictionary = race_sites[int(active_race.index)]
@@ -9357,17 +9500,13 @@ func _current_objective_pos() -> Vector2:
     var c: Dictionary = native_chapters[mini(native_chapter,native_chapters.size()-1)]
     var kind := str(c.kind)
     if kind=="frag":
-        for f in fragments:
-            if not bool(f.taken): return Vector2(f.pos)
+        return _closest_uncollected(fragments,"taken")
     elif kind=="secret":
-        for sec in secrets:
-            if not bool(sec.found): return Vector2(sec.pos)
+        return _closest_uncollected(secrets,"found")
     elif kind=="cache":
-        for ca in caches:
-            if not bool(ca.taken): return Vector2(ca.pos)
+        return _closest_uncollected(caches,"taken")
     elif kind=="glyph":
-        for g in glyphs:
-            if not bool(g.taken): return Vector2(g.pos)
+        return _closest_uncollected(glyphs,"taken")
     elif kind=="npc":
         for npc in named_npcs:
             if str(npc.id)==str(c.id): return Vector2(npc.pos)
@@ -9398,10 +9537,7 @@ func _current_objective_pos() -> Vector2:
         for m in mission_sites:
             if not bool(hack_done.get(str(m.id),false)): return Vector2(m.pos)
     elif kind=="collector":
-        for ca in caches:
-            if not bool(ca.taken): return Vector2(ca.pos)
-        for g in glyphs:
-            if not bool(g.taken): return Vector2(g.pos)
+        return _closest_uncollected(caches+glyphs,"taken")
     elif kind=="hack_replays":
         return _next_hack_replay_target()
     elif kind=="paint":
@@ -9428,32 +9564,36 @@ func _current_objective_label() -> String:
     return str(native_chapters[mini(native_chapter,native_chapters.size()-1)].title)
 
 func _draw_mission_compass() -> void:
-    if main_menu_active or map_open or missions_open or interior_active:
+    if main_menu_active or map_open or missions_open or collection_open or interior_active or minigame_open or dialogue_panel.visible or commerce_panel.visible:
         return
-    var target := _current_objective_pos()
+    var target:=_current_objective_pos()
     if target==Vector2.ZERO:
         return
-    var delta := target-player_pos
-    var distance := delta.length()
-    if distance<55.0:
+    var point:=_project(target)
+    var screen:=get_viewport_rect().size
+    var bounds:=Rect2(Vector2(70,500),screen-Vector2(140,1010))
+    var accent:=Color("#73f3ce") if active_race.is_empty() else Color("#ffd36b")
+    var center:=_project(player_pos)
+    if bounds.has_point(point):
+        var radius: float=17*world_zoom
+        draw_arc(point,radius,0,TAU,48,Color(accent.r,accent.g,accent.b,0.55),1.5*world_zoom,true)
+        var pulse:=0.5+0.5*sin(Time.get_ticks_msec()/320.0)
+        draw_arc(point,radius+4*world_zoom*pulse,0,TAU,48,Color(accent.r,accent.g,accent.b,0.25*(1-pulse)),world_zoom,true)
         return
-    var size := get_viewport_rect().size
-    var center := Vector2(size.x*0.5,345)
-    var dir := delta.normalized()
-    var angle := dir.angle()+PI*0.5
-    var arrow := PackedVector2Array([Vector2(0,-18),Vector2(12,12),Vector2(0,7),Vector2(-12,12)])
+    var delta:=point-center
+    var edge_ratio: float=1.0
+    if delta.x>0: edge_ratio=minf(edge_ratio,(bounds.end.x-center.x)/delta.x)
+    elif delta.x<0: edge_ratio=minf(edge_ratio,(bounds.position.x-center.x)/delta.x)
+    if delta.y>0: edge_ratio=minf(edge_ratio,(bounds.end.y-center.y)/delta.y)
+    elif delta.y<0: edge_ratio=minf(edge_ratio,(bounds.position.y-center.y)/delta.y)
+    var anchor:=center+delta*clampf(edge_ratio,0,1)
+    var angle:=delta.angle()+PI*0.5
+    var arrow:=PackedVector2Array([Vector2(0,-17),Vector2(11,12),Vector2(0,6),Vector2(-11,12)])
     for i in range(arrow.size()):
-        arrow[i]=arrow[i].rotated(angle)+center
-    var accent := Color("#73f3ce")
-    if not active_race.is_empty():
-        accent=Color("#ffd36b")
-    elif not active_job.is_empty():
-        accent=Color("#8de9aa")
-    elif not active_npc_contract.is_empty():
-        accent=Color("#ff9fe8")
+        arrow[i]=arrow[i].rotated(angle)+anchor
+    draw_circle(anchor,28,Color(0.025,0.075,0.10,0.87))
     draw_colored_polygon(arrow,accent)
-    var objective_label := _current_objective_label()
-    draw_string(ThemeDB.fallback_font,center+Vector2(-190,38),"%d m · %s" % [int(distance/10.0),objective_label],HORIZONTAL_ALIGNMENT_CENTER,380,13,Color("#d9f5ef"))
+    draw_string(ThemeDB.fallback_font,anchor+Vector2(-65,49),"%d m" % int(player_pos.distance_to(target)/10),HORIZONTAL_ALIGNMENT_CENTER,130,20,Color("#d9f5ef"))
 
 func _toggle_map() -> void:
     if minigame_open or photo_mode:

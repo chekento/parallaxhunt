@@ -26,6 +26,9 @@ sensors/enable_accelerometer=true
 [editor_plugins]
 enabled=PackedStringArray("res://addons/headtracker/plugin.cfg")
 
+[gui]
+theme/custom="res://assets/interface_theme.tres"
+
 [rendering]
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

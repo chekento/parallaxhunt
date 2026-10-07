@@ -1,6 +1,18 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.21.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+**Parallax Hunt 1.22.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+
+## 1.22.0 — Characters, readable missions and richer Photo Hunt
+
+- Sixteen authored comic character sprites cover four directions and four outfits. The player, street residents and named contacts use consistent foot pivots, directional facing, walking sway, weather umbrellas and visible interaction names. The character sheet is bundled locally with the other city assets.
+- The mission HUD gains a compact progress bar, a readable next-action instruction, an in-world goal ring and edge arrows with distance. Collecting chapters point to the closest remaining signal, cache or sigil. Completed collectibles immediately leave the route; active races, jobs and personal contracts retain priority.
+- Wire hacking uses actual drawn circuit paths instead of font-dependent line glyphs. Powered tiles, S/T endpoints, connected-count feedback, turn counts and a one-tile hint make the puzzle understandable. Its generated solution is checked as a real connected circuit, and completion locks further rewards and input.
+- Native 3D Photo Hunt gains staggered stone paving, a procedural twilight sky, local lamps and warm lighting, palms, benches, cafe tables and umbrellas, differentiated rooftop details, and fuller articulated pedestrian geometry. Buildings are selected by proximity to the viewpoint so detail is spent on the nearby streets. Graphics quality limits furniture, lights and roof details.
+- The fixed photo camera uses a street-height eye position. Window reflections and codes attach to visible facades; cats, birds and antennas sit on suitable roofs. Rare vehicles use the full vehicle model and a visible road anchor when available. Collected subjects disappear on scene reconstruction.
+- Photo hints give a direction and height cue and remain visible for several seconds. Missed shots retain feedback instead of losing their message on the next frame. Session guards prevent an old completion timer from closing a newly opened photo spot or hack replay.
+- Buttons share a consistent theme, everyday HUD text is simpler, and common actions are localized. Audio playback is stopped during scene teardown.
+
+The preview retains the 1.21.0 application ID and delivered test signing key, so it can update that preview installation. Existing preview saves continue to use the same slots. Physical-device camera tracking, frame pacing, heat and battery use still need a phone test; the local checks do not establish those measurements.
 
 ## 1.21.0 — City, camera and first-minute rebuild
 
@@ -18,7 +30,7 @@
 
 The delivered **Parallax Hunt · Preview** APK installs as `com.kosch.parallaxhunt.preview` alongside the previous app. The old debug signing key was unavailable, so the preview keeps the previous installation and its saves intact. The preview starts with separate saves. The standard `Android` export preset retains the original app ID.
 
-Use the left joystick to walk or drive, the right side to adjust perspective, INTERACT for nearby actions and SCAN for signals. For camera tracking, enable **Kamera-Headtracking** in options, grant camera access and use the recenter button while looking at the phone. Without camera tracking, touch and phone tilt remain available. On desktop: WASD/arrows, E to interact, Q to scan, right drag for perspective, C to recenter and Escape to close a panel.
+Use the left joystick to walk or drive, the right side to adjust perspective, AKTION (or the contextual action label) for nearby actions and SCAN for signals. For camera tracking, enable **Kamera-Headtracking** in options, grant camera access and use the recenter button while looking at the phone. Without camera tracking, touch and phone tilt remain available. On desktop: WASD/arrows, E to interact, Q to scan, right drag for perspective, C to recenter and Escape to close a panel.
 
 ### Build and validation
 
@@ -28,15 +40,16 @@ Install Godot **4.7.2** and its matching Android export templates, Java 17, Andr
 python3 scripts/prepare_android.py --template /path/to/android_source.zip
 godot --headless --editor --path . --import --quit
 godot --headless --path . -- --city-smoke
+godot --headless --path . -- --experience-smoke
 godot --headless --path . -- --photo-smoke
-godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.21.0-preview.apk
+godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.22.0-preview.apk
 ```
 
-Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs both smoke tests and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
+Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
 
 The private source archive supplied with this build includes `signing/debug.keystore` for subsequent local test builds. Use `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` to point to it (debug alias `androiddebugkey`, password `android`). The key is excluded from the repository. CI can reuse it through the optional `PARALLAX_DEBUG_KEYSTORE_BASE64` repository secret; otherwise a CI run creates its own test key.
 
-Checks cover a walkable start and nearby signals, street-furniture placement, depth at rest, movement lock and viewport lifecycle in Photo Hunt, camera-pose response, one hacking reward, collectible persistence and new-game reset. OpenGL screenshots were inspected as well. Actual camera behavior, thermals and performance on the user's Android device still require a hardware test. This remains an alpha with a 2.5D street renderer and a separate native 3D photo scene.
+Checks cover a walkable start and nearby signals, street-furniture placement, depth at rest, movement lock and viewport lifecycle in Photo Hunt, camera-pose response, one hacking reward, collectible persistence and new-game reset. The experience checks also cover sprite directions, nearest remaining objectives, real circuit connectivity, hint persistence, same-site replay session guards and photo street dressing. OpenGL screenshots of walking, driving, hacking and Photo Hunt were inspected as well. Actual camera behavior, thermals and performance on the user's Android device still require a hardware test. This remains an alpha with a 2.5D street renderer and a separate native 3D photo scene.
 
 Older saves recorded collectible totals without IDs. On migration, the first matching number of flags is marked consumed to preserve those totals; the exact previously collected positions cannot be reconstructed.
 
