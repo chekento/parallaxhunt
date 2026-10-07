@@ -27,6 +27,10 @@ static func blocked(g: Node, p: Vector2, radius: float) -> bool:
             if Rect2(b.rect).grow(radius).has_point(p): return true
     for w in g.waters:
         if Rect2(w.rect).grow(radius).has_point(p):
+            if w.has("polygon"):
+                var edge:=PackedVector2Array(w.polygon)
+                edge.append(edge[0])
+                if not Geometry2D.is_point_in_polygon(p,w.polygon) and g._distance_to_polyline(p,edge)>radius:continue
             var bridge_walk=false
             for road in g.roads:
                 # Bridge footways are real, painted surfaces, with body clearance.
@@ -82,7 +86,7 @@ static func safe_point(g: Node, p: Vector2, radius: float=16.0) -> Vector2:
 static func repair(g: Node) -> void:
     rebuild_index(g)
     g.access_repairs=0
-    for data in [g.named_npcs,g.caches,g.glyphs,g.mission_sites,g.property_sites,g.vertical_sites,g.scan_points,g.photo_points,g.side_job_sites,g.city_micro_events,g.storefronts,g.fragments,g.secrets]:
+    for data in [g.named_npcs,g.caches,g.glyphs,g.mission_sites,g.property_sites,g.vertical_sites,g.scan_points,g.photo_points,g.side_job_sites,g.city_micro_events,g.storefronts,g.fragments,g.secrets,g.region_pois]:
         for entry in data:
             var before: Vector2=entry.pos
             var after=safe_point(g,before)
