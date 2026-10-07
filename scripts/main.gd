@@ -6,8 +6,10 @@ const CityMenus = preload("res://scripts/city_menus.gd")
 const InteriorArt = preload("res://scripts/interior_art.gd")
 const WireTile = preload("res://scripts/wire_tile.gd")
 const PhotoArt = preload("res://scripts/photo_art.gd")
+const CityLife = preload("res://scripts/city_life.gd")
+const NeighborhoodArt = preload("res://scripts/neighborhood_art.gd")
 const CITY_SIZE := Vector2(26000.0, 18000.0)
-const WORLD_SIZE := Vector2(86000.0, 36000.0)
+const WORLD_SIZE := Vector2(110000.0, 46000.0)
 const RegionWorld=preload("res://scripts/region_world.gd")
 const WorldNavigation=preload("res://scripts/world_navigation.gd")
 const WALK_SPEED := 165.0
@@ -70,6 +72,12 @@ var region_completed: Dictionary={}
 var region_contract: Dictionary={}
 var map_waypoint: Dictionary={}
 var region_fade:=0.0
+var life_places: Array=[]
+var life_seen: Dictionary={}
+var life_completed: Dictionary={}
+var life_progress: Dictionary={}
+var life_choices: Dictionary={}
+var life_active: String=""
 var navigation_graph:=AStar2D.new()
 var navigation_route:=PackedVector2Array()
 var navigation_target:=Vector2.ZERO
@@ -367,6 +375,7 @@ func _ready() -> void:
     _generate_collectibles()
     _seed_neighborhood_start()
     RegionWorld.build(self)
+    CityLife.build(self)
     CityAccess.repair(self)
     WorldNavigation.build(self)
     _build_ui()
@@ -392,6 +401,8 @@ func _ready() -> void:
         call_deferred("_run_experience_smoke_test")
     if "--region-smoke" in OS.get_cmdline_user_args():call_deferred("_run_region_smoke_test")
     if "--region-capture" in OS.get_cmdline_user_args():call_deferred("_run_region_capture")
+    if "--life-smoke" in OS.get_cmdline_user_args():call_deferred("_run_life_smoke")
+    if "--life-capture" in OS.get_cmdline_user_args():call_deferred("_run_life_capture")
 
 func _exit_tree() -> void:
     for player in [sfx_player,ambient_player,weather_player]:
@@ -1660,7 +1671,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · 1.24"
+    title.text = "PARALLAX HUNT · 1.25"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2366,7 +2377,7 @@ func _run_quality_smoke_test() -> void:
     main_menu_panel.visible=false
     selected_save_slot=3
     _sync_modal_ui()
-    assert(buildings.all(func(b): return waters.all(func(w): return not Rect2(w.rect).intersects(Rect2(b.rect)))),"No unexplained houses may sit inside water")
+    assert(buildings.all(func(b): return not CityLife.water_overlap(self,Rect2(b.rect))),"No houses may intersect an actual lake, stream or canal shore")
     var point_count:=0
     for group in [named_npcs,caches,glyphs,mission_sites,property_sites,vertical_sites,scan_points,photo_points,side_job_sites,city_micro_events,storefronts,fragments,secrets]:
         for entry in group:
@@ -5677,6 +5688,11 @@ func _update_ui() -> void:
         mission_label.text="%s · %d/%d" % [str(tour.title),int(region_contract.step),tour.stops.size()]
         mission_progress_bar.max_value=tour.stops.size()
         mission_progress_bar.value=int(region_contract.step)
+    if not interior_active and not life_active.is_empty():
+        var story: Dictionary=CityLife.story(life_active)
+        mission_label.text="%s · %d/%d" % [str(story.title),int(life_progress.get(life_active,0)),story.steps.size()]
+        mission_progress_bar.max_value=story.steps.size()
+        mission_progress_bar.value=int(life_progress.get(life_active,0))
     if interior_active: mission_label.text=InteriorArt.title(interior_kind,interior_floor)+" · "+interior_name
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
@@ -5732,6 +5748,9 @@ func _interact() -> void:
         return
     var n := _nearest_interactable()
     if n.is_empty():
+        return
+    if n.type == "life_place":
+        CityLife.visit(self,int(n.index))
         return
     if n.type == "region_poi":
         RegionWorld.visit(self,int(n.index))
@@ -5881,6 +5900,13 @@ func _nearest_interactable() -> Dictionary:
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
     var best := {}
     var bd := 999999.0
+    var life_target: Vector2=CityLife.target(self)
+    if life_target!=Vector2.ZERO and player_pos.distance_to(life_target)<100:
+        var place: Dictionary=CityLife.get_place(self,str(CityLife.step(self).at))
+        return {"type":"life_place","index":life_places.find(place),"action":"KIEZGESCHICHTE"}
+    for i in range(life_places.size()):
+        var distance: float=player_pos.distance_to(Vector2(life_places[i].pos))
+        if distance<90 and distance<bd:best={"type":"life_place","index":i,"action":"ENTDECKEN"};bd=distance
     for i in range(region_pois.size()):
         var d: float=player_pos.distance_to(Vector2(region_pois[i].pos))
         if d<100 and d<bd:
@@ -6039,6 +6065,8 @@ func _draw() -> void:
     _draw_transit_stops()
     _draw_jobboards()
     RegionWorld.draw_pois(self)
+    RegionWorld.Expansion.draw(self)
+    NeighborhoodArt.draw(self)
     _draw_active_job_target()
     _draw_street_props()
     _draw_city_micro_events()
@@ -8223,9 +8251,21 @@ func _close_minigame() -> void:
 func _finish_minigame() -> void:
     if active_mission_site.is_empty() or minigame_finishing:
         return
+    if bool(active_mission_site.get("life",false)):
+        if game_type=="wire" and not _wire_solved():return
+        if game_type=="frequency" and game_current!=game_target:return
     minigame_finishing=true
     var session:=minigame_session
     var sid: String = str(active_mission_site.id)
+    if bool(active_mission_site.get("life",false)):
+        var life_site: Dictionary=active_mission_site.duplicate(true)
+        CityLife.puzzle_finished(self,life_site)
+        game_status.text="ERFOLG · Leitungsnetz verbunden" if game_type=="wire" else "ERFOLG · Spektrum kalibriert"
+        _play_sfx("secret");_haptic(55)
+        await get_tree().create_timer(.65).timeout
+        if minigame_open and minigame_session==session and str(active_mission_site.get("id",""))==sid:
+            _close_minigame();_notify("Rätsel gelöst · "+("Freies Training abgeschlossen" if str(life_site.story).is_empty() else "Der nächste Schritt ist markiert."))
+        return
     var site_name: String = str(active_mission_site.name)
     var site_reward: String = str(active_mission_site.reward)
     var was_replay: bool = active_mission_replay
@@ -8804,6 +8844,7 @@ func _reset_game_state() -> void:
     milestones_claimed.clear()
     active_race={}
     region_seen.clear();region_completed.clear();region_contract={};map_waypoint={}
+    CityLife.clear(self)
     navigation_route=PackedVector2Array();navigation_timer=0
     photo_found.clear()
     photo_scores.clear()
@@ -8963,6 +9004,7 @@ func _save_game() -> void:
         "shop_stock":shop_stock,
         "save_version":2,
         "region":RegionWorld.save_state(self),
+        "city_life":CityLife.save(self),
         "fragments":fragments.map(func(x): return bool(x.taken)),
         "secrets":secrets.map(func(x): return bool(x.found)),
         "frag_count":mission_fragments,
@@ -9016,6 +9058,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
         return
     var d: Dictionary = parsed
     RegionWorld.load_state(self,Dictionary(d.get("region",{})))
+    CityLife.restore(self,Dictionary(d.get("city_life",{})))
     if d.has("player") and d.player is Array and d.player.size()>=2:
         player_pos = Vector2(float(d.player[0]),float(d.player[1]))
     credits = int(d.get("credits",credits))
@@ -9119,11 +9162,8 @@ func _deserialize_job(job: Dictionary) -> Dictionary:
     return out
 
 func _commerce_button(label_text: String, callback: Callable) -> Button:
-    var b := Button.new()
-    b.text = label_text
-    b.custom_minimum_size = Vector2(0,72)
-    b.add_theme_font_size_override("font_size",27)
-    b.pressed.connect(callback)
+    var b: Button=CityMenus.button(label_text,callback)
+    b.custom_minimum_size = Vector2(0,80)
     return b
 
 func _clear_commerce_actions() -> void:
@@ -9612,6 +9652,7 @@ func _localized_action(action: String) -> String:
 func _objective_action() -> String:
     if not active_race.is_empty():return "Nächsten Kontrollpunkt passieren"
     if not map_waypoint.is_empty():return "Der markierten Route folgen · Karte öffnet die Zielauswahl"
+    if not life_active.is_empty():return str(CityLife.step(self).task)+" · aussteigen und AKTION wählen"
     if not region_contract.is_empty():return "Zum markierten Halt gehen, aussteigen und ENTDECKEN wählen"
     if not active_race.is_empty():
         return "Nächsten Kontrollpunkt passieren"
@@ -9636,12 +9677,13 @@ func _current_objective_pos() -> Vector2:
         var rpts: Array = Array(rr.points)
         if cp<rpts.size():
             return Vector2(rpts[cp])
-    var contract_target := _npc_contract_target()
-    if contract_target!=Vector2.ZERO:
-        return contract_target
     if not map_waypoint.is_empty():return Vector2(map_waypoint.pos)
+    var life_target: Vector2=CityLife.target(self)
+    if life_target!=Vector2.ZERO:return life_target
     var region_target: Vector2=RegionWorld.active_target(self)
     if region_target!=Vector2.ZERO:return region_target
+    var contract_target := _npc_contract_target()
+    if contract_target!=Vector2.ZERO:return contract_target
     if not active_job.is_empty():
         var job_target := Vector2(active_job.get("target",Vector2.ZERO))
         if job_target!=Vector2.ZERO:
@@ -9705,6 +9747,7 @@ func _current_objective_pos() -> Vector2:
 func _current_objective_label() -> String:
     if active_race.is_empty():
         if not map_waypoint.is_empty():return str(map_waypoint.name)
+        if not life_active.is_empty():return str(CityLife.story(life_active).title)
         if not region_contract.is_empty():
             var tour: Dictionary=RegionWorld.OUTINGS[int(region_contract.tour)]
             return str(RegionWorld.get_poi(self,str(tour.stops[int(region_contract.step)])).name)
@@ -10202,3 +10245,9 @@ func _run_region_smoke_test() -> void:
 
 func _run_region_capture() -> void:
     await load("res://scripts/region_checks.gd").capture(self)
+
+func _run_life_smoke() -> void:
+    await load("res://scripts/life_checks.gd").smoke(self)
+
+func _run_life_capture() -> void:
+    await load("res://scripts/life_checks.gd").capture(self)

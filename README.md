@@ -1,6 +1,19 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.24.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+**Parallax Hunt 1.25.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+
+## 1.25.0 — A neighborhood full of stories, a travel book and distant Mühlenau
+
+- Twenty authored interaction places include eighteen city locations and two countryside story locations: a striped neighborhood kiosk, small stage, flower stall, parcel station, reading windows, shared garden, vinyl shop, radio equipment, mural wall, recycling stand, puzzle table and rest bank. Small paved pockets keep stalls and the stage clear of carriageways and building footprints. A small animated dog, planters, fountain ripples, book spines and lights make these places visually distinct.
+- Seven optional stories contain 29 steps with clues, choices, deliveries and real wire/frequency puzzles. Find Pico, prepare a neighborhood festival, carry a parcel, plant a garden, tune a local radio, help create a mural, and deliver the mill repair note to Mühlenau. The dog follows during the return step; completed garden, festival and mural stories change their street scenes.
+- Story progress is stored per story. Switching and pausing retain each unfinished step, remembered choices and discovered place notes. Completion credits and reputation pay once, including puzzle replays. Story puzzles use the existing real minigame controls while preserving the original city's hacking flags and chapters. Wrong decisions offer clues and remain retryable. Interactions require proximity; stale callbacks cannot advance or pay twice.
+- The playable bounds expand to 110,000 × 46,000 units. L02 leads across the Heidekamm to Mühlenau, over 60,000 game units from Sonnenhagen. The low-house village has a square, cafe, mill with slowly turning sails, a real stream crossing and a fifth regional bus stop. Broad open corridors between settlements remain available for later villages and cities. Five new roads/trails, two watercourses and nine regional places extend the earlier region without changing its persistent IDs.
+- Six outings now reach twenty-seven regional places; the two new tours explore the heath, village, mill and southern meadows. The regional bus keeps the 15 CR fare. The existing seven races and all original city/collectible/vehicle indices remain available.
+- Menus become a travel book with warmer accents, shaped cards, clearer buttons and visible keyboard focus. Missions split into Discover, Neighborhood Book, Countryside and Main Story categories, showing active steps and nearby activities first. A place journal joins the collection; the atlas adds an Experience filter for neighborhood stories and markers for the expanded landscape.
+
+Start with **AUFTRÄGE → KIEZBUCH**, or visit Emil at the Lindenkiosk near the starting district. For the long journey, choose **AUFTRÄGE → UMLAND → Hinter dem Heidekamm**, take a car or use the regional bus to Mühlenau. **KARTE → ERLEBEN** shows the city interaction places. The original 45 chapters, 25 city districts and 25 fixed Photo Hunt locations stay intact.
+
+The new `--life-smoke` check walks all story logic through normal interaction buttons and actual puzzle moves, checking wrong choices, proximity guards, seven completion/replay rewards, paused progress, full save/load, native touch category navigation, the journal and older-save migration. `--region-smoke` now verifies all 27 city-to-country routes and both new outings. Physical Android camera operation and device performance still need an on-phone test.
 
 ## 1.24.0 — Sonnenhagen, countryside and a navigable atlas
 
@@ -69,10 +82,11 @@ godot --headless --path . -- --experience-smoke
 godot --headless --path . -- --photo-smoke
 godot --headless --path . -- --quality-smoke
 godot --headless --path . -- --region-smoke
-godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.24.0-preview.apk
+godot --headless --path . -- --life-smoke
+godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.25.0-preview.apk
 ```
 
-Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality, region and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
+Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality, region, life and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
 
 The private source archive supplied with this build includes `signing/debug.keystore` for subsequent local test builds. Use `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` to point to it (debug alias `androiddebugkey`, password `android`). The key is excluded from the repository. CI can reuse it through the optional `PARALLAX_DEBUG_KEYSTORE_BASE64` repository secret; otherwise a CI run creates its own test key.
 

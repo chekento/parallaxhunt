@@ -8,7 +8,8 @@ static func smoke(g: Node) -> void:
     assert(g.districts.size()==25 and g.photo_points.size()==25 and g.native_chapters.size()==45,"Original content and saved indices stay stable")
     assert(Vector2(g.roads[0].points[-1]).y==g.CITY_SIZE.y and Vector2(g.roads[10].points[-1]).x==g.CITY_SIZE.x,"Original city road lengths stay stable")
     assert(Rect2(g.world_regions[0].rect).position.x-g.CITY_SIZE.x>=4500,"Greenbelt separates the city and suburb")
-    assert(g.region_pois.size()==18 and g.race_sites.size()==7,"All regional places and the road rally are built")
+    assert(g.region_pois.size()==27 and g.race_sites.size()==7,"Original regional places and distant village are built")
+    assert(g.RegionWorld.get_poi(g,"village_square").pos.distance_to(g.RegionWorld.get_poi(g,"suburb_square").pos)>60000,"Settlements retain broad landscape corridors")
     var start: Vector2=g.RegionWorld.get_poi(g,"city_bus").pos
     for p in g.region_pois:
         assert(g.CityAccess.connected(g,Vector2(p.pos),18),"Each new place needs an approach: "+str(p.id))
@@ -18,6 +19,9 @@ static func smoke(g: Node) -> void:
     for p in g.race_sites[-1].points:assert(not g._point_blocked(p,18),"Rally checkpoints need vehicle clearance")
     var highway: Dictionary=g.roads.filter(func(r):return r.get("name","")=="L 01 · Lindenstraße")[0]
     for k in range(highway.points.size()-1):assert(g.CityAccess.path_clear(g,highway.points[k],highway.points[k+1],18),"The whole land road must be driveable")
+    var heath: Dictionary=g.roads.filter(func(r):return r.get("name","")=="L 02 · Heidechaussee")[0]
+    for k in range(heath.points.size()-1):assert(g.CityAccess.path_clear(g,heath.points[k],heath.points[k+1],18),"The whole village road and its stream crossing must be driveable")
+    assert(g._point_blocked(Vector2(91000,19700),18),"The new heath lake blocks walking")
     assert(g._point_blocked(Vector2(47700,9000),18),"Lake water blocks walking")
     assert(not g._point_blocked(Vector2(45000,11200),18),"Dry corners of a water bounding box stay open")
     assert(g.CityAccess.path_clear(g,Vector2(53400,14600),Vector2(54200,14600),18),"River bridge carries the road")
@@ -54,7 +58,7 @@ static func smoke(g: Node) -> void:
     g.map_waypoint={"pos":Vector2(78900,20370),"name":"Freiland · Fernblick"}
     g._save_game();g.region_contract={};g.map_waypoint={};g.region_seen.clear();g.region_completed.clear();g._load_game(3)
     assert(int(g.region_contract.tour)==2 and int(g.region_contract.step)==2 and g.map_waypoint.pos==Vector2(78900,20370),"Outing and waypoint survive a full save/load")
-    assert(g.region_completed.size()==4 and g.region_seen.size()>=10,"Discoveries survive a save/load")
+    assert(g.region_completed.size()==6 and g.region_seen.size()>=10,"Discoveries survive a save/load")
     g.player_pos=Vector2(33600,10310)
     var visited: int=g.visited_districts.size();g.RegionWorld.check_arrival(g)
     assert(g.visited_districts.size()==visited,"Country regions never inflate city district progress")
@@ -100,7 +104,7 @@ static func smoke(g: Node) -> void:
     if existed:
         var file:=FileAccess.open(path,FileAccess.WRITE);file.store_string(saved);file.close()
     else:DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-    print("REGION_SMOKE_OK · 18 connected places / road and bridge clearance / 4 replay-safe outings / bus and rest / save-load / native atlas tap and drag / bounded landscape")
+    print("REGION_SMOKE_OK · 27 connected places / distant village / road and bridge clearance / 6 replay-safe outings / bus and rest / save-load / native atlas tap and drag / bounded landscape")
     g.get_tree().call_deferred("quit")
 static func capture(g: Node) -> void:
     g.set_process(false);g.main_menu_active=false;g.main_menu_panel.visible=false

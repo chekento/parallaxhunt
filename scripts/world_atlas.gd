@@ -65,8 +65,10 @@ func _draw() -> void:
         for k in range(30):contour.append(Vector2(float(k)*size.x/29,float(i)*72+sin(k*.24+i*.53)*38))
         draw_polyline(contour,Color(.37,.46,.34,.09),1,true)
     for item in game.world_regions:
-        box(item.rect,{"meadow":Color("#c4c89a"),"forest":Color("#a8bea0"),"lake":Color("#b4c9ac"),"wild":Color("#c4bea2"),"suburb":Color("#d6cdb0")}.get(str(item.style),Color("#c4c89a")))
+        box(item.rect,{"meadow":Color("#c4c89a"),"forest":Color("#a8bea0"),"lake":Color("#b4c9ac"),"wild":Color("#c4bea2"),"suburb":Color("#d6cdb0"),"heath":Color("#cabaac"),"village":Color("#d8cfb5")}.get(str(item.style),Color("#c4c89a")))
     box(game.world_regions[0].rect,Color("#d7cfb5"))
+    for item in game.world_regions:
+        if str(item.style)=="village":box(item.rect,Color("#d8cfb5"))
     for d in game.districts:
         box(d.rect,Color("#c7ccbf").lerp(Color(d.accent),.1))
         if mode!="region" and zoom<4:
@@ -92,7 +94,7 @@ func _draw() -> void:
         path(road.points,Color("#a99b7f") if regional else Color("#a2aea1"),width+2.3)
         path(road.points,Color("#ded4ac") if trail else (Color("#f0d997") if regional else Color("#f4f0d8")),width)
     if mode=="region" and zoom<2:
-        for entry in [[Vector2(8500,1600),"MEGACITY",21],[Vector2(30700,5600),"SONNENHAGEN",20],[Vector2(27000,25000),"LINDENFELDER",19],[Vector2(55000,4800),"FICHTENWALD",21],[Vector2(70300,9500),"HOHES FREILAND",18]]:
+        for entry in [[Vector2(8500,1600),"MEGACITY",21],[Vector2(30700,5600),"SONNENHAGEN",20],[Vector2(27000,25000),"LINDENFELDER",19],[Vector2(55000,4800),"FICHTENWALD",21],[Vector2(70300,9500),"HOHES FREILAND",18],[Vector2(87700,11600),"HEIDEKAMM",18],[Vector2(92300,27900),"MÜHLENAU",19]]:
             var p: Vector2=point(entry[0]);text(p,entry[1],int(entry[2]),ink,260)
             occupied_labels.append(Rect2(p-Vector2(0,23),Vector2(210,28)))
     markers=build_markers()
@@ -128,7 +130,10 @@ func build_markers() -> Array:
     if mode=="region" and zoom<2 and category in ["Ziele","Orte"]:
         result.append({"pos":Vector2(5100,4220),"name":"Zentrum","glyph":"C","color":Color("#52756c")})
         for p in game.region_pois:
-            if str(p.id) in ["suburb_square","lake_view","trailhead","ranger","ridge_view","far_view"]:result.append(marker_data(p))
+            if str(p.id) in ["suburb_square","lake_view","trailhead","ranger","ridge_view","far_view","village_square","old_mill","south_view"]:result.append(marker_data(p))
+        return result
+    if category=="Erleben":
+        for p in game.life_places:result.append({"pos":p.pos,"name":p.name,"glyph":"★" if game.life_seen.get(p.id,false) else "!","color":Color("#84693e")})
         return result
     if category=="Transit":
         for p in game.region_pois:
@@ -142,6 +147,7 @@ func build_markers() -> Array:
     else:
         for p in game.region_pois:result.append(marker_data(p))
         if category=="Orte":
+            for p in game.life_places:result.append({"pos":p.pos,"name":p.name,"glyph":"K","color":Color("#84693e")})
             for p in game.landmarks:result.append({"pos":p.pos,"name":p.name,"glyph":"+","color":Color("#698475")})
             for p in game.storefronts:result.append({"pos":p.pos,"name":p.name,"glyph":"S","color":Color("#926d45")})
         else:
