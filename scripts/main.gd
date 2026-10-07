@@ -1,6 +1,9 @@
 extends Node2D
 
 const CityArt = preload("res://scripts/city_art.gd")
+const CityAccess = preload("res://scripts/city_access.gd")
+const CityMenus = preload("res://scripts/city_menus.gd")
+const InteriorArt = preload("res://scripts/interior_art.gd")
 const WireTile = preload("res://scripts/wire_tile.gd")
 const PhotoArt = preload("res://scripts/photo_art.gd")
 const WORLD_SIZE := Vector2(26000.0, 18000.0)
@@ -51,6 +54,19 @@ var junctions: Array = []
 var parks: Array = []
 var waters: Array = []
 var buildings: Array = []
+var collision_grid: Dictionary = {}
+var collision_index_ready := false
+var access_repairs := 0
+var district_access_points: Dictionary = {}
+var interior_exit_button: Button
+var recenter_hud_button: Button
+var hud_root: Control
+var modal_root: Control
+var city_menus: PanelContainer
+var modal_state := ""
+var modal_fit_pending := false
+var reward_tween: Tween
+var notice_tween: Tween
 var trees: Array = []
 var parked_cars: Array = []
 var traffic: Array = []
@@ -83,6 +99,8 @@ var player_pos := Vector2(5100, 4220)
 var player_heading := 0.0
 var current_vehicle := -1
 var vehicle_velocity := 0.0
+var vehicle_braking := false
+var vehicle_turn_error := 0.0
 var hospital_transition: float = 0.0
 var hospital_transition_total: float = 4.8
 var accident_cooldown: float = 0.0
@@ -156,7 +174,7 @@ var interior_accent := Color("#73f3ce")
 var interior_return_pos := Vector2.ZERO
 var interior_player_pos := Vector2(450,560)
 var interior_floor: int = 0
-var interior_size := Vector2(900,700)
+var interior_size := Vector2(920,1260)
 var world_zoom: float = 1.0
 var target_world_zoom: float = 1.0
 var map_open: bool = false
@@ -303,6 +321,7 @@ var current_weather_audio_key := ""
 var last_secret_sound_ms := -99999
 
 func _ready() -> void:
+    get_tree().quit_on_go_back=false
     rng.seed = 420042
     _build_districts()
     _build_roads()
@@ -316,19 +335,22 @@ func _ready() -> void:
     _generate_city()
     # Legacy procedural masses could cover observation points. Keep the real
     # fixed camera position and its approach clear in both street and photo views.
-    buildings=buildings.filter(func(b): return not photo_points.any(func(ph): return Rect2(b.rect).grow(75).has_point(Vector2(ph.pos))))
+    buildings=buildings.filter(func(b): return not photo_points.any(func(ph): return Rect2(b.rect).grow(75).has_point(Vector2(ph.pos))) and not waters.any(func(w): return Rect2(w.rect).grow(22).intersects(Rect2(b.rect))))
     trees=trees.filter(func(t): return not _point_on_road(Vector2(t.pos)))
     CityArt.add_street_blocks(self)
     texture_repeat=CanvasItem.TEXTURE_REPEAT_ENABLED
     _generate_traffic()
     _generate_visual_props()
     _generate_storefronts()
+    trees=trees.filter(func(t): return not waters.any(func(w): return Rect2(w.rect).has_point(Vector2(t.pos))))
+    vegetation_props=vegetation_props.filter(func(v): return not waters.any(func(w): return Rect2(w.rect).has_point(Vector2(v.pos))))
     _generate_transit()
     _build_transit_stops()
     _build_social_setpieces()
     _update_response_dispatches(true)
     _generate_collectibles()
     _seed_neighborhood_start()
+    CityAccess.repair(self)
     _build_ui()
     _build_photo_3d_system()
     _build_audio()
@@ -344,6 +366,10 @@ func _ready() -> void:
         call_deferred("_run_art_capture")
     if "--photo-smoke" in OS.get_cmdline_user_args():
         call_deferred("_run_photo_smoke_test")
+    if "--quality-smoke" in OS.get_cmdline_user_args():
+        call_deferred("_run_quality_smoke_test")
+    if "--quality-capture" in OS.get_cmdline_user_args():
+        call_deferred("_run_quality_capture")
     if "--experience-smoke" in OS.get_cmdline_user_args():
         call_deferred("_run_experience_smoke_test")
 
@@ -357,6 +383,7 @@ func _exit_tree() -> void:
 
 func _process(delta: float) -> void:
     delta=minf(delta,0.10)
+    _sync_modal_ui()
     _update_sensor(delta)
     if move_touch<0 and OS.get_name()!="Android" and not photo_mode:
         move_vec=Vector2(float(Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)),float(Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP))).limit_length(1.0)
@@ -364,6 +391,9 @@ func _process(delta: float) -> void:
     _update_event_proximity_audio()
     if main_menu_active:
         world_clock = fposmod(world_clock + delta * 0.006,24.0)
+        queue_redraw()
+        return
+    if _modal_active():
         queue_redraw()
         return
     accident_cooldown=maxf(0.0,accident_cooldown-delta)
@@ -425,6 +455,13 @@ func _process(delta: float) -> void:
     queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventKey and event.pressed and event.physical_keycode==KEY_ESCAPE and _modal_active():
+        if map_open or missions_open or collection_open: _close_overview()
+        elif minigame_open: _close_minigame()
+        elif commerce_panel.visible: _close_commerce()
+        elif dialogue_panel.visible: _close_dialogue()
+        get_viewport().set_input_as_handled()
+        return
     if event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_RIGHT:
         desktop_look_drag=event.pressed
         look_origin=event.position
@@ -444,24 +481,8 @@ func _unhandled_input(event: InputEvent) -> void:
         return
     if hospital_transition>0.0:
         return
-    if commerce_panel.visible:
-        move_vec=Vector2.ZERO
+    if _modal_active():
         return
-    if missions_open or collection_open:
-        if event is InputEventScreenTouch:
-            var overlay_touch := event as InputEventScreenTouch
-            if overlay_touch.pressed and overlay_touch.position.y>1760.0:
-                var dir := -1 if overlay_touch.position.x<get_viewport_rect().size.x*0.5 else 1
-                if missions_open:
-                    var max_page := maxi(0,int(ceil(float(native_chapters.size())/14.0))-1)
-                    missions_page=clampi(missions_page+dir,0,max_page)
-                else:
-                    collection_page=clampi(collection_page+dir,0,2)
-                _play_sfx("hack_click")
-                queue_redraw()
-            return
-        if event is InputEventScreenDrag:
-            return
     if event is InputEventScreenTouch:
         var t := event as InputEventScreenTouch
         if t.pressed:
@@ -567,8 +588,8 @@ func _build_junctions() -> void:
             var vx: float = float(roads[vi].points[0].x)
             var hy: float = float(roads[hi].points[0].y)
             var pos := Vector2(vx,hy)
-            var bridge := ((vi*7 + hi*3) % 17 == 0) or _point_over_water(pos)
-            # Bridges are exceptional. Normal nodes are true same-level intersections.
+            var bridge := false
+            # Road-to-road crossings are at grade. Canal spans are rendered separately.
             junctions.append({
                 "pos":pos,
                 "a":vi,
@@ -1307,6 +1328,10 @@ func _generate_storefronts() -> void:
                 "accent":d.accent,
                 "district":d.name
             })
+    for shop in storefronts:
+        if str(shop.kind)=="restaurant" and str(shop.district) in ["Zentrum","Neon Mile","Altstadt"]:
+            shop["kind"]="bar"
+            shop["name"]="Copper Bar" if str(shop.district)=="Altstadt" else ("Afterglow Bar" if str(shop.district)=="Neon Mile" else "Lumen Bar")
     for d in districts:
         var r2: Rect2 = d.rect
         var plant_count := 18 if d.style in ["green","garden","campus"] else 7
@@ -1586,6 +1611,10 @@ func _build_ui() -> void:
     var layer := CanvasLayer.new()
     layer.layer=20
     add_child(layer)
+    hud_root=Control.new()
+    hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    hud_root.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    layer.add_child(hud_root)
 
     var mission_panel := PanelContainer.new()
     mission_panel.position = Vector2(20, 38)
@@ -1595,6 +1624,10 @@ func _build_ui() -> void:
     sb.bg_color = Color(0.025,0.075,0.105,0.91)
     sb.border_color = Color(0.35,0.85,0.75,0.22)
     sb.set_border_width_all(2)
+    sb.content_margin_left=16
+    sb.content_margin_right=150
+    sb.content_margin_top=10
+    sb.content_margin_bottom=12
     sb.corner_radius_top_left = 22
     sb.corner_radius_top_right = 22
     sb.corner_radius_bottom_left = 22
@@ -1604,7 +1637,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · 1.22"
+    title.text = "PARALLAX HUNT · 1.23"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -1613,7 +1646,7 @@ func _build_ui() -> void:
     mission_label.add_theme_font_size_override("font_size", 30)
     vb.add_child(mission_label)
     mission_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    mission_label.custom_minimum_size.x=630
+    mission_label.custom_minimum_size.x=465
     mission_progress_bar=ProgressBar.new()
     mission_progress_bar.custom_minimum_size=Vector2(0,5)
     mission_progress_bar.show_percentage=false
@@ -1633,7 +1666,7 @@ func _build_ui() -> void:
     detail_label.add_theme_font_size_override("font_size", 20)
     detail_label.modulate = Color("#c7d6de")
     vb.add_child(detail_label)
-    layer.add_child(mission_panel)
+    hud_root.add_child(mission_panel)
     var hud_button=Button.new()
     hud_button.text="INFO"
     hud_button.position=Vector2(525,42)
@@ -1641,19 +1674,27 @@ func _build_ui() -> void:
     hud_button.pressed.connect(func():
         hud_details_visible=not hud_details_visible
         detail_label.visible=hud_details_visible)
-    layer.add_child(hud_button)
+    hud_root.add_child(hud_button)
     tracking_label=Label.new()
     tracking_label.position=Vector2(24,300)
     tracking_label.add_theme_font_size_override("font_size",20)
     tracking_label.modulate=Color("#9cb9c4")
-    layer.add_child(tracking_label)
-    var recenter_button=Button.new()
+    hud_root.add_child(tracking_label)
+    recenter_hud_button=Button.new()
+    var recenter_button=recenter_hud_button
     recenter_button.text="◎"
     recenter_button.tooltip_text="Perspektive zentrieren"
     recenter_button.position=Vector2(952,300)
     recenter_button.size=Vector2(90,76)
     recenter_button.pressed.connect(_recenter_headtracking)
-    layer.add_child(recenter_button)
+    hud_root.add_child(recenter_button)
+    interior_exit_button=Button.new()
+    interior_exit_button.text="ZUR STRASSE"
+    interior_exit_button.position=Vector2(775,300)
+    interior_exit_button.size=Vector2(265,76)
+    interior_exit_button.visible=false
+    interior_exit_button.pressed.connect(_leave_interior)
+    hud_root.add_child(interior_exit_button)
     objective_label=Label.new()
     objective_label.position=Vector2(140,392)
     objective_label.size=Vector2(800,80)
@@ -1663,7 +1704,7 @@ func _build_ui() -> void:
     objective_label.add_theme_color_override("font_shadow_color",Color("#07131c"))
     objective_label.add_theme_constant_override("shadow_offset_x",2)
     objective_label.add_theme_constant_override("shadow_offset_y",2)
-    layer.add_child(objective_label)
+    hud_root.add_child(objective_label)
 
     status_label = Label.new()
     status_label.position = Vector2(20, 205)
@@ -1671,24 +1712,28 @@ func _build_ui() -> void:
     status_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     status_label.add_theme_font_size_override("font_size", 21)
     status_label.modulate = Color("#d9e9ef")
-    layer.add_child(status_label)
+    hud_root.add_child(status_label)
 
     district_banner = Label.new()
     district_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    district_banner.position = Vector2(260, 250)
-    district_banner.size = Vector2(560, 75)
-    district_banner.add_theme_font_size_override("font_size", 36)
+    district_banner.position = Vector2(80, 735)
+    district_banner.size = Vector2(920, 100)
+    district_banner.add_theme_font_size_override("font_size", 27)
+    district_banner.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    district_banner.add_theme_color_override("font_shadow_color",Color("#06121a"))
+    district_banner.add_theme_constant_override("shadow_offset_y",3)
     district_banner.modulate = Color(1,1,1,0)
-    layer.add_child(district_banner)
+    hud_root.add_child(district_banner)
 
     reward_panel = PanelContainer.new()
-    reward_panel.position = Vector2(165,350)
-    reward_panel.size = Vector2(750,220)
+    reward_panel.position = Vector2(68,510)
+    reward_panel.size = Vector2(944,190)
     reward_panel.visible = false
     reward_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
     var rsb := StyleBoxFlat.new()
     rsb.bg_color = Color(0.025,0.06,0.075,0.96)
     rsb.border_color = Color(0.45,0.95,0.82,0.72)
+    rsb.set_content_margin_all(32)
     rsb.set_border_width_all(3)
     rsb.corner_radius_top_left = 24
     rsb.corner_radius_top_right = 24
@@ -1706,10 +1751,10 @@ func _build_ui() -> void:
     reward_body = Label.new()
     reward_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     reward_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    reward_body.add_theme_font_size_override("font_size",17)
+    reward_body.add_theme_font_size_override("font_size",25)
     reward_body.modulate = Color("#e4eef1")
     rvb.add_child(reward_body)
-    layer.add_child(reward_panel)
+    hud_root.add_child(reward_panel)
 
     var pause_button := Button.new()
     pause_button.text = "☰"
@@ -1717,7 +1762,7 @@ func _build_ui() -> void:
     pause_button.size = Vector2(70,72)
     pause_button.add_theme_font_size_override("font_size",28)
     pause_button.pressed.connect(_return_to_main_menu)
-    layer.add_child(pause_button)
+    hud_root.add_child(pause_button)
 
     var map_button := Button.new()
     map_button.text = "KARTE"
@@ -1725,7 +1770,7 @@ func _build_ui() -> void:
     map_button.size = Vector2(125,72)
     map_button.add_theme_font_size_override("font_size",22)
     map_button.pressed.connect(_toggle_map)
-    layer.add_child(map_button)
+    hud_root.add_child(map_button)
 
     var mission_button := Button.new()
     mission_button.text = "AUFTRÄGE"
@@ -1733,7 +1778,7 @@ func _build_ui() -> void:
     mission_button.size = Vector2(150,72)
     mission_button.add_theme_font_size_override("font_size",19)
     mission_button.pressed.connect(_toggle_missions)
-    layer.add_child(mission_button)
+    hud_root.add_child(mission_button)
 
     var collection_button := Button.new()
     collection_button.text = "SAMMLUNG"
@@ -1741,7 +1786,7 @@ func _build_ui() -> void:
     collection_button.size = Vector2(200,110)
     collection_button.add_theme_font_size_override("font_size",18)
     collection_button.pressed.connect(_toggle_collection)
-    layer.add_child(collection_button)
+    hud_root.add_child(collection_button)
 
     photo_target_label = Label.new()
     photo_target_label.position=Vector2(55,90)
@@ -1751,7 +1796,7 @@ func _build_ui() -> void:
     photo_target_label.add_theme_font_size_override("font_size",25)
     photo_target_label.modulate=Color("#f7fbff")
     photo_target_label.visible=false
-    layer.add_child(photo_target_label)
+    hud_root.add_child(photo_target_label)
 
     photo_status_label = Label.new()
     photo_status_label.position=Vector2(60,205)
@@ -1760,7 +1805,7 @@ func _build_ui() -> void:
     photo_status_label.add_theme_font_size_override("font_size",17)
     photo_status_label.modulate=Color("#ffcf8a")
     photo_status_label.visible=false
-    layer.add_child(photo_status_label)
+    hud_root.add_child(photo_status_label)
 
     photo_shutter_button = Button.new()
     photo_shutter_button.text="FOTO"
@@ -1769,7 +1814,7 @@ func _build_ui() -> void:
     photo_shutter_button.add_theme_font_size_override("font_size",27)
     photo_shutter_button.visible=false
     photo_shutter_button.pressed.connect(_photo_shutter)
-    layer.add_child(photo_shutter_button)
+    hud_root.add_child(photo_shutter_button)
 
     photo_exit_button = Button.new()
     photo_exit_button.text="VERLASSEN"
@@ -1777,7 +1822,7 @@ func _build_ui() -> void:
     photo_exit_button.size=Vector2(220,90)
     photo_exit_button.visible=false
     photo_exit_button.pressed.connect(_exit_photo_mode)
-    layer.add_child(photo_exit_button)
+    hud_root.add_child(photo_exit_button)
 
     photo_hint_button = Button.new()
     photo_hint_button.text="HINWEIS"
@@ -1785,7 +1830,7 @@ func _build_ui() -> void:
     photo_hint_button.size=Vector2(220,90)
     photo_hint_button.visible=false
     photo_hint_button.pressed.connect(_photo_hint)
-    layer.add_child(photo_hint_button)
+    hud_root.add_child(photo_hint_button)
 
     photo_zoom_in_button = Button.new()
     photo_zoom_in_button.text="+"
@@ -1794,7 +1839,7 @@ func _build_ui() -> void:
     photo_zoom_in_button.add_theme_font_size_override("font_size",30)
     photo_zoom_in_button.visible=false
     photo_zoom_in_button.pressed.connect(_photo_zoom.bind(-7.0))
-    layer.add_child(photo_zoom_in_button)
+    hud_root.add_child(photo_zoom_in_button)
 
     photo_zoom_out_button = Button.new()
     photo_zoom_out_button.text="−"
@@ -1803,11 +1848,11 @@ func _build_ui() -> void:
     photo_zoom_out_button.add_theme_font_size_override("font_size",30)
     photo_zoom_out_button.visible=false
     photo_zoom_out_button.pressed.connect(_photo_zoom.bind(7.0))
-    layer.add_child(photo_zoom_out_button)
+    hud_root.add_child(photo_zoom_out_button)
 
     game_panel = PanelContainer.new()
-    game_panel.position = Vector2(105,420)
-    game_panel.size = Vector2(870,1180)
+    game_panel.position = Vector2(80,510)
+    game_panel.size = Vector2(920,1300)
     game_panel.visible = false
     var gsb := StyleBoxFlat.new()
     gsb.bg_color = Color(0.025,0.055,0.075,0.985)
@@ -1831,11 +1876,11 @@ func _build_ui() -> void:
     gvb.add_child(game_title)
     game_info = Label.new()
     game_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    game_info.add_theme_font_size_override("font_size",18)
+    game_info.add_theme_font_size_override("font_size",26)
     gvb.add_child(game_info)
     game_status = Label.new()
     game_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    game_status.add_theme_font_size_override("font_size",17)
+    game_status.add_theme_font_size_override("font_size",26)
     game_status.modulate = Color("#c7d6de")
     gvb.add_child(game_status)
     var center_box := CenterContainer.new()
@@ -1855,15 +1900,16 @@ func _build_ui() -> void:
     close_game.custom_minimum_size = Vector2(0,70)
     close_game.pressed.connect(_close_minigame)
     gvb.add_child(close_game)
-    layer.add_child(game_panel)
+    hud_root.add_child(game_panel)
 
     commerce_panel = PanelContainer.new()
-    commerce_panel.position = Vector2(145,520)
-    commerce_panel.size = Vector2(790,980)
+    commerce_panel.position = Vector2(80,590)
+    commerce_panel.size = Vector2(920,1180)
     commerce_panel.visible = false
     var csb := StyleBoxFlat.new()
     csb.bg_color = Color(0.025,0.055,0.075,0.985)
     csb.border_color = Color(1.0,0.82,0.47,0.38)
+    csb.set_content_margin_all(32)
     csb.set_border_width_all(2)
     csb.corner_radius_top_left = 24
     csb.corner_radius_top_right = 24
@@ -1879,7 +1925,7 @@ func _build_ui() -> void:
     cvb.add_child(commerce_title)
     commerce_info = Label.new()
     commerce_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    commerce_info.add_theme_font_size_override("font_size",18)
+    commerce_info.add_theme_font_size_override("font_size",26)
     cvb.add_child(commerce_info)
     commerce_actions = VBoxContainer.new()
     commerce_actions.add_theme_constant_override("separation",10)
@@ -1889,7 +1935,7 @@ func _build_ui() -> void:
     close_commerce.custom_minimum_size = Vector2(0,70)
     close_commerce.pressed.connect(_close_commerce)
     cvb.add_child(close_commerce)
-    layer.add_child(commerce_panel)
+    hud_root.add_child(commerce_panel)
 
     scan_button = Button.new()
     scan_button.text = "SCAN"
@@ -1897,22 +1943,23 @@ func _build_ui() -> void:
     scan_button.size = Vector2(210, 110)
     scan_button.add_theme_font_size_override("font_size", 28)
     scan_button.pressed.connect(_scan)
-    layer.add_child(scan_button)
+    hud_root.add_child(scan_button)
     interact_button = Button.new()
     interact_button.text = "INTERACT"
     interact_button.position = Vector2(790, 1925)
     interact_button.size = Vector2(240, 115)
     interact_button.add_theme_font_size_override("font_size", 25)
     interact_button.pressed.connect(_interact)
-    layer.add_child(interact_button)
+    hud_root.add_child(interact_button)
 
     dialogue_panel = PanelContainer.new()
-    dialogue_panel.position = Vector2(120,1340)
-    dialogue_panel.size = Vector2(840,650)
+    dialogue_panel.position = Vector2(80,780)
+    dialogue_panel.size = Vector2(920,780)
     dialogue_panel.visible = false
     var dsb := StyleBoxFlat.new()
     dsb.bg_color = Color(0.025,0.055,0.075,0.97)
     dsb.border_color = Color(0.60,0.92,0.86,0.38)
+    dsb.set_content_margin_all(32)
     dsb.set_border_width_all(2)
     dsb.corner_radius_top_left = 24
     dsb.corner_radius_top_right = 24
@@ -1928,20 +1975,20 @@ func _build_ui() -> void:
     dvb.add_child(dialogue_title)
     dialogue_body = Label.new()
     dialogue_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    dialogue_body.add_theme_font_size_override("font_size",18)
+    dialogue_body.add_theme_font_size_override("font_size",26)
     dialogue_body.custom_minimum_size = Vector2(0,210)
     dvb.add_child(dialogue_body)
     dialogue_actions = VBoxContainer.new()
     dialogue_actions.add_theme_constant_override("separation",8)
     dvb.add_child(dialogue_actions)
-    layer.add_child(dialogue_panel)
+    hud_root.add_child(dialogue_panel)
 
     # Full-screen native main menu. Added last so it owns input while visible.
     main_menu_panel = PanelContainer.new()
     main_menu_panel.position = Vector2(0,0)
     main_menu_panel.size = Vector2(1080,2340)
     var msb := StyleBoxFlat.new()
-    msb.bg_color = Color(0.018,0.045,0.064,0.66)
+    msb.bg_color = Color(0.018,0.045,0.064,0.94)
     msb.border_color = Color(0.45,0.95,0.82,0.32)
     msb.set_border_width_all(2)
     msb.corner_radius_top_left = 34
@@ -2053,8 +2100,90 @@ func _build_ui() -> void:
     hint.add_theme_font_size_override("font_size",14)
     hint.modulate = Color("#8fa7b2")
     mvb.add_child(hint)
-    layer.add_child(main_menu_panel)
+    hud_root.add_child(main_menu_panel)
     _apply_game_theme(layer)
+    _build_modal_layer()
+
+func _build_modal_layer() -> void:
+    var layer=CanvasLayer.new()
+    layer.layer=45
+    add_child(layer)
+    modal_root=Control.new()
+    modal_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    modal_root.mouse_filter=Control.MOUSE_FILTER_STOP
+    layer.add_child(modal_root)
+    var dimmer=ColorRect.new()
+    dimmer.color=Color(0.015,0.035,0.05,0.88)
+    dimmer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    dimmer.mouse_filter=Control.MOUSE_FILTER_STOP
+    modal_root.add_child(dimmer)
+    city_menus=CityMenus.new()
+    modal_root.add_child(city_menus)
+    city_menus.setup(self)
+    for panel in [game_panel,commerce_panel,dialogue_panel,main_menu_panel]:
+        panel.reparent(modal_root)
+        if panel!=main_menu_panel: panel.minimum_size_changed.connect(_queue_modal_fit)
+    _sync_modal_ui()
+
+func _modal_active() -> bool:
+    return main_menu_active or map_open or missions_open or collection_open or minigame_open or (is_instance_valid(commerce_panel) and commerce_panel.visible) or (is_instance_valid(dialogue_panel) and dialogue_panel.visible)
+
+func _sync_modal_ui() -> void:
+    if not is_instance_valid(modal_root): return
+    var active:=_modal_active()
+    var state: String="map" if map_open else ("missions" if missions_open else ("collection" if collection_open else ("main" if main_menu_active else ("puzzle" if minigame_open else ("commerce" if commerce_panel.visible else ("dialogue" if dialogue_panel.visible else ""))))))
+    hud_root.visible=not active and not photo_mode
+    modal_root.visible=active
+    city_menus.visible=map_open or missions_open or collection_open
+    if state!=modal_state:
+        move_touch=-1
+        look_touch=-1
+        move_vec=Vector2.ZERO
+        move_origin=Vector2.ZERO
+        move_now=Vector2.ZERO
+        view_touch=Vector2.ZERO
+        desktop_look_drag=false
+        vehicle_velocity=0.0
+        if city_menus.visible: city_menus.show_section(state)
+        if active:
+            if reward_tween: reward_tween.kill()
+            if notice_tween: notice_tween.kill()
+            reward_panel.visible=false
+            district_banner.modulate.a=0
+        modal_state=state
+        if active: _queue_modal_fit()
+
+func _queue_modal_fit() -> void:
+    if modal_fit_pending: return
+    modal_fit_pending=true
+    call_deferred("_fit_modal_cards")
+
+func _fit_modal_cards() -> void:
+    # Wrapped labels need their assigned width before measuring the card height.
+    await get_tree().process_frame
+    await get_tree().process_frame
+    for panel in [dialogue_panel,commerce_panel,game_panel]:
+        if panel.visible:
+            panel.size=Vector2(920,maxf(640,panel.get_combined_minimum_size().y))
+            panel.position=Vector2(80,maxf(150,(get_viewport_rect().size.y-panel.size.y)*0.5))
+    modal_fit_pending=false
+
+func _close_overview() -> void:
+    map_open=false
+    missions_open=false
+    collection_open=false
+    _sync_modal_ui()
+    _update_ui()
+
+func _open_overview(kind: String) -> void:
+    if photo_mode or minigame_open or main_menu_active: return
+    _close_dialogue()
+    _close_commerce()
+    map_open=kind=="map"
+    missions_open=kind=="missions"
+    collection_open=kind=="collection"
+    _sync_modal_ui()
+    queue_redraw()
 
 func _apply_game_theme(node: Node) -> void:
     if node is Button:
@@ -2180,7 +2309,16 @@ func _toggle_camera_tracking() -> void:
     _refresh_option_labels()
 
 func _notification(what: int) -> void:
-    if what==NOTIFICATION_APPLICATION_PAUSED:
+    if what==NOTIFICATION_WM_GO_BACK_REQUEST:
+        if photo_mode: _exit_photo_mode()
+        elif map_open or missions_open or collection_open: _close_overview()
+        elif minigame_open: _close_minigame()
+        elif commerce_panel.visible: _close_commerce()
+        elif dialogue_panel.visible: _close_dialogue()
+        elif interior_active: _leave_interior()
+        elif not main_menu_active: _return_to_main_menu()
+        else: get_tree().quit()
+    elif what==NOTIFICATION_APPLICATION_PAUSED:
         if camera_tracker!=null:
             camera_tracker.call("stopTracking")
         if not main_menu_active:
@@ -2198,6 +2336,183 @@ func _restore_collectible_flags(items: Array, flags: Variant, field: String, leg
         # Old saves stored totals only. Preserve them instead of granting the same rewards again.
         for i in range(mini(items.size(),legacy_count)):
             items[i][field]=true
+
+func _run_quality_smoke_test() -> void:
+    set_process(false)
+    main_menu_active=false
+    main_menu_panel.visible=false
+    selected_save_slot=3
+    _sync_modal_ui()
+    assert(buildings.all(func(b): return waters.all(func(w): return not Rect2(w.rect).intersects(Rect2(b.rect)))),"No unexplained houses may sit inside water")
+    var point_count:=0
+    for group in [named_npcs,caches,glyphs,mission_sites,property_sites,vertical_sites,scan_points,photo_points,side_job_sites,city_micro_events,storefronts,fragments,secrets]:
+        for entry in group:
+            assert(CityAccess.connected(self,Vector2(entry.pos),14),"Every objective needs a continuous walking approach: "+str(entry))
+            point_count+=1
+    assert(junctions.all(func(j): return not bool(j.bridge)),"Every road-to-road node must be at grade")
+    var road_x: float=roads[0].points[0].x
+    var foot_a=Vector2(road_x+float(roads[0].width)*0.5+11.5,0)
+    var foot_b=Vector2(foot_a.x,WORLD_SIZE.y)
+    var sections=CityArt.clear_crossings(self,0,foot_a,foot_b,5)
+    for junction in junctions:
+        if int(junction.a)!=0: continue
+        var crossing=Vector2(foot_a.x,junction.pos.y)
+        assert(sections.all(func(section): return _distance_to_polyline(crossing,section)>10),"3D footways must have a gap across every crossing road")
+    assert(not _point_blocked(Vector2(caches[1].pos),16),"Mira's canal archive must be reachable")
+    active_npc_contract=_make_npc_contract("mira","Mira")
+    player_pos=Vector2(caches[1].pos)+Vector2(0,25)
+    assert(_npc_contract_target()==Vector2(caches[1].pos),"Mira must guide to the nearest remaining archive")
+    var archive: Vector2=caches[1].pos
+    player_pos=CityAccess.road_projections(self,archive)[0].pos
+    move_vec=(archive-player_pos).normalized()
+    for frame in range(90):
+        if player_pos.distance_to(archive)<7: break
+        _update_player(1.0/60.0)
+    move_vec=Vector2.ZERO
+    assert(player_pos.distance_to(archive)<12 and _nearest_interactable().type=="cache","The canal target must be collectable after a real walk across its bridge approach")
+
+    active_npc_contract={}
+    player_pos=Vector2(5100,4220)
+    assert(CityAccess.connected(self,Vector2(_make_npc_contract("nova","Nova").target),14),"New personal visit contracts must have a walking approach")
+    for target in district_access_points.values():
+        assert(CityAccess.connected(self,Vector2(target),14),"Every district survey target must be accessible")
+    var old_rng_state:=rng.state
+    var old_jobs_done:=jobs_done
+    var job_kinds: Dictionary={}
+    rng.seed=123
+    for attempt in range(49):
+        active_job={}
+        jobs_done=attempt
+        _open_jobboard(attempt%side_job_sites.size())
+        assert(not active_job.is_empty() and CityAccess.connected(self,Vector2(active_job.target),14),"New city jobs must guide to an accessible target")
+        job_kinds[str(active_job.kind)]=true
+    assert(job_kinds.has("delivery") and job_kinds.has("transit") and job_kinds.has("district"),"Exercise delivery, transit and survey creation")
+    active_job={}
+    jobs_done=old_jobs_done
+    rng.state=old_rng_state
+    for menu in ["map","collection","missions"]:
+        _open_overview(menu)
+        await get_tree().process_frame
+        assert(modal_root.visible and city_menus.visible and not status_label.is_visible_in_tree() and not scan_button.is_visible_in_tree() and not tracking_label.is_visible_in_tree(),"Menus must own a clean layer without gameplay text or controls")
+        var before:=player_pos
+        move_vec=Vector2.RIGHT
+        _update_player(0.25)
+        assert(player_pos==before,"Modal UI must prevent movement")
+        var touch=InputEventScreenTouch.new()
+        touch.index=0
+        touch.position=Vector2(160,1250)
+        touch.pressed=true
+        Input.parse_input_event(touch)
+        await get_tree().process_frame
+        touch.pressed=false
+        Input.parse_input_event(touch)
+        await get_tree().process_frame
+        assert(move_touch==-1,"Menu scroll touches must never start the world joystick")
+        _notification(NOTIFICATION_WM_GO_BACK_REQUEST)
+        assert(hud_root.visible and not modal_root.visible)
+    _talk_named_npc(0)
+    for frame in range(5): await get_tree().process_frame
+    assert(dialogue_panel.size.y<1100 and dialogue_panel.position.y>500,"Dialogue card must fit its actual content without filling the screen")
+    _close_dialogue()
+    for kind in ["bar","cafe","restaurant","home","shop","garage","workshop","hospital","openai_hq","roof","sublevel"]:
+        for floor_index in range(2 if kind=="home" else 1):
+            interior_kind=kind
+            interior_floor=floor_index
+            var grid=AStarGrid2D.new()
+            grid.region=Rect2i(0,0,46,63)
+            grid.cell_size=Vector2(20,20)
+            grid.offset=Vector2(10,10)
+            grid.diagonal_mode=AStarGrid2D.DIAGONAL_MODE_NEVER
+            grid.update()
+            for x in range(46):
+                for y in range(63):
+                    grid.set_point_solid(Vector2i(x,y),not InteriorArt.walkable(self,Vector2(x*20+10,y*20+10)))
+            var start=Vector2i(23,57)
+            var end=Vector2i(_interior_feature_pos()/20)
+            assert(not grid.get_id_path(start,end).is_empty(),"Room feature must be reachable around furniture: "+kind+str(floor_index))
+            assert(InteriorArt.walkable(self,Vector2(interior_size.x*.5,interior_size.y-48)),"Exit must stay accessible")
+    interior_active=false
+    var old_traffic:=traffic.duplicate(true)
+    var old_agents:=smart_agents.duplicate(true)
+    var old_cars:=parked_cars.duplicate(true)
+    traffic.clear()
+    smart_agents.clear()
+    parked_cars=[{"pos":Vector2(12200,1200),"class":"hatch","heading":0.0,"color":Color.WHITE,"occupied":true}]
+    current_vehicle=0
+    for direction in [Vector2.RIGHT,Vector2.DOWN,Vector2.LEFT,Vector2.UP]:
+        player_pos=Vector2(12200,1200)
+        parked_cars[0]["pos"]=player_pos
+        var start:=player_pos
+        player_heading=direction.angle()-PI*.5
+        vehicle_velocity=0
+        move_vec=direction*.65
+        _update_player(0.02)
+        assert(absf(wrapf(player_heading-direction.angle(),-PI,PI))>0.3,"Heading must turn smoothly, not snap")
+        for frame in range(120): _update_player(1.0/60.0)
+        assert(Vector2.from_angle(player_heading).dot(direction)>0.99 and (player_pos-start).dot(direction)>80,"Car must drive toward the chosen world direction")
+        var released_pos:=player_pos
+        move_vec=Vector2.ZERO
+        for frame in range(90): _update_player(1.0/60.0)
+        assert(vehicle_velocity==0 and player_pos.distance_to(released_pos)<110,"Releasing the stick must brake predictably")
+    current_vehicle=-1
+    traffic=old_traffic
+    smart_agents=old_agents
+    parked_cars=old_cars
+    _show_reward_popup("ERSTE MELDUNG","Test")
+    await get_tree().create_timer(0.9).timeout
+    _show_reward_popup("NEUE MELDUNG","Bleibt bis zum eigenen Ablauf sichtbar")
+    await get_tree().create_timer(3.0).timeout
+    assert(reward_panel.visible and reward_title.text=="NEUE MELDUNG","An old popup timer must not hide a newer popup")
+    print("QUALITY_SMOKE_OK · %d connected objectives / modal input / 12 room routes / directional steering / independent popup lifetime" % point_count)
+    get_tree().quit()
+
+func _capture_quality_frame(filename: String) -> void:
+    _update_ui()
+    queue_redraw()
+    await get_tree().create_timer(0.4).timeout
+    await RenderingServer.frame_post_draw
+    get_viewport().get_texture().get_image().save_png("res://build/"+filename+".png")
+
+func _run_quality_capture() -> void:
+    main_menu_active=false
+    main_menu_panel.visible=false
+    camera_pos=player_pos
+    world_zoom=2.65
+    target_world_zoom=2.65
+    for menu in ["map","collection","missions"]:
+        _open_overview(menu)
+        await _capture_quality_frame("menu-"+menu)
+        _close_overview()
+    var crossing: Dictionary=junctions.filter(func(j): return not bool(j.bridge) and Vector2(j.pos)==Vector2(2700,2600))[0]
+    player_pos=Vector2(crossing.pos)+Vector2(80,100)
+    camera_pos=Vector2(crossing.pos)
+    set_process(false)
+    await _capture_quality_frame("crossing-at-grade")
+    for kind in ["bar","cafe","home","garage","shop","hospital","roof"]:
+        _enter_interior({"bar":"Lumen Bar","cafe":"Prism Café","home":"Canal Loft","garage":"Vector Garage","shop":"Signal Store","hospital":"Parallax Stadtklinikum","roof":"Glass Quarter Roof"}[kind],kind,Color("#73f3ce"),player_pos)
+        if notice_tween: notice_tween.kill()
+        district_banner.modulate.a=0
+        interior_player_pos=Vector2(460,1060)
+        await _capture_quality_frame("interior-"+kind)
+        _leave_interior()
+    active_npc_contract=_make_npc_contract("mira","Mira")
+    player_pos=Vector2(caches[1].pos)+Vector2(200,0)
+    player_pos=CityAccess.safe_point(self,player_pos)
+    camera_pos=player_pos
+    current_vehicle=-1
+    world_zoom=2.0
+    if notice_tween: notice_tween.kill()
+    district_banner.modulate.a=0
+    await _capture_quality_frame("mira-canal-access")
+    active_npc_contract={}
+    _talk_named_npc(0)
+    await _capture_quality_frame("dialogue-card")
+    _close_dialogue()
+    var warmup: Dictionary=mission_sites.filter(func(site): return str(site.id)=="centerWarmup")[0]
+    _start_minigame(warmup)
+    await _capture_quality_frame("puzzle-card")
+    _close_minigame()
+    get_tree().quit()
 
 func _run_experience_smoke_test() -> void:
     main_menu_active=false
@@ -2614,18 +2929,23 @@ func _photo_build_scene(index: int) -> void:
             slab.rotation.y=atan2(delta.x,delta.z)
             var flat_dir := Vector2(delta.x,delta.z).normalized()
             var flat_normal := Vector2(-flat_dir.y,flat_dir.x)
-            var edge_offset: float = float(road.width)*0.05+1.15
+            var world_tangent=(b-a).normalized()
+            var world_normal=Vector2(-world_tangent.y,world_tangent.x)
             for side_sign in [-1.0,1.0]:
-                var off := Vector3(flat_normal.x*edge_offset,0.26,flat_normal.y*edge_offset)
-                var walk_color := Color("#6b7478")
-                if photo_weather in ["rain","storm"]:
-                    walk_color=Color("#536067")
-                var walk := _photo_box("Walk_%d_%d_%d" % [ri,k,int(side_sign)],(la+lb)*0.5+off,Vector3(2.0,0.24,length),walk_color)
-                walk.rotation.y=slab.rotation.y
-                if graphics_quality>0:
-                    walk.material_override=PhotoArt.paving_material(str(_district_at(center).style))
-            var lane := _photo_box("Lane_%d_%d" % [ri,k],(la+lb)*0.5+Vector3(0,0.25,0),Vector3(0.16,0.05,length*0.92),Color(0.92,0.90,0.72,0.65))
-            lane.rotation.y=slab.rotation.y
+                var offset=world_normal*(float(road.width)*0.5+11.5)*side_sign
+                var footways=CityArt.clear_crossings(self,ri,a+offset,b+offset,5.0)
+                for footway in footways:
+                    var wa=_photo_local(footway[0],center,0.0)
+                    var wb=_photo_local(footway[1],center,0.0)
+                    var distance=wa.distance_to(wb)
+                    var walk=_photo_box("Walk_%d_%d_%d" % [ri,k,int(side_sign)],(wa+wb)*0.5+Vector3(0,0.26,0),Vector3(2.0,0.24,distance),Color("#82908f"))
+                    walk.rotation.y=atan2((wb-wa).x,(wb-wa).z)
+                    if graphics_quality>0: walk.material_override=PhotoArt.paving_material(str(_district_at(center).style))
+            for lane_section in CityArt.clear_crossings(self,ri,a,b,47):
+                var lane_a=_photo_local(lane_section[0],center,0.0)
+                var lane_b=_photo_local(lane_section[1],center,0.0)
+                var lane=_photo_box("Lane_%d_%d" % [ri,k],(lane_a+lane_b)*0.5+Vector3(0,0.25,0),Vector3(0.16,0.05,lane_a.distance_to(lane_b)),Color(0.92,0.90,0.72,0.85))
+                lane.rotation.y=atan2((lane_b-lane_a).x,(lane_b-lane_a).z)
 
     for j in junctions:
         if Vector2(j.pos).distance_to(center)>radius or bool(j.bridge):
@@ -3871,16 +4191,18 @@ func _update_player(delta: float) -> void:
         if move_vec.length() < 0.04:
             return
         var iv := move_vec.normalized() * WALK_SPEED * minf(1.0,move_vec.length())
-        interior_player_pos += iv * delta
-        interior_player_pos.x = clampf(interior_player_pos.x,45.0,interior_size.x-45.0)
-        interior_player_pos.y = clampf(interior_player_pos.y,45.0,interior_size.y-45.0)
+        var candidate:=interior_player_pos+iv*delta
+        var horizontal:=Vector2(candidate.x,interior_player_pos.y)
+        if InteriorArt.walkable(self,horizontal): interior_player_pos.x=horizontal.x
+        var vertical:=Vector2(interior_player_pos.x,candidate.y)
+        if InteriorArt.walkable(self,vertical): interior_player_pos.y=vertical.y
         player_heading = iv.angle()
         return
     if current_vehicle>=0 and not active_race.is_empty() and float(active_race.get("countdown",0.0))>0.0:
         vehicle_velocity=move_toward(vehicle_velocity,0.0,delta*600.0)
         return
-    if move_vec.length() < 0.04:
-        vehicle_velocity = move_toward(vehicle_velocity, 0.0, delta * 280.0)
+    if move_vec.length() < 0.04 and current_vehicle<0:
+        energy=minf(100.0,energy+delta*1.4)
         return
     if current_vehicle >= 0:
         var car: Dictionary = parked_cars[current_vehicle]
@@ -3889,34 +4211,33 @@ func _update_player(delta: float) -> void:
         var accel: float = float(VEHICLE_ACCEL.get(cls,240.0)) * _vehicle_tune_multiplier(cls,"engine")
         var brake: float = float(VEHICLE_BRAKE.get(cls,350.0)) * _vehicle_tune_multiplier(cls,"brake")
         var handling: float = float(VEHICLE_HANDLING.get(cls,2.2)) * _vehicle_tune_multiplier(cls,"handling")
-        var throttle: float = clampf(-move_vec.y,-1.0,1.0)
-        var steer_raw: float = clampf(move_vec.x,-1.0,1.0)
-        var steer: float = sign(steer_raw)*pow(abs(steer_raw),1.32)
-        var desired_speed: float = max_speed*throttle if throttle>=0.0 else max_speed*0.30*throttle
-        var rate: float = accel if abs(desired_speed)>abs(vehicle_velocity) and sign(desired_speed)==sign(vehicle_velocity) else brake
-        if abs(throttle)<0.08:
-            desired_speed=0.0
-            rate=105.0
-        vehicle_velocity=move_toward(vehicle_velocity,desired_speed,rate*delta)
-        var speed_ratio: float = clampf(abs(vehicle_velocity)/maxf(1.0,max_speed),0.0,1.0)
-        var steer_gain: float = handling*(0.24+0.92*speed_ratio)
-        var reverse_sign: float = -1.0 if vehicle_velocity<0.0 else 1.0
-        player_heading += steer*steer_gain*delta*reverse_sign
-        if driving_assist and abs(steer)<0.16 and abs(vehicle_velocity)>55.0:
-            var nearest_road: int = _nearest_road_index(player_pos)
-            if nearest_road>=0:
-                var road_tangent := _closest_road_tangent(nearest_road,player_pos)
-                var desired: float = road_tangent.angle()
-                if abs(wrapf(desired-player_heading,-PI,PI))>PI*0.5:
-                    desired=wrapf(desired+PI,-PI,PI)
-                player_heading=lerp_angle(player_heading,desired,minf(1.0,delta*(0.45+speed_ratio*0.75)))
+        var input_amount: float=clampf(move_vec.length(),0.0,1.0)
+        vehicle_turn_error=0.0
+        var speed_ratio: float=clampf(absf(vehicle_velocity)/max_speed,0.0,1.0)
+        var desired_speed: float=0.0
+        if input_amount>0.04:
+            var desired_heading: float=move_vec.angle()
+            var angle_error: float=wrapf(desired_heading-player_heading,-PI,PI)
+            vehicle_turn_error=angle_error
+            # Stick/WASD directions are world directions, shared with walking.
+            # Slow for tight corners before turning; never steer against the stick.
+            var turn_rate: float=handling*(2.15-0.72*speed_ratio)
+            if driving_assist: turn_rate*=1.12
+            player_heading=wrapf(player_heading+clampf(angle_error,-turn_rate*delta,turn_rate*delta),-PI,PI)
+            var corner_factor: float=clampf(1.0-absf(angle_error)/PI*1.05,0.12,1.0)
+            desired_speed=max_speed*input_amount*corner_factor
+            if absf(angle_error)>2.2 and absf(vehicle_velocity)<65.0:
+                desired_speed=0.0
+        vehicle_braking=desired_speed<vehicle_velocity-20.0
+        var rate: float=accel if desired_speed>vehicle_velocity else brake*(1.15 if driving_assist else 1.0)
+        vehicle_velocity=move_toward(maxf(0.0,vehicle_velocity),desired_speed,rate*delta)
         var velocity := Vector2.from_angle(player_heading)*vehicle_velocity
         var np := player_pos+velocity*delta
         if not _point_blocked(np,18.0) and not _vehicle_dynamic_blocked(np,current_vehicle):
             player_pos=np
         else:
             var impact_speed: float = abs(vehicle_velocity)
-            vehicle_velocity*=-0.06
+            vehicle_velocity=0.0
             _play_sfx("impact")
             camera_shake_strength=maxf(camera_shake_strength,clampf(impact_speed/42.0,1.8,7.5))
             _haptic(75 if impact_speed>170.0 else 35)
@@ -5284,6 +5605,7 @@ func _district_identity_label(style: String) -> String:
     return str(labels.get(style,"MEGACITY"))
 
 func _update_ui() -> void:
+    _sync_modal_ui()
     if photo_mode:
         objective_label.visible=false
         mission_label.text="PHOTO CHALLENGE"
@@ -5293,10 +5615,15 @@ func _update_ui() -> void:
         scan_button.disabled=true
         return
     scan_button.disabled=false
-    objective_label.visible=not (main_menu_active or map_open or missions_open or collection_open or minigame_open or interior_active or dialogue_panel.visible or commerce_panel.visible)
+    objective_label.visible=not (main_menu_active or map_open or missions_open or collection_open or minigame_open or dialogue_panel.visible or commerce_panel.visible)
     var target:=_current_objective_pos()
     var objective_distance: int=int(player_pos.distance_to(target)/10) if target!=Vector2.ZERO else 0
     objective_label.text=("%s · %d m\n%s" % [_current_objective_label(),objective_distance,_objective_action()]) if target!=Vector2.ZERO else "Die Stadt gehört dir · neue Aufträge und Motive entdecken"
+    interior_exit_button.visible=interior_active
+    recenter_hud_button.visible=not interior_active
+    scan_button.visible=not interior_active
+    if interior_active:
+        objective_label.text={"bar":"Zum markierten Tresen gehen und BESTELLEN","cafe":"Kaffee und Gebäck am markierten Tresen bestellen","restaurant":"Zur Küche gehen und BESTELLEN","home":"Hausgarage am Terminal öffnen · Treppe zur zweiten Etage","shop":"Zur Kasse gehen und EINKAUFEN","garage":"Am Diagnose-Terminal SERVICE wählen","workshop":"Am Diagnose-Terminal SERVICE wählen","hospital":"Zur Triage gehen und Energie auffüllen","openai_hq":"Die markierte Ausstellung erkunden","roof":"Zum leuchtenden Dach-Relay gehen und SYNCHRONISIEREN","sublevel":"Zum Terminal gehen und den Knoten AKTIVIEREN"}.get(interior_kind,"Den markierten Punkt erkunden")
     if tracking_label!=null:
         tracking_label.text=("KOPF · "+camera_tracking_state) if camera_tracking_enabled else "PERSPEKTIVE · Touch / Neigung"
         tracking_label.modulate=Color("#73f3ce") if camera_tracking_state=="Gesicht erkannt" and camera_tracking_enabled else Color("#9cb9c4")
@@ -5304,6 +5631,8 @@ func _update_ui() -> void:
     mission_label.text = "%s · %d/%d" % [str(chapter.title),mini(_chapter_progress(chapter),int(chapter.get("goal",1))),int(chapter.get("goal",1))]
     mission_progress_bar.max_value=maxf(1,float(chapter.get("goal",1)))
     mission_progress_bar.value=minf(_chapter_progress(chapter),mission_progress_bar.max_value)
+    mission_progress_bar.visible=not interior_active
+    if interior_active: mission_label.text=InteriorArt.title(interior_kind,interior_floor)+" · "+interior_name
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
     elif not active_job.is_empty():
@@ -5312,8 +5641,8 @@ func _update_ui() -> void:
         var task_text:=str(active_job.get("task",""))
         detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m%s · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance,(" · "+task_text if task_text!="" else "")]
     else:
-        detail_label.text = "Links bewegen · rechts Perspektive · Headtracking %s · MAP/MISSIONS für Übersicht." % camera_status
-    var mode: String = "Innenraum · %s" % interior_name if interior_active else "Zu Fuß"
+        detail_label.text = "Links Richtung wählen · rechts Perspektive · loslassen bremst das Auto."
+    var mode: String = "Etage %d" % (interior_floor+1) if interior_active else "Zu Fuß"
     if current_vehicle >= 0:
         var drive_cls: String = str(parked_cars[current_vehicle]["class"])
         var group: String = str(VEHICLE_SPEED_GROUP.get(drive_cls,"ROAD"))
@@ -5323,12 +5652,13 @@ func _update_ui() -> void:
         mode = "Transit · %s" % str(transit_vehicles[transit_riding].line)
     var clock_h := int(floor(world_clock))
     var clock_m := int(floor((world_clock-float(clock_h))*60.0))
-    status_label.text = "%s · %s · %02d:%02d · %s\n%d CR · Energie %d%% · Stadtruf %d" % [("Innenraum" if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),credits,int(energy),city_reputation]
+    status_label.text = "%s · %s · %02d:%02d · %s\n%d CR · Energie %d%% · Stadtruf %d" % [(interior_name if interior_active else current_district),mode,clock_h,clock_m,_weather_label(),credits,int(energy),city_reputation]
     var near := _nearest_interactable()
     interact_button.disabled = near.is_empty()
     interact_button.text = "AKTION" if near.is_empty() else _localized_action(str(near.get("action","AKTION")))
 
 func _scan() -> void:
+    if _modal_active() or photo_mode or interior_active: return
     scan_time = 2.2
     _play_sfx("scan")
     var found := false
@@ -5476,11 +5806,11 @@ func _nearest_interactable() -> Dictionary:
         var exit_pos := Vector2(interior_size.x*0.5,interior_size.y-48)
         if interior_player_pos.distance_to(exit_pos) < 78.0:
             return {"type":"interior_exit","action":"EXIT"}
-        if interior_kind in ["openai_hq","home","shop","restaurant","cafe"] and interior_player_pos.distance_to(_interior_elevator_pos())<78.0:
+        if interior_kind in ["openai_hq","home","shop","restaurant","cafe","bar","hospital"] and interior_player_pos.distance_to(_interior_elevator_pos())<78.0:
             return {"type":"interior_floor","action":"ETAGE %d" % (2 if interior_floor==0 else 1)}
         var feature := _interior_feature_pos()
         if interior_player_pos.distance_to(feature) < 82.0:
-            return {"type":"interior_feature","action":"USE","message":_interior_feature_message()}
+            return {"type":"interior_feature","action":{"bar":"BESTELLEN","restaurant":"BESTELLEN","cafe":"BESTELLEN","shop":"EINKAUFEN","home":"HAUSGARAGE","garage":"SERVICE","workshop":"SERVICE","roof":"SYNCHRONISIEREN","sublevel":"AKTIVIEREN","hospital":"HEILEN"}.get(interior_kind,"BENUTZEN"),"message":_interior_feature_message()}
         return {}
     if current_vehicle >= 0:
         if active_race.is_empty():
@@ -5622,9 +5952,10 @@ func _draw() -> void:
     if interior_active:
         _draw_interior_scene()
         _draw_interior_player()
-        _draw_ambient_overlay()
-        _draw_touch_controls()
-        _draw_peek_meter()
+        if interior_kind=="roof": _draw_ambient_overlay()
+        if not _modal_active():
+            _draw_touch_controls()
+            _draw_peek_meter()
         return
     _draw_district_ground()
     _draw_water()
@@ -5663,15 +5994,10 @@ func _draw() -> void:
         draw_rect(Rect2(Vector2.ZERO,get_viewport_rect().size),Color(1,1,1,photo_flash_alpha*0.72),true)
         var frame := Rect2(Vector2(42,130),get_viewport_rect().size-Vector2(84,260))
         draw_rect(frame,Color(1,1,1,photo_flash_alpha*0.45),false,4.0)
-    _draw_touch_controls()
-    _draw_peek_meter()
-    _draw_mission_compass()
-    if map_open:
-        _draw_map_overlay()
-    elif missions_open:
-        _draw_missions_overlay()
-    elif collection_open:
-        _draw_collection_overlay()
+    if not _modal_active():
+        _draw_touch_controls()
+        _draw_peek_meter()
+        _draw_mission_compass()
     if hospital_transition>0.0:
         _draw_hospital_cutscene()
 
@@ -5940,7 +6266,9 @@ func _draw_water() -> void:
             continue
         var p := _project(r.position)
         var tint: Color = w.tint
+        draw_rect(Rect2(p-Vector2(12,12)*world_zoom,(r.size+Vector2(24,24))*world_zoom),Color("#50636b"))
         draw_rect(Rect2(p,r.size*world_zoom),tint.darkened(0.18))
+        draw_rect(Rect2(p,r.size*world_zoom),Color("#8a9b99"),false,3*world_zoom)
         var shimmer := Time.get_ticks_msec() / 900.0
         for yy in range(26,int(r.size.y*world_zoom)-20,54):
             var y := p.y + yy
@@ -5995,32 +6323,9 @@ func _draw_road_surface_details(road: Dictionary) -> void:
             draw_line(puddle_center-tan*puddle_w*0.55,puddle_center+tan*puddle_w*0.55,Color(0.78,0.90,0.94,0.055),1.0,true)
 
 func _draw_junction_overlays() -> void:
-    for j in junctions:
-        var wp: Vector2 = Vector2(j.pos)
-        if player_pos.distance_to(wp)>1900.0:
-            continue
-        var p := _project(wp,1.0)
-        var wa: float = float(roads[int(j.a)].width)*world_zoom
-        var wb: float = float(roads[int(j.b)].width)*world_zoom
-        if not bool(j.bridge):
-            CityArt.draw_junction(self,j)
-        else:
-            var over: int = int(j.over)
-            var over_vertical: bool = over<10
-            var nearest_road := _nearest_road_index(player_pos)
-            var under: int = int(j.b) if over==int(j.a) else int(j.a)
-            var on_under: bool = nearest_road==under and player_pos.distance_to(wp)<380.0
-            # Underpass is deliberately darker. The upper deck fades when player passes underneath.
-            if over_vertical:
-                draw_rect(Rect2(p-Vector2(wb*0.60,wa*0.55),Vector2(wb*1.20,wa*1.10)),Color(0.08,0.11,0.13,0.62),true)
-                draw_rect(Rect2(p-Vector2(wa*0.52,wb*0.70),Vector2(wa*1.04,wb*1.40)),Color(0.34,0.39,0.42,0.42 if on_under else 0.96),true)
-                draw_line(p+Vector2(-wa*0.52,-wb*0.70),p+Vector2(-wa*0.52,wb*0.70),Color(0,0,0,0.28),5.0)
-                draw_line(p+Vector2(wa*0.52,-wb*0.70),p+Vector2(wa*0.52,wb*0.70),Color(0,0,0,0.28),5.0)
-            else:
-                draw_rect(Rect2(p-Vector2(wb*0.55,wa*0.60),Vector2(wb*1.10,wa*1.20)),Color(0.08,0.11,0.13,0.62),true)
-                draw_rect(Rect2(p-Vector2(wb*0.70,wa*0.52),Vector2(wb*1.40,wa*1.04)),Color(0.34,0.39,0.42,0.42 if on_under else 0.96),true)
-                draw_line(p+Vector2(-wb*0.70,-wa*0.52),p+Vector2(wb*0.70,-wa*0.52),Color(0,0,0,0.28),5.0)
-                draw_line(p+Vector2(-wb*0.70,wa*0.52),p+Vector2(wb*0.70,wa*0.52),Color(0,0,0,0.28),5.0)
+    for junction in junctions:
+        if player_pos.distance_to(Vector2(junction.pos))<1900:
+            CityArt.draw_junction(self,junction)
 
 func _nearest_road_index(p: Vector2) -> int:
     var best := INF
@@ -6420,7 +6725,7 @@ func _draw_storefronts() -> void:
         if slice_store:
             draw_rect(Rect2(c+Vector2(-store_half.x+5,store_half.y+3),Vector2(store_half.x*2.0-10,9*store_scale)),Color(accent.r,accent.g,accent.b,0.18),true)
             draw_circle(c+Vector2(0,store_half.y+10),26*store_scale,Color(accent.r,accent.g,accent.b,0.015))
-        var icon := "R" if st.kind=="restaurant" else ("C" if st.kind=="cafe" else ("S" if st.kind=="shop" else ("G" if st.kind=="garage" else "W")))
+        var icon := "B" if st.kind=="bar" else ("R" if st.kind=="restaurant" else ("C" if st.kind=="cafe" else ("S" if st.kind=="shop" else ("G" if st.kind=="garage" else "W"))))
         draw_circle(c+Vector2(-20,0),7,accent)
         draw_string(ThemeDB.fallback_font,c+Vector2(-23,-5),icon,HORIZONTAL_ALIGNMENT_CENTER,8,9,Color("#102028"))
         draw_string(ThemeDB.fallback_font,c+Vector2(-10,-5),str(st.name),HORIZONTAL_ALIGNMENT_LEFT,52,9,Color.WHITE)
@@ -6428,7 +6733,7 @@ func _draw_storefronts() -> void:
             draw_line(c+Vector2(-18,13),c+Vector2(-18,24),Color("#7d8a90"),2.0)
             draw_line(c+Vector2(18,13),c+Vector2(18,24),Color("#7d8a90"),2.0)
             draw_line(c+Vector2(-18,24),c+Vector2(18,24),accent,2.0)
-        elif st.kind in ["restaurant","cafe"]:
+        elif st.kind in ["restaurant","cafe","bar"]:
             draw_circle(c+Vector2(-10,23),5,Color("#5f4b3e"))
             draw_circle(c+Vector2(10,23),5,Color("#5f4b3e"))
             var awn_wave:=sin(float(Time.get_ticks_msec())/520.0+float(int(st.pos.x+st.pos.y)%13))*3.0
@@ -6549,8 +6854,10 @@ func _talk_named_npc(index: int) -> void:
     dialogue_actions.add_child(contract_btn)
     dialogue_actions.add_child(city_btn)
     dialogue_actions.add_child(close_btn)
+    commerce_panel.visible=false
     dialogue_panel.visible=true
     move_vec=Vector2.ZERO
+    _sync_modal_ui()
 
 func _join_micro_event(index: int) -> void:
     if index<0 or index>=city_micro_events.size():
@@ -6614,6 +6921,7 @@ func _start_event_followup(index: int, event: Dictionary) -> bool:
     var target:=_event_followup_target(index,source)
     if target==Vector2.ZERO:
         return false
+    target=CityAccess.safe_point(self,target)
     var title:="Lokaler Folgeauftrag"
     var task:="Material weiterbringen"
     var pay:=52
@@ -6784,7 +7092,7 @@ func _make_npc_contract(id: String, npc_name: String) -> Dictionary:
     if id=="mira":
         return {"npc":id,"npc_name":npc_name,"kind":"cache","start":cache_count,"goal":2,"reward":85,"title":"Miras verlorene Archive","target":Vector2.ZERO}
     if id=="nova":
-        return {"npc":id,"npc_name":npc_name,"kind":"visit","start":0,"goal":1,"reward":95,"title":"Novas Hafenroute","target":Vector2(7550,12600)}
+        return {"npc":id,"npc_name":npc_name,"kind":"visit","start":0,"goal":1,"reward":95,"title":"Novas Hafenroute","target":CityAccess.safe_point(self,Vector2(7550,12600))}
     if id=="luna":
         return {"npc":id,"npc_name":npc_name,"kind":"hack","hack":"gridRepair","goal":1,"reward":110,"title":"Lunas Grid-Diagnose","target":Vector2(23100,1750)}
     if id=="iris":
@@ -6792,7 +7100,7 @@ func _make_npc_contract(id: String, npc_name: String) -> Dictionary:
     if id=="vio":
         return {"npc":id,"npc_name":npc_name,"kind":"hack","hack":"cipherGate","goal":1,"reward":105,"title":"Vios Cipher Challenge","target":Vector2(23600,8700)}
     if id=="bram":
-        return {"npc":id,"npc_name":npc_name,"kind":"transit","start":transit_trip_count,"goal":1,"reward":75,"title":"Brams Liniencheck","target":Vector2(23200,5400)}
+        return {"npc":id,"npc_name":npc_name,"kind":"transit","start":transit_trip_count,"goal":1,"reward":75,"title":"Brams Liniencheck","target":_nearest_transit_stop_pos(player_pos)}
     return {"npc":id,"npc_name":npc_name,"kind":"visit","goal":1,"reward":70,"title":"Persönlicher Auftrag","target":Vector2(player_pos)}
 
 func _contract_description(c: Dictionary) -> String:
@@ -6814,9 +7122,10 @@ func _npc_contract_target() -> Vector2:
         return Vector2.ZERO
     var kind := str(active_npc_contract.kind)
     if kind=="cache":
-        for ca in caches:
-            if not bool(ca.taken):
-                return Vector2(ca.pos)
+        return _closest_uncollected(caches,"taken")
+    if kind=="hack":
+        for site in mission_sites:
+            if str(site.id)==str(active_npc_contract.get("hack","")): return Vector2(site.pos)
     return Vector2(active_npc_contract.get("target",Vector2.ZERO))
 
 func _check_npc_contract() -> void:
@@ -6864,6 +7173,7 @@ func _dialogue_city() -> void:
 func _close_dialogue() -> void:
     dialogue_panel.visible=false
     active_dialogue_npc=-1
+    _sync_modal_ui()
 
 func _draw_scan_points() -> void:
     for sp in scan_points:
@@ -7680,13 +7990,15 @@ func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vect
     current_vehicle = -1
     vehicle_velocity = 0.0
     _play_sfx("collect")
-    _notify("%s · entered" % name)
+    move_vec=Vector2.ZERO
+    _update_ui()
+    _notify("%s · Willkommen" % name)
 
 func _leave_interior() -> void:
     commerce_panel.visible = false
     interior_active = false
     current_vertical_id = ""
-    player_pos = interior_return_pos + Vector2(0,42)
+    player_pos = CityAccess.safe_point(self,interior_return_pos+Vector2(0,42))
     if service_vehicle_index>=0 and service_vehicle_index<parked_cars.size():
         current_vehicle=service_vehicle_index
         parked_cars[current_vehicle]["occupied"]=true
@@ -7694,27 +8006,30 @@ func _leave_interior() -> void:
         service_vehicle_index=-1
     camera_pos = player_pos
     _play_sfx("door")
-    _notify("Back outside · %s" % current_district)
+    move_vec=Vector2.ZERO
+    _update_ui()
+    _notify("Wieder draußen · %s" % current_district)
 
 func _show_reward_popup(title_text: String, body_text: String, accent: Color = Color("#73f3ce")) -> void:
-    if reward_panel==null:
-        return
+    if reward_panel==null: return
+    if reward_tween: reward_tween.kill()
     reward_title.text=title_text
     reward_title.modulate=accent
     reward_body.text=body_text
     reward_panel.visible=true
-    reward_panel.modulate=Color(1,1,1,1)
-    var tw := create_tween()
-    tw.tween_interval(2.15)
-    tw.tween_property(reward_panel,"modulate:a",0.0,0.50)
-    tw.tween_callback(func(): reward_panel.visible=false)
+    reward_panel.modulate=Color.WHITE
+    reward_tween=create_tween()
+    reward_tween.tween_interval(3.4)
+    reward_tween.tween_property(reward_panel,"modulate:a",0.0,0.35)
+    reward_tween.tween_callback(func(): reward_panel.visible=false)
 
 func _notify(text: String) -> void:
-    district_banner.text = text
-    district_banner.modulate = Color(1,1,1,1)
-    var tw := create_tween()
-    tw.tween_interval(1.0)
-    tw.tween_property(district_banner,"modulate:a",0.0,0.65)
+    if notice_tween: notice_tween.kill()
+    district_banner.text=text
+    district_banner.modulate=Color.WHITE
+    notice_tween=create_tween()
+    notice_tween.tween_interval(2.6)
+    notice_tween.tween_property(district_banner,"modulate:a",0.0,0.4)
 
 func _interior_elevator_pos() -> Vector2:
     return Vector2(interior_size.x-105,interior_size.y-115)
@@ -7722,23 +8037,16 @@ func _interior_elevator_pos() -> Vector2:
 func _toggle_interior_floor() -> void:
     interior_floor=1-interior_floor
     interior_player_pos=Vector2(interior_size.x-145,interior_size.y-150)
+    move_vec=Vector2.ZERO
     _play_sfx("door")
     _notify("%s · Etage %d" % [interior_name,interior_floor+1])
 
 func _interior_feature_pos() -> Vector2:
-    if interior_kind == "openai_hq":
-        return Vector2(interior_size.x*0.5,210 if interior_floor==0 else 285)
-    if interior_kind == "hospital":
-        return Vector2(interior_size.x*0.50,220 if interior_floor==0 else 275)
-    if interior_kind in ["garage","workshop"]:
-        return Vector2(interior_size.x*0.68,250)
-    if interior_kind in ["restaurant","cafe"]:
-        return Vector2(interior_size.x*0.30,250)
-    return Vector2(interior_size.x*0.5,250)
+    return InteriorArt.feature_pos(interior_kind,interior_floor)
 
 func _interior_feature_message() -> String:
     if interior_kind == "openai_hq":
-        return "Visitor lab display: multimodal research visualization active."
+        return "Interaktive Forschungsausstellung im Visitor Lab."
     if interior_kind == "hospital":
         return "Triage aktiv · Notaufnahme, Diagnostik und Beobachtung sind betriebsbereit."
     if interior_kind == "roof":
@@ -7746,67 +8054,15 @@ func _interior_feature_message() -> String:
     if interior_kind == "sublevel":
         return "Sublevel-Knoten aktivieren."
     if interior_kind == "garage":
-        return "Garage service bay ready for vehicle storage and paint systems."
+        return "Fahrzeug abstellen, lackieren und verbessern."
     if interior_kind == "workshop":
-        return "Workshop diagnostics online."
-    if interior_kind in ["restaurant","cafe"]:
-        return "A quiet table restores the pace of the journey."
-    return "Interactive display online."
+        return "Diagnose, Motor, Handling und Bremsen verbessern."
+    if interior_kind in ["restaurant","cafe","bar"]:
+        return "Am Tresen bestellen und neue Energie tanken."
+    return "Am markierten Terminal die Hausgarage öffnen."
 
 func _draw_interior_scene() -> void:
-    var size := get_viewport_rect().size
-    var origin := size*0.5 - interior_size*0.5
-    var accent := interior_accent
-    draw_rect(Rect2(origin,interior_size),Color("#111a20"),true)
-    draw_rect(Rect2(origin,interior_size),Color(accent.r,accent.g,accent.b,0.28),false,3.0)
-    # floor grid and light pools
-    for x in range(30,int(interior_size.x),54):
-        draw_line(origin+Vector2(x,20),origin+Vector2(x,interior_size.y-20),Color(1,1,1,0.025),1.0)
-    for y in range(30,int(interior_size.y),54):
-        draw_line(origin+Vector2(20,y),origin+Vector2(interior_size.x-20,y),Color(1,1,1,0.025),1.0)
-    draw_circle(origin+Vector2(interior_size.x*0.28,180),80,Color(accent.r,accent.g,accent.b,0.035))
-    draw_circle(origin+Vector2(interior_size.x*0.72,180),80,Color(accent.r,accent.g,accent.b,0.035))
-    if interior_floor==1:
-        draw_rect(Rect2(origin+Vector2(20,70),Vector2(interior_size.x-40,405)),Color(accent.r,accent.g,accent.b,0.035),true)
-    # room partitions
-    draw_line(origin+Vector2(250,90),origin+Vector2(250,470),Color(0.45,0.56,0.62,0.30),4.0)
-    draw_line(origin+Vector2(650,90),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
-    draw_line(origin+Vector2(250,470),origin+Vector2(650,470),Color(0.45,0.56,0.62,0.30),4.0)
-    # Elevator / stairs for multi-level interiors.
-    if interior_kind in ["openai_hq","home","shop","restaurant","cafe","hospital"]:
-        var lift := origin+_interior_elevator_pos()
-        draw_rect(Rect2(lift-Vector2(32,24),Vector2(64,48)),Color(0.07,0.11,0.14,0.94),true)
-        draw_rect(Rect2(lift-Vector2(32,24),Vector2(64,48)),Color(accent.r,accent.g,accent.b,0.48),false,2.0)
-        draw_string(ThemeDB.fallback_font,lift+Vector2(-22,-5),"LIFT",HORIZONTAL_ALIGNMENT_CENTER,44,10,Color.WHITE)
-        draw_string(ThemeDB.fallback_font,lift+Vector2(-28,38),"ETAGE %d" % (interior_floor+1),HORIZONTAL_ALIGNMENT_CENTER,56,9,Color("#9fb3bd"))
-    # proximity-sliding exit door
-    var exitp := origin+Vector2(interior_size.x*0.5,interior_size.y-48)
-    var door_near: float = clampf(1.0-interior_player_pos.distance_to(Vector2(interior_size.x*0.5,interior_size.y-48))/135.0,0.0,1.0)
-    draw_rect(Rect2(exitp-Vector2(48,20),Vector2(96,40)),Color(0.04,0.08,0.10,0.94),true)
-    var leaf_offset: float = door_near*32.0
-    draw_rect(Rect2(exitp+Vector2(-46-leaf_offset,-17),Vector2(44,34)),Color(0.16,0.23,0.27,0.95),true)
-    draw_rect(Rect2(exitp+Vector2(2+leaf_offset,-17),Vector2(44,34)),Color(0.16,0.23,0.27,0.95),true)
-    draw_rect(Rect2(exitp-Vector2(48,20),Vector2(96,40)),Color(accent.r,accent.g,accent.b,0.46),false,2.0)
-    draw_string(ThemeDB.fallback_font,exitp+Vector2(-32,-6),"EXIT",HORIZONTAL_ALIGNMENT_CENTER,64,12,Color.WHITE)
-    if interior_kind == "openai_hq":
-        _draw_openai_interior(origin,accent)
-    elif interior_kind == "hospital":
-        _draw_hospital_interior(origin,accent)
-    elif interior_kind == "roof":
-        _draw_roof_interior(origin,accent)
-    elif interior_kind == "sublevel":
-        _draw_sublevel_interior(origin,accent)
-    elif interior_kind in ["garage","workshop"]:
-        _draw_garage_interior(origin,accent)
-    elif interior_kind in ["restaurant","cafe"]:
-        _draw_restaurant_interior(origin,accent)
-    elif interior_kind=="home":
-        _draw_home_interior(origin,accent)
-    else:
-        _draw_shop_interior(origin,accent)
-    _draw_interior_people(origin)
-    _draw_interior_room_labels(origin)
-    draw_string(ThemeDB.fallback_font,origin+Vector2(32,42),"%s · Etage %d" % [interior_name,interior_floor+1],HORIZONTAL_ALIGNMENT_LEFT,520,22,Color(0.94,0.98,0.99,0.92))
+    InteriorArt.draw_room(self)
 
 func _enter_vertical(index: int) -> void:
     if index<0 or index>=vertical_sites.size():
@@ -7834,209 +8090,8 @@ func _activate_vertical_feature() -> void:
     _save_game()
     _advance_native_chapter()
 
-func _draw_roof_interior(origin: Vector2, accent: Color) -> void:
-    draw_rect(Rect2(origin+Vector2(90,90),Vector2(720,360)),Color("#16222a"),true)
-    for i in range(8):
-        var x := origin.x+110+float(i)*90.0
-        var h := 60.0+float((i*37)%120)
-        draw_rect(Rect2(x,origin.y+450-h,55,h),Color(0.16,0.23,0.28,0.9),true)
-        draw_line(Vector2(x,origin.y+450-h),Vector2(x+55,origin.y+450-h),Color(accent.r,accent.g,accent.b,0.22),2.0)
-    var relay := origin+_interior_feature_pos()
-    draw_line(relay+Vector2(0,40),relay+Vector2(0,-45),Color("#59676e"),5.0,true)
-    draw_circle(relay+Vector2(0,-52),11,accent)
-    draw_circle(relay+Vector2(0,-52),26,Color(accent.r,accent.g,accent.b,0.08))
-    draw_string(ThemeDB.fallback_font,relay+Vector2(-55,64),"ROOF RELAY",HORIZONTAL_ALIGNMENT_CENTER,110,12,Color.WHITE)
-
-func _draw_sublevel_interior(origin: Vector2, accent: Color) -> void:
-    draw_rect(Rect2(origin+Vector2(85,90),Vector2(730,390)),Color("#0b1115"),true)
-    for y in [135.0,205.0,275.0,345.0]:
-        draw_line(origin+Vector2(105,y),origin+Vector2(795,y),Color(0.35,0.45,0.49,0.14),4.0)
-    for x in [165.0,340.0,515.0,690.0]:
-        draw_line(origin+Vector2(x,110),origin+Vector2(x,455),Color(0.26,0.34,0.38,0.16),3.0)
-    var node := origin+_interior_feature_pos()
-    draw_rect(Rect2(node-Vector2(42,28),Vector2(84,56)),Color(0.07,0.11,0.14,0.96),true)
-    draw_rect(Rect2(node-Vector2(42,28),Vector2(84,56)),Color(accent.r,accent.g,accent.b,0.62),false,2.0)
-    draw_circle(node,8,accent)
-    draw_string(ThemeDB.fallback_font,node+Vector2(-45,50),"UTILITY NODE",HORIZONTAL_ALIGNMENT_CENTER,90,11,Color.WHITE)
-
-func _draw_interior_people(origin: Vector2) -> void:
-    var positions: Array = []
-    if interior_kind in ["restaurant","cafe"]:
-        positions=[Vector2(360,190),Vector2(520,190),Vector2(360,330),Vector2(520,330),Vector2(730,235)]
-    elif interior_kind in ["garage","workshop"]:
-        positions=[Vector2(335,250),Vector2(520,300),Vector2(700,220)]
-    elif interior_kind=="openai_hq":
-        positions=[Vector2(145,205),Vector2(330,330),Vector2(450,330),Vector2(570,330),Vector2(700,350)]
-    elif interior_kind=="hospital":
-        positions=[Vector2(155,205),Vector2(315,320),Vector2(430,320),Vector2(560,320),Vector2(710,230),Vector2(720,390)]
-    elif interior_kind=="shop":
-        positions=[Vector2(680,230),Vector2(340,355)]
-    elif interior_kind=="home":
-        positions=[]
-    else:
-        positions=[Vector2(720,250)]
-    var t := Time.get_ticks_msec()/350.0
-    for i in range(positions.size()):
-        var p: Vector2 = origin+Vector2(positions[i])
-        var bob := sin(t+float(i))*1.2
-        draw_circle(p+Vector2(2,7),6,Color(0,0,0,0.18))
-        draw_line(p+Vector2(0,-5+bob),p+Vector2(0,9+bob),[Color("#8dcfff"),Color("#ff9fc1"),Color("#90dfb8"),Color("#ffd477")][i%4],4.0,true)
-        draw_circle(p+Vector2(0,-10+bob),4.5,[Color("#f1c7a8"),Color("#d79b75"),Color("#b87655")][i%3])
-        var arm := sin(t*1.4+float(i))*3.0
-        draw_line(p+Vector2(0,-1+bob),p+Vector2(arm,5+bob),Color("#c7d3d8"),2.0,true)
-
-func _draw_interior_room_labels(origin: Vector2) -> void:
-    var labels: Array = []
-    if interior_kind=="openai_hq":
-        labels=[["LOBBY",Vector2(70,105)],["VISITOR LAB",Vector2(350,105)],["RESEARCH PODS",Vector2(330,455)]]
-    elif interior_kind=="hospital":
-        labels=[["NOTAUFNAHME",Vector2(70,105)],["TRIAGE",Vector2(350,105)],["BEHANDLUNG",Vector2(650,105)],["BEOBACHTUNG",Vector2(330,455)]]
-    elif interior_kind in ["garage","workshop"]:
-        labels=[["SERVICE BAY",Vector2(300,105)],["TOOLS",Vector2(665,105)],["DIAGNOSTICS",Vector2(635,430)]]
-    elif interior_kind in ["restaurant","cafe"]:
-        labels=[["DINING",Vector2(320,105)],["KITCHEN",Vector2(675,105)],["LOUNGE",Vector2(330,445)]]
-    elif interior_kind=="shop":
-        labels=[["RETAIL",Vector2(310,105)],["STOCK",Vector2(675,105)],["CHECKOUT",Vector2(620,445)]]
-    elif interior_kind=="home":
-        labels=[["LIVING",Vector2(300,105)],["GARAGE",Vector2(665,105)],["PRIVATE",Vector2(320,445)]]
-    for item in labels:
-        draw_string(ThemeDB.fallback_font,origin+Vector2(item[1]),str(item[0]),HORIZONTAL_ALIGNMENT_LEFT,160,11,Color(0.72,0.84,0.88,0.62))
-
-func _draw_hospital_interior(origin: Vector2, accent: Color) -> void:
-    if interior_floor==0:
-        draw_rect(Rect2(origin+Vector2(285,92),Vector2(330,95)),Color("#dce8e7"),true)
-        draw_rect(Rect2(origin+Vector2(285,92),Vector2(330,95)),Color(accent.r,accent.g,accent.b,0.45),false,2.0)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(360,122),"TRIAGE / REZEPTION",HORIZONTAL_ALIGNMENT_CENTER,180,13,Color("#24434a"))
-        var feature:=origin+_interior_feature_pos()
-        draw_circle(feature,40,Color(accent.r,accent.g,accent.b,0.08))
-        draw_rect(Rect2(feature-Vector2(7,28),Vector2(14,56)),Color("#3abf9f"),true)
-        draw_rect(Rect2(feature-Vector2(28,7),Vector2(56,14)),Color("#3abf9f"),true)
-        for k in range(4):
-            var seat:=origin+Vector2(320+float(k)*90,360)
-            draw_rect(Rect2(seat-Vector2(25,11),Vector2(50,22)),Color("#3b4c52"),true)
-            draw_line(seat+Vector2(-20,11),seat+Vector2(-20,22),Color("#617078"),2.0,true)
-            draw_line(seat+Vector2(20,11),seat+Vector2(20,22),Color("#617078"),2.0,true)
-        draw_rect(Rect2(origin+Vector2(70,145),Vector2(135,70)),Color("#213238"),true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(92,168),"NOTAUFNAHME",HORIZONTAL_ALIGNMENT_CENTER,92,11,Color("#dffbf4"))
-    else:
-        for bay in range(3):
-            var x:=310+float(bay)*150
-            draw_rect(Rect2(origin+Vector2(x-55,145),Vector2(110,180)),Color("#1d2b30"),true)
-            draw_rect(Rect2(origin+Vector2(x-55,145),Vector2(110,180)),Color(accent.r,accent.g,accent.b,0.26),false,2.0)
-            draw_rect(Rect2(origin+Vector2(x-38,245),Vector2(76,26)),Color("#dbe6e5"),true)
-            draw_line(origin+Vector2(x-38,271),origin+Vector2(x-38,292),Color("#75868b"),2.0,true)
-            draw_line(origin+Vector2(x+38,271),origin+Vector2(x+38,292),Color("#75868b"),2.0,true)
-            draw_circle(origin+Vector2(x+34,190),10,Color("#263940"))
-            draw_line(origin+Vector2(x+34,190),origin+Vector2(x+34,215),Color("#6bd5c0"),2.0,true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(350,390),"BEOBACHTUNG / DIAGNOSTIK",HORIZONTAL_ALIGNMENT_CENTER,240,13,Color("#dffbf4"))
-
-func _draw_openai_interior(origin: Vector2, accent: Color) -> void:
-    if interior_floor==0:
-        # Lobby / public visitor lab.
-        draw_rect(Rect2(origin+Vector2(285,90),Vector2(330,115)),Color(0.44,0.71,0.79,0.10),true)
-        draw_rect(Rect2(origin+Vector2(285,90),Vector2(330,115)),Color(0.83,0.94,0.97,0.34),false,2.0)
-        for k in range(1,6):
-            draw_line(origin+Vector2(285+k*55,90),origin+Vector2(285+k*55,205),Color(1,1,1,0.08),1.0)
-        var feature := origin+_interior_feature_pos()
-        draw_circle(feature,44,Color(0.95,0.98,0.98,0.06))
-        draw_circle(feature,27,Color(0.95,0.98,0.98,0.04))
-        for a in range(0,360,60):
-            var d := Vector2.from_angle(deg_to_rad(float(a)))
-            draw_arc(feature+d*14,12,0,TAU,16,Color(0.93,0.98,0.98,0.50),1.4,true)
-        draw_string(ThemeDB.fallback_font,feature+Vector2(-68,58),"VISITOR LAB",HORIZONTAL_ALIGNMENT_CENTER,136,12,Color("#eaf5f6"))
-        for q in [Vector2(330,330),Vector2(450,330),Vector2(570,330)]:
-            var c: Vector2 = origin+Vector2(q)
-            draw_rect(Rect2(c-Vector2(38,24),Vector2(76,48)),Color(0.10,0.17,0.20,0.9),true)
-            draw_rect(Rect2(c-Vector2(38,24),Vector2(76,48)),Color(0.75,0.91,0.94,0.22),false,1.5)
-            draw_line(c+Vector2(-24,0),c+Vector2(24,0),Color(0.45,0.86,0.91,0.32),2.0)
-            draw_circle(c+Vector2(0,-8),4,Color("#73f3ce"))
-        draw_rect(Rect2(origin+Vector2(70,140),Vector2(120,44)),Color("#24323a"),true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(90,154),"WELCOME",HORIZONTAL_ALIGNMENT_CENTER,80,10,Color.WHITE)
-    else:
-        # Upper research floor: quieter, denser workstation / collaboration layout.
-        draw_rect(Rect2(origin+Vector2(285,95),Vector2(330,82)),Color(0.30,0.55,0.64,0.10),true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(365,125),"RESEARCH GALLERY",HORIZONTAL_ALIGNMENT_CENTER,170,13,Color("#e9f6f7"))
-        for row in range(2):
-            for col in range(4):
-                var c := origin+Vector2(300+float(col)*95,235+float(row)*105)
-                draw_rect(Rect2(c-Vector2(34,20),Vector2(68,40)),Color("#18252b"),true)
-                draw_rect(Rect2(c+Vector2(-24,-16),Vector2(48,18)),Color(0.38,0.78,0.85,0.14),true)
-                draw_circle(c+Vector2(0,7),3,Color("#73f3ce"))
-        var collab := origin+Vector2(465,455)
-        draw_circle(collab,58,Color("#25353d"))
-        for ang in range(0,360,60):
-            var d := Vector2.from_angle(deg_to_rad(float(ang)))
-            draw_circle(collab+d*82,12,Color("#44545c"))
-        draw_circle(collab,19,Color(accent.r,accent.g,accent.b,0.12))
-        draw_string(ThemeDB.fallback_font,collab+Vector2(-65,-5),"COLLAB CORE",HORIZONTAL_ALIGNMENT_CENTER,130,11,Color("#dff2f3"))
-
-func _draw_garage_interior(origin: Vector2, accent: Color) -> void:
-    for x in [330.0,520.0]:
-        var c := origin+Vector2(x,260)
-        draw_rect(Rect2(c-Vector2(64,110),Vector2(128,220)),Color(0.10,0.12,0.14,0.82),true)
-        draw_line(c+Vector2(-48,-82),c+Vector2(-48,82),Color(accent.r,accent.g,accent.b,0.36),4.0)
-        draw_line(c+Vector2(48,-82),c+Vector2(48,82),Color(accent.r,accent.g,accent.b,0.36),4.0)
-        draw_rect(Rect2(c-Vector2(35,18),Vector2(70,36)),Color("#59646b"),true)
-    var feature := origin+_interior_feature_pos()
-    draw_rect(Rect2(feature-Vector2(42,22),Vector2(84,44)),Color(0.08,0.12,0.14,0.95),true)
-    draw_rect(Rect2(feature-Vector2(42,22),Vector2(84,44)),Color(accent.r,accent.g,accent.b,0.55),false,2.0)
-    draw_string(ThemeDB.fallback_font,feature+Vector2(-30,-5),"SERVICE",HORIZONTAL_ALIGNMENT_CENTER,60,10,Color.WHITE)
-
-func _draw_restaurant_interior(origin: Vector2, accent: Color) -> void:
-    if interior_floor==0:
-        for yy in [190.0,330.0]:
-            for xx in [360.0,520.0]:
-                var c := origin+Vector2(xx,yy)
-                draw_circle(c,28,Color("#684e3f"))
-                for a in range(0,360,90):
-                    var d := Vector2.from_angle(deg_to_rad(float(a)))
-                    draw_circle(c+d*45,10,Color("#334047"))
-        var counter := origin+Vector2(730,190)
-        draw_rect(Rect2(counter-Vector2(60,24),Vector2(120,48)),Color("#5e493d"),true)
-        draw_line(counter+Vector2(-55,-18),counter+Vector2(55,-18),Color(accent.r,accent.g,accent.b,0.42),2.0)
-    else:
-        # Lounge / quiet seating floor.
-        for x in [330.0,500.0,670.0]:
-            var sofa := origin+Vector2(x,240)
-            draw_rect(Rect2(sofa-Vector2(55,22),Vector2(110,44)),Color("#43515a"),true)
-            draw_circle(sofa+Vector2(0,70),25,Color("#644d3f"))
-        draw_rect(Rect2(origin+Vector2(300,390),Vector2(400,42)),Color(0.25,0.38,0.42,0.55),true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(410,403),"SKY LOUNGE",HORIZONTAL_ALIGNMENT_CENTER,180,12,Color.WHITE)
-
-func _draw_shop_interior(origin: Vector2, accent: Color) -> void:
-    if interior_floor==0:
-        for x in [330.0,450.0,570.0]:
-            draw_rect(Rect2(origin+Vector2(x-32,130),Vector2(64,250)),Color("#263139"),true)
-            for y in [175.0,235.0,295.0]:
-                draw_line(origin+Vector2(x-26,y),origin+Vector2(x+26,y),Color(accent.r,accent.g,accent.b,0.28),2.0)
-        var desk := origin+_interior_feature_pos()
-        draw_rect(Rect2(desk-Vector2(45,20),Vector2(90,40)),Color("#36434a"),true)
-    else:
-        for x in [315.0,430.0,545.0,660.0]:
-            draw_rect(Rect2(origin+Vector2(x-36,120),Vector2(72,300)),Color("#202a30"),true)
-            for y in [170.0,230.0,290.0,350.0]:
-                draw_rect(Rect2(origin+Vector2(x-27,y),Vector2(54,8)),Color(accent.r,accent.g,accent.b,0.18),true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(395,455),"STOCK / PICKUP",HORIZONTAL_ALIGNMENT_CENTER,210,12,Color("#dbe9ee"))
-
 func _draw_interior_player() -> void:
-    var size := get_viewport_rect().size
-    var origin := size*0.5-interior_size*0.5
-    var p := origin+interior_player_pos
-    var f := Vector2.from_angle(player_heading)
-    var side := Vector2(-f.y,f.x)
-    var walking := move_vec.length()>0.08
-    var phase := Time.get_ticks_msec()/95.0 if walking else 0.0
-    var swing := sin(phase)*4.0 if walking else 0.0
-    _draw_poly_ellipse(p+Vector2(3,6),Vector2(9,5),player_heading,Color(0,0,0,0.24))
-    draw_line(p,p+Vector2(-swing,13),Color("#667682"),3.0,true)
-    draw_line(p,p+Vector2(swing,13),Color("#758692"),3.0,true)
-    var chest := p+Vector2(0,-9)
-    var torso := PackedVector2Array([chest+side*6-f*5,chest-side*6-f*5,p-side*6,p+side*6])
-    draw_colored_polygon(torso,Color("#e8f2f6"))
-    draw_circle(chest-f*10,5.0,Color("#e8ba96"))
-    draw_arc(chest-f*10+Vector2(0,-1),5.1,PI,TAU,12,Color("#263039"),2.2,true)
-    draw_line(chest-side*6,chest-side*6+Vector2(-swing,7),Color("#cfdde4"),2.2)
-    draw_line(chest+side*6,chest+side*6+Vector2(swing,7),Color("#cfdde4"),2.2)
+    InteriorArt.draw_player(self)
 
 func _clear_game_ui() -> void:
     for child in game_grid.get_children():
@@ -8065,6 +8120,9 @@ func _start_minigame(site: Dictionary) -> void:
     game_moves=0
     game_hints=0
     minigame_open = true
+    collection_open=false
+    commerce_panel.visible=false
+    dialogue_panel.visible=false
     map_open = false
     missions_open = false
     move_vec = Vector2.ZERO
@@ -8086,6 +8144,7 @@ func _start_minigame(site: Dictionary) -> void:
         _init_memory()
     else:
         _init_lightsout()
+    _sync_modal_ui()
 
 func _close_minigame() -> void:
     minigame_session+=1
@@ -8094,6 +8153,7 @@ func _close_minigame() -> void:
     active_mission_site = {}
     game_type = ""
     move_vec = Vector2.ZERO
+    _sync_modal_ui()
 
 func _finish_minigame() -> void:
     if active_mission_site.is_empty() or minigame_finishing:
@@ -8947,6 +9007,11 @@ func _load_game(slot: int = selected_save_slot) -> void:
     if glyph_taken is Array:
         for i in range(mini(glyph_taken.size(),glyphs.size())):
             glyphs[i]["taken"]=bool(glyph_taken[i])
+    player_pos=CityAccess.safe_point(self,player_pos)
+    if not active_job.is_empty() and Vector2(active_job.get("target",Vector2.ZERO))!=Vector2.ZERO:
+        active_job["target"]=CityAccess.safe_point(self,Vector2(active_job.target))
+    if not active_npc_contract.is_empty() and str(active_npc_contract.get("kind",""))=="visit":
+        active_npc_contract["target"]=CityAccess.safe_point(self,Vector2(active_npc_contract.get("target",player_pos)))
 
 func _serialize_contract(c: Dictionary) -> Dictionary:
     if c.is_empty():
@@ -8988,29 +9053,36 @@ func _commerce_button(label_text: String, callback: Callable) -> Button:
     var b := Button.new()
     b.text = label_text
     b.custom_minimum_size = Vector2(0,72)
-    b.add_theme_font_size_override("font_size",18)
+    b.add_theme_font_size_override("font_size",27)
     b.pressed.connect(callback)
     return b
 
 func _clear_commerce_actions() -> void:
     for child in commerce_actions.get_children():
+        commerce_actions.remove_child(child)
         child.queue_free()
 
 func _open_commerce(title: String, info: String) -> void:
     commerce_title.text = title
     commerce_info.text = info
+    dialogue_panel.visible=false
+    map_open=false
+    missions_open=false
+    collection_open=false
     commerce_panel.visible = true
     _clear_commerce_actions()
+    _sync_modal_ui()
 
 func _close_commerce() -> void:
     commerce_panel.visible = false
+    _sync_modal_ui()
 
 func _use_interior_feature() -> void:
     if commerce_panel.visible:
         return
     if interior_kind in ["roof","sublevel"]:
         _activate_vertical_feature()
-    elif interior_kind in ["restaurant","cafe"]:
+    elif interior_kind in ["restaurant","cafe","bar"]:
         _open_restaurant_menu()
     elif interior_kind=="shop":
         _open_shop_menu()
@@ -9183,6 +9255,8 @@ func _open_jobboard(index: int) -> void:
             active_job={"kind":"signal","title":"Street-Signal Survey","target":signal_target,"start":scan_collect_count,"goal":1,"pay":88}
     else:
         active_job={"kind":"race","title":"Timed Mobility Audit","target":_next_race_job_target(),"start":race_wins,"goal":1,"pay":128}
+    if Vector2(active_job.target)!=Vector2.ZERO:
+        active_job["target"]=CityAccess.safe_point(self,Vector2(active_job.target))
     _play_sfx("mission")
     _show_reward_popup("STADTAUFTRAG",str(active_job.title)+"\nBelohnung: %d CR" % int(active_job.pay),Color("#8de9aa"))
     _notify("%s angenommen · %d CR" % [str(active_job.title),int(active_job.pay)])
@@ -9235,6 +9309,7 @@ func _nearest_transit_stop_pos(from: Vector2) -> Vector2:
     var out := Vector2.ZERO
     for st in transit_stops:
         var p := Vector2(st.pos)
+        if not CityAccess.connected(self,p,14): continue
         var d: float = from.distance_to(p)
         if d<best:
             best=d
@@ -9245,7 +9320,7 @@ func _next_unvisited_district_center() -> Vector2:
     for d in districts:
         var name := str(d.name)
         if not bool(visited_districts.get(name,false)):
-            return Vector2((d.rect as Rect2).get_center())
+            return Vector2(district_access_points.get(name,(d.rect as Rect2).get_center()))
     return Vector2.ZERO
 
 func _check_active_job_progress() -> void:
@@ -9463,7 +9538,7 @@ func _closest_uncollected(items: Array, field: String) -> Vector2:
     return result
 
 func _localized_action(action: String) -> String:
-    return {"INTERACT":"AKTION","EXIT":"VERLASSEN","USE":"BENUTZEN","EXIT CAR":"AUSSTEIGEN","ENTER CAR":"EINSTEIGEN","PHOTO CHALLENGE":"FOTO-SUCHE","PHOTO REPLAY":"FOTO WIEDERHOLEN","COLLECT":"BERGEN"}.get(action,action)
+    return {"INTERACT":"AKTION","ENTER":"EINTRETEN","EXIT":"VERLASSEN","USE":"BENUTZEN","EXIT CAR":"AUSSTEIGEN","ENTER CAR":"EINSTEIGEN","PHOTO CHALLENGE":"FOTO-SUCHE","PHOTO REPLAY":"FOTO WIEDERHOLEN","COLLECT":"BERGEN","OPEN SECRET":"ÖFFNEN","PROPERTY":"WOHNUNG","DELIVER":"ABGEBEN","JOBS":"AUFTRÄGE","SIGIL":"SICHERN","CACHE":"BERGEN","ENTER OPENAI HQ":"HQ BETRETEN"}.get(action,action)
 
 func _objective_action() -> String:
     if not active_race.is_empty():
@@ -9471,7 +9546,8 @@ func _objective_action() -> String:
     if not active_job.is_empty():
         return str(active_job.get("task","Zum markierten Ziel fahren und den Auftrag erfüllen"))
     if not active_npc_contract.is_empty():
-        return "Persönlichen Auftrag erfüllen · Gesprächspartner auf der Karte"
+        if str(active_npc_contract.kind)=="cache": return "Datenkoffer bergen · %d / %d Archive gefunden" % [maxi(0,cache_count-int(active_npc_contract.get("start",0))),int(active_npc_contract.goal)]
+        return _contract_description(active_npc_contract)
     if native_chapters.is_empty():
         return "Straßen, Dächer und versteckte Perspektiven erkunden"
     var chapter: Dictionary=native_chapters[mini(native_chapter,native_chapters.size()-1)]
@@ -9518,7 +9594,7 @@ func _current_objective_pos() -> Vector2:
             if str(v.kind)=="sublevel" and not bool(vertical_flags.get(str(v.id),false)): return Vector2(v.pos)
     elif kind=="visit_openai":
         for l in landmarks:
-            if str(l.kind)=="openai_hq": return Vector2(l.pos)
+            if str(l.kind)=="openai_hq": return Vector2(l.pos)+Vector2(0,float(l.size.y)*0.5+48)
     elif kind=="hack":
         for m in mission_sites:
             if str(m.id)==str(c.id): return Vector2(m.pos)
@@ -9556,7 +9632,7 @@ func _current_objective_label() -> String:
         var rr: Dictionary = race_sites[int(active_race.index)]
         return "RENNEN · %s" % str(rr.name)
     if not active_npc_contract.is_empty():
-        return "VERTRAUEN · %s" % str(active_npc_contract.get("npc","NPC"))
+        return str(active_npc_contract.get("title","Persönlicher Auftrag"))
     if not active_job.is_empty():
         return "JOB · %s" % str(active_job.get("title","Stadtauftrag"))
     if native_chapters.is_empty():
@@ -9596,143 +9672,19 @@ func _draw_mission_compass() -> void:
     draw_string(ThemeDB.fallback_font,anchor+Vector2(-65,49),"%d m" % int(player_pos.distance_to(target)/10),HORIZONTAL_ALIGNMENT_CENTER,130,20,Color("#d9f5ef"))
 
 func _toggle_map() -> void:
-    if minigame_open or photo_mode:
-        return
-    map_open = not map_open
-    missions_open = false
-    collection_open = false
-    move_vec = Vector2.ZERO
-    queue_redraw()
+    if map_open: _close_overview()
+    else: _open_overview("map")
 
 func _toggle_collection() -> void:
-    if minigame_open or photo_mode:
-        return
-    collection_open=not collection_open
-    if collection_open:
-        collection_page=0
-    map_open=false
-    missions_open=false
-    move_vec=Vector2.ZERO
-    queue_redraw()
+    if collection_open: _close_overview()
+    else: _open_overview("collection")
 
 func _toggle_missions() -> void:
-    if minigame_open or photo_mode:
-        return
-    missions_open = not missions_open
-    if missions_open:
-        missions_page=clampi(int(native_chapter/14),0,maxi(0,int(ceil(float(native_chapters.size())/14.0))-1))
-    map_open = false
-    collection_open = false
-    move_vec = Vector2.ZERO
-    queue_redraw()
+    if missions_open: _close_overview()
+    else: _open_overview("missions")
 
 func _map_point(world_pos: Vector2, rect: Rect2) -> Vector2:
     return rect.position + Vector2(world_pos.x/WORLD_SIZE.x*rect.size.x,world_pos.y/WORLD_SIZE.y*rect.size.y)
-
-func _draw_map_overlay() -> void:
-    var screen := get_viewport_rect().size
-    draw_rect(Rect2(Vector2(28,170),Vector2(screen.x-56,1900)),Color(0.025,0.055,0.075,0.97),true)
-    draw_rect(Rect2(Vector2(28,170),Vector2(screen.x-56,1900)),Color("#73f3ce"),false,2.0)
-    draw_string(ThemeDB.fallback_font,Vector2(62,225),"GESAMTKARTE · PARALLAX MEGACITY",HORIZONTAL_ALIGNMENT_LEFT,760,28,Color.WHITE)
-    var map_rect := Rect2(65,270,950,660)
-    draw_rect(map_rect,Color("#0d1820"),true)
-    for d in districts:
-        var dr: Rect2 = d.rect
-        var p := _map_point(dr.position,map_rect)
-        var sz := Vector2(dr.size.x/WORLD_SIZE.x*map_rect.size.x,dr.size.y/WORLD_SIZE.y*map_rect.size.y)
-        draw_rect(Rect2(p,sz),Color(d.ground.r,d.ground.g,d.ground.b,0.92),true)
-        draw_rect(Rect2(p,sz),Color(d.accent.r,d.accent.g,d.accent.b,0.35),false,1.0)
-        draw_string(ThemeDB.fallback_font,p+Vector2(4,15),str(d.name),HORIZONTAL_ALIGNMENT_LEFT,maxf(50.0,sz.x-8),10,Color(0.92,0.96,0.97,0.76))
-    for road in roads:
-        var pts := PackedVector2Array()
-        for wp in road.points:
-            pts.append(_map_point(wp,map_rect))
-        draw_polyline(pts,Color(0.75,0.80,0.78,0.16),2.0,true)
-    for l in landmarks:
-        var lm_icon:="✚" if str(l.kind)=="hospital" else "★"
-        _draw_map_marker(_map_point(Vector2(l.pos),map_rect),Color(l.accent),lm_icon)
-    for npc in named_npcs:
-        _draw_map_marker(_map_point(Vector2(npc.pos),map_rect),Color(npc.accent),"N")
-    for ph in photo_points:
-        if not bool(ph.taken):
-            _draw_map_marker(_map_point(Vector2(ph.pos),map_rect),Color("#ffb3e6"),"◎")
-    for race in race_sites:
-        _draw_map_marker(_map_point(Vector2(race.pos),map_rect),Color("#ffd36b"),"R")
-    for i in range(storefronts.size()):
-        var st = storefronts[i]
-        var col := Color("#ffd27a") if st.kind in ["restaurant","cafe"] else (Color("#73f3ce") if st.kind=="shop" else Color("#ff9b72"))
-        _draw_map_marker(_map_point(Vector2(st.pos),map_rect),col,"R" if st.kind in ["restaurant","cafe"] else ("G" if st.kind in ["garage","workshop"] else "S"))
-    for p in property_sites:
-        _draw_map_marker(_map_point(Vector2(p.pos),map_rect),Color("#d6a8ff"),"H")
-    for vs in vertical_sites:
-        _draw_map_marker(_map_point(Vector2(vs.pos),map_rect),Color(vs.accent),"↑" if str(vs.kind)=="roof" else "↓")
-    for j in side_job_sites:
-        _draw_map_marker(_map_point(Vector2(j.pos),map_rect),Color("#8de9aa"),"J")
-    for ei in range(city_micro_events.size()):
-        var event: Dictionary=city_micro_events[ei]
-        if _micro_event_active(ei,event):
-            var event_col: Color=Color(event.accent)
-            _draw_map_marker(_map_point(Vector2(event.pos),map_rect),event_col,"●")
-    for ii in range(response_incidents.size()):
-        if _incident_active(ii):
-            _draw_map_marker(_map_point(Vector2(response_incidents[ii].pos),map_rect),Color("#ffb65a"),"⚠")
-    for accident in traffic_accidents:
-        if str(accident.get("state","active"))=="active":
-            _draw_map_marker(_map_point(Vector2(accident.pos),map_rect),Color("#ff725f"),"✹")
-    for ts in transit_stops:
-        _draw_map_marker(_map_point(Vector2(ts.pos),map_rect),Color("#72d7e6"),"T")
-    for hub in transit_transfer_hubs:
-        _draw_map_marker(_map_point(Vector2(hub.pos),map_rect),Color("#9eefff"),"↔")
-    if not active_job.is_empty():
-        _draw_map_marker(_map_point(Vector2(active_job.get("target",Vector2.ZERO)),map_rect),Color("#ffffff"),"➤")
-    var contract_target := _npc_contract_target()
-    if contract_target!=Vector2.ZERO:
-        _draw_map_marker(_map_point(contract_target,map_rect),Color("#ff9fe8"),"◆")
-    for m in mission_sites:
-        var done := bool(hack_done.get(str(m.id),false))
-        _draw_map_marker(_map_point(Vector2(m.pos),map_rect),Color("#66717a") if done else Color("#ffdf75"),"!")
-    var pp := _map_point(player_pos,map_rect)
-    draw_circle(pp,7,Color.WHITE)
-    draw_circle(pp,12,Color("#73f3ce"),false,2.0)
-    var y := 980.0
-    draw_string(ThemeDB.fallback_font,Vector2(70,y),"LEGENDE / POIs",HORIZONTAL_ALIGNMENT_LEFT,300,22,Color("#73f3ce"))
-    y += 44
-    var legend := [
-        ["★","Sehenswürdigkeit / Landmark",Color("#9ad5ff")],
-        ["✚","Parallax Stadtklinikum / Notaufnahme",Color("#8fe7d7")],
-        ["N","Benannter NPC / Kontakt",Color("#c7f2e7")],
-        ["◎","PMDD Photo Point",Color("#ffb3e6")],
-        ["R","Zeitprüfung / Fahrchallenge",Color("#ffd36b")],
-        ["R","Restaurant / Café",Color("#ffd27a")],
-        ["G","Garage / Werkstatt",Color("#ff9b72")],
-        ["S","Shop / betretbares Geschäft",Color("#73f3ce")],
-        ["H","Kaufbare Immobilie / Hausgarage",Color("#d6a8ff")],
-        ["↑","Dachzugang / Relay",Color("#9bdcff")],
-        ["↓","Sublevel / Untergrundknoten",Color("#ffb66f")],
-        ["J","Nebenjob-Board",Color("#8de9aa")],
-        ["●","Aktives Live-Event",Color("#ffb66f")],
-        ["⚠","Aktiver Service-/Response-Einsatz",Color("#ffb65a")],
-        ["✹","Dynamische Unfallstelle",Color("#ff725f")],
-        ["T","Bus-/Tram-Haltestelle",Color("#72d7e6")],
-        ["↔","ÖPNV-Umsteigepunkt",Color("#9eefff")],
-        ["◆","Persönlicher NPC-Auftrag",Color("#ff9fe8")],
-        ["!","Mission / Hacking-Minispiel",Color("#ffdf75")]
-    ]
-    for row in legend:
-        draw_circle(Vector2(82,y-5),11,row[2])
-        draw_string(ThemeDB.fallback_font,Vector2(76,y-10),str(row[0]),HORIZONTAL_ALIGNMENT_CENTER,12,11,Color("#101820"))
-        draw_string(ThemeDB.fallback_font,Vector2(112,y),str(row[1]),HORIZONTAL_ALIGNMENT_LEFT,700,17,Color.WHITE)
-        y += 38
-    var active_events:=0
-    for ei in range(city_micro_events.size()):
-        if _micro_event_active(ei,city_micro_events[ei]):
-            active_events+=1
-    var active_incidents:=0
-    for ii in range(response_incidents.size()):
-        if _incident_active(ii):
-            active_incidents+=1
-    draw_string(ThemeDB.fallback_font,Vector2(70,1315),"Stadtteile: %d · Landmarken: %d · POIs: %d · Live: %d · Einsätze: %d" % [districts.size(),landmarks.size(),storefronts.size(),active_events,active_incidents],HORIZONTAL_ALIGNMENT_LEFT,900,17,Color("#c7d6de"))
-    draw_string(ThemeDB.fallback_font,Vector2(70,1360),"MAP erneut antippen zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,16,Color("#91a7b3"))
 
 func _draw_map_marker(p: Vector2, color: Color, glyph: String) -> void:
     draw_circle(p,7,color)
@@ -9815,126 +9767,11 @@ func _photo_spot_score(id: String) -> int:
         total+=int(photo_scores.get("%s_%d" % [id,i],0))
     return total
 
-func _draw_collection_overlay() -> void:
-    var screen := get_viewport_rect().size
-    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
-    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#ffb3e6"),false,2.0)
-    collection_page=clampi(collection_page,0,2)
-    draw_string(ThemeDB.fallback_font,Vector2(72,220),"SAMMLUNG / LANGZEITFORTSCHRITT",HORIZONTAL_ALIGNMENT_LEFT,620,28,Color.WHITE)
-    draw_string(ThemeDB.fallback_font,Vector2(700,220),"SEITE %d/3 · STADTRUF %d/%d" % [collection_page+1,city_reputation,city_micro_events.size()],HORIZONTAL_ALIGNMENT_RIGHT,270,16,Color("#ffb66f"))
-
-    if collection_page==0:
-        var y := 300.0
-        var sections := [
-            ["PMDD PHOTO HUNT",photo_count,photo_points.size(),Color("#ffb3e6")],
-            ["STREET SIGNALS",scan_collect_count,scan_points.size(),Color("#78d8ff")],
-            ["FAHRZEUGKLASSEN",driven_classes.size(),VEHICLE_CLASSES.size(),Color("#73f3ce")],
-            ["HACKING TERMINALS",_completed_hack_count(),mission_sites.size(),Color("#ffdf75")],
-            ["STADTTEILE",visited_districts.size(),districts.size(),Color("#9ad5ff")],
-            ["ZEITPRÜFUNGEN",race_completed.size(),race_sites.size(),Color("#ffd36b")],
-            ["NPC-VERTRAUEN",_total_npc_trust(),named_npcs.size()*3,Color("#ff9fe8")],
-            ["STADTLEBEN",micro_event_seen.size(),city_micro_events.size(),Color("#ffb66f")]
-        ]
-        for sec in sections:
-            draw_string(ThemeDB.fallback_font,Vector2(80,y),str(sec[0]),HORIZONTAL_ALIGNMENT_LEFT,390,18,Color(sec[3]))
-            draw_string(ThemeDB.fallback_font,Vector2(780,y),"%d / %d" % [int(sec[1]),int(sec[2])],HORIZONTAL_ALIGNMENT_RIGHT,190,17,Color.WHITE)
-            var ratio: float = clampf(float(sec[1])/maxf(1.0,float(sec[2])),0.0,1.0)
-            draw_rect(Rect2(80,y+16,890,10),Color(1,1,1,0.08),true)
-            draw_rect(Rect2(80,y+16,890*ratio,10),Color(sec[3].r,sec[3].g,sec[3].b,0.72),true)
-            y+=78
-        draw_string(ThemeDB.fallback_font,Vector2(80,y+25),"ENTDECKTE LIVE-EVENTS",HORIZONTAL_ALIGNMENT_LEFT,360,20,Color("#ffb66f"))
-        y+=70
-        for i in range(city_micro_events.size()):
-            var e: Dictionary=city_micro_events[i]
-            var seen:=bool(micro_event_seen.get(str(e.label),false))
-            var choice:=str(micro_event_choices.get(str(e.label),""))
-            draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %s%s" % [("✓" if seen else "○"),str(e.label),(" · "+choice if choice!="" else "")],HORIZONTAL_ALIGNMENT_LEFT,820,14,Color("#8de9aa") if seen else Color("#b8c5cc"))
-            y+=34
-
-    elif collection_page==1:
-        draw_string(ThemeDB.fallback_font,Vector2(80,295),"PMDD PHOTO HUNT · ALLE FOTOPOINTS",HORIZONTAL_ALIGNMENT_LEFT,700,21,Color("#ffb3e6"))
-        var y:=345.0
-        for i in range(photo_points.size()):
-            var ph: Dictionary = photo_points[i]
-            var done: bool = bool(ph.taken)
-            var spot_score: int = _photo_spot_score(str(ph.id))
-            draw_rect(Rect2(78,y-22,900,48),Color(1,1,1,0.025),true)
-            draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %02d · %s" % [("✓" if done else "○"),i+1,str(ph.label)],HORIZONTAL_ALIGNMENT_LEFT,500,14,Color("#8de9aa") if done else Color("#d0dce1"))
-            draw_string(ThemeDB.fallback_font,Vector2(590,y),"%s · %d/300" % [str(ph.district),spot_score],HORIZONTAL_ALIGNMENT_RIGHT,360,13,Color("#ffb3e6"))
-            y+=56
-
-    else:
-        draw_string(ThemeDB.fallback_font,Vector2(80,295),"FAHRZEUGKLASSEN & TUNING",HORIZONTAL_ALIGNMENT_LEFT,420,20,Color("#73f3ce"))
-        var y:=345.0
-        for cls in VEHICLE_CLASSES:
-            var seen: bool = bool(driven_classes.get(cls,false))
-            var up: Dictionary = _vehicle_upgrade_state(cls)
-            var rarity := "COMMON"
-            if cls in ["executive","suv","pickup"]: rarity="UNCOMMON"
-            elif cls in ["van","delivery"]: rarity="UTILITY"
-            elif cls=="sport": rarity="RARE"
-            elif cls=="hyper": rarity="ULTRA RARE"
-            draw_string(ThemeDB.fallback_font,Vector2(92,y),"%s %-10s · %-10s · %-10s · E%d H%d B%d" % [("✓" if seen else "○"),cls.capitalize(),str(VEHICLE_SPEED_GROUP.get(cls,"ROAD")),rarity,int(up.engine),int(up.handling),int(up.brake)],HORIZONTAL_ALIGNMENT_LEFT,850,14,Color("#8de9aa") if seen else Color("#c7d6de"))
-            y+=45
-        y+=25
-        draw_string(ThemeDB.fallback_font,Vector2(80,y),"MEILENSTEINE",HORIZONTAL_ALIGNMENT_LEFT,300,20,Color("#ffd36b"))
-        y+=42
-        var milestones := [
-            ["Photo Scout","photos_5"],["District Lens","photos_15"],["Photo Master","photos_all"],["Signal Hunter","signals_10"],["Spectrum Archivist","signals_all"],["Class Explorer","cars_5"],["Full Garage","cars_all"],
-            ["Urban Explorer","districts_15"],["Every District","districts_all"],["Security Runner","hacks_8"],["Security Master","hacks_all"],["Street Trialist","races_3"],["City Circuit","races_all"],["City Professional","jobs_10"],["City Professional II","jobs_25"],["Photo Virtuoso","photos_score"],["Tuning Specialist","tuning_12"],
-            ["City Regular","citylife_4"],["Local Pulse","citylife_8"],["Megacity Insider","citylife_all"]
-        ]
-        var start_y:=y
-        for mi in range(milestones.size()):
-            var m=milestones[mi]
-            var done:=bool(milestones_claimed.get(str(m[1]),false))
-            var col:=mi%2
-            var row:=int(mi/2)
-            var mx:=92.0+float(col)*430.0
-            var my:=start_y+float(row)*38.0
-            draw_string(ThemeDB.fallback_font,Vector2(mx,my),"%s %s" % [("✓" if done else "○"),str(m[0])],HORIZONTAL_ALIGNMENT_LEFT,405,14,Color("#8de9aa") if done else Color("#b5c4ca"))
-
-    draw_string(ThemeDB.fallback_font,Vector2(95,1900),"◀  VORHERIGE",HORIZONTAL_ALIGNMENT_LEFT,300,18,Color("#ffb3e6") if collection_page>0 else Color(0.4,0.5,0.55,0.45))
-    draw_string(ThemeDB.fallback_font,Vector2(685,1900),"NÄCHSTE  ▶",HORIZONTAL_ALIGNMENT_RIGHT,300,18,Color("#ffb3e6") if collection_page<2 else Color(0.4,0.5,0.55,0.45))
-    draw_string(ThemeDB.fallback_font,Vector2(72,1960),"Unten links/rechts tippen zum Blättern · COLLECTION erneut zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,15,Color("#91a7b3"))
-
 func _total_npc_trust() -> int:
     var total := 0
     for key in npc_trust.keys():
         total+=int(npc_trust[key])
     return total
-
-func _draw_missions_overlay() -> void:
-    var screen := get_viewport_rect().size
-    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color(0.025,0.055,0.075,0.97),true)
-    draw_rect(Rect2(Vector2(38,160),Vector2(screen.x-76,1920)),Color("#9ad5ff"),false,2.0)
-    var per_page := 14
-    var page_count := maxi(1,int(ceil(float(native_chapters.size())/float(per_page))))
-    missions_page=clampi(missions_page,0,page_count-1)
-    draw_string(ThemeDB.fallback_font,Vector2(72,220),"MISSIONEN",HORIZONTAL_ALIGNMENT_LEFT,600,30,Color.WHITE)
-    draw_string(ThemeDB.fallback_font,Vector2(765,220),"SEITE %d/%d" % [missions_page+1,page_count],HORIZONTAL_ALIGNMENT_RIGHT,205,18,Color("#9ad5ff"))
-    draw_string(ThemeDB.fallback_font,Vector2(72,255),"Photo %d/%d · Score %d · Stadtteile %d/%d · Hacks %d/%d · Rennen %d/%d · Jobs %d" % [photo_count,photo_points.size(),_photo_total_score(),visited_districts.size(),districts.size(),_completed_hack_count(),mission_sites.size(),race_completed.size(),race_sites.size(),jobs_done],HORIZONTAL_ALIGNMENT_LEFT,900,14,Color("#9fb7c2"))
-
-    var start := missions_page*per_page
-    var finish := mini(native_chapters.size(),start+per_page)
-    var y := 315.0
-    for i in range(start,finish):
-        var chapter: Dictionary = native_chapters[i]
-        var progress := _chapter_progress(chapter)
-        var goal := int(chapter.goal)
-        var active := i==native_chapter
-        var done := progress>=goal
-        var bg := Color(0.14,0.29,0.34,0.58) if active else Color(0.08,0.13,0.16,0.62)
-        draw_rect(Rect2(70,y-24,930,92),bg,true)
-        draw_rect(Rect2(70,y-24,930,92),Color("#73f3ce") if active else Color(1,1,1,0.08),false,1.5)
-        draw_string(ThemeDB.fallback_font,Vector2(86,y),"%02d  %s" % [i+1,str(chapter.title)],HORIZONTAL_ALIGNMENT_LEFT,620,17,Color("#73f3ce") if active else Color.WHITE)
-        draw_string(ThemeDB.fallback_font,Vector2(710,y),("✓" if done else "%d/%d" % [progress,goal]),HORIZONTAL_ALIGNMENT_RIGHT,250,16,Color("#8de9aa") if done else Color("#c7d6de"))
-        draw_string(ThemeDB.fallback_font,Vector2(86,y+28),str(chapter.desc),HORIZONTAL_ALIGNMENT_LEFT,850,13,Color("#aebfc9"))
-        y += 108
-
-    draw_string(ThemeDB.fallback_font,Vector2(95,1900),"◀  VORHERIGE",HORIZONTAL_ALIGNMENT_LEFT,300,18,Color("#9ad5ff") if missions_page>0 else Color(0.4,0.5,0.55,0.45))
-    draw_string(ThemeDB.fallback_font,Vector2(685,1900),"NÄCHSTE  ▶",HORIZONTAL_ALIGNMENT_RIGHT,300,18,Color("#9ad5ff") if missions_page<page_count-1 else Color(0.4,0.5,0.55,0.45))
-    draw_string(ThemeDB.fallback_font,Vector2(72,1960),"Unten links/rechts tippen zum Blättern · MISSIONS erneut zum Schließen.",HORIZONTAL_ALIGNMENT_LEFT,900,15,Color("#91a7b3"))
 
 func _interact_property(index: int) -> void:
     if index<0 or index>=property_sites.size():
@@ -10142,17 +9979,14 @@ func _draw_ambient_overlay() -> void:
 
 func _draw_touch_controls() -> void:
     var size := get_viewport_rect().size
-    var center := move_origin if move_touch>=0 else Vector2(112,size.y-135)
-    var knob := move_now if move_touch>=0 else center
-    draw_circle(center,62,Color(0.04,0.11,0.15,0.36))
-    draw_arc(center,62,0,TAU,48,Color(0.45,0.95,0.82,0.28),2,true)
-    draw_circle(knob,24,Color(0.45,0.95,0.82,0.30))
+    var center := move_origin if move_touch>=0 else Vector2(128,size.y-156)
+    var knob := center+move_vec*72
+    draw_circle(center,76,Color(0.025,0.065,0.09,0.64))
+    draw_arc(center,76,0,TAU,48,Color(0.45,0.95,0.82,0.42),2,true)
+    draw_circle(knob,27,Color(0.45,0.95,0.82,0.58))
     if current_vehicle>=0:
-        draw_string(ThemeDB.fallback_font,center+Vector2(-48,-82),"GAS",HORIZONTAL_ALIGNMENT_CENTER,96,11,Color(0.75,0.95,0.90,0.70))
-        draw_string(ThemeDB.fallback_font,center+Vector2(-48,94),"BREMSE / R",HORIZONTAL_ALIGNMENT_CENTER,96,10,Color(0.95,0.78,0.70,0.70))
-        draw_string(ThemeDB.fallback_font,center+Vector2(-92,-5),"←",HORIZONTAL_ALIGNMENT_CENTER,36,14,Color(0.80,0.90,0.93,0.60))
-        draw_string(ThemeDB.fallback_font,center+Vector2(56,-5),"→",HORIZONTAL_ALIGNMENT_CENTER,36,14,Color(0.80,0.90,0.93,0.60))
-        draw_string(ThemeDB.fallback_font,center+Vector2(-48,72),"LENKEN",HORIZONTAL_ALIGNMENT_CENTER,96,10,Color(0.70,0.86,0.92,0.55))
+        draw_string(ThemeDB.fallback_font,center+Vector2(-90,-100),"FAHRTRICHTUNG",HORIZONTAL_ALIGNMENT_CENTER,180,20,Color("#d4ede5"))
+        draw_string(ThemeDB.fallback_font,center+Vector2(-100,114),"Loslassen: bremsen",HORIZONTAL_ALIGNMENT_CENTER,200,19,Color("#b2cbd2"))
     if look_touch>=0:
         draw_circle(look_origin,48,Color(0.04,0.11,0.15,0.25))
         draw_circle(look_now,16,Color(0.55,0.78,1.0,0.35))
@@ -10202,16 +10036,7 @@ func _point_in_building(p: Vector2) -> bool:
     return false
 
 func _point_blocked(p: Vector2, radius: float) -> bool:
-    for l in landmarks:
-        if _landmark_rect(l).grow(radius).has_point(p):
-            return true
-    for b in buildings:
-        if (b.rect as Rect2).grow(radius).has_point(p):
-            return true
-    for w in waters:
-        if (w.rect as Rect2).grow(radius).has_point(p) and not _point_on_road(p):
-            return true
-    return false
+    return CityAccess.blocked(self,p,radius)
 
 func _point_on_road(p: Vector2) -> bool:
     for road in roads:
@@ -10291,20 +10116,3 @@ func _car_color(cls: String) -> Color:
     }
     var arr: Array = palettes.get(cls,palettes["sedan"])
     return arr[rng.randi_range(0,arr.size()-1)]
-
-func _draw_home_interior(origin: Vector2, accent: Color) -> void:
-    if interior_floor==0:
-        draw_rect(Rect2(origin+Vector2(300,130),Vector2(250,150)),Color("#2c3438"),true)
-        draw_rect(Rect2(origin+Vector2(325,155),Vector2(95,55)),Color("#59686f"),true)
-        draw_rect(Rect2(origin+Vector2(455,155),Vector2(70,55)),Color("#49545a"),true)
-        draw_circle(origin+Vector2(390,360),42,Color("#5d493b"))
-        draw_rect(Rect2(origin+Vector2(610,120),Vector2(170,310)),Color(0.08,0.10,0.12,0.88),true)
-        draw_rect(Rect2(origin+Vector2(610,120),Vector2(170,310)),Color(accent.r,accent.g,accent.b,0.35),false,2.0)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(635,150),"PRIVATE GARAGE",HORIZONTAL_ALIGNMENT_LEFT,130,12,Color.WHITE)
-    else:
-        draw_rect(Rect2(origin+Vector2(305,135),Vector2(220,120)),Color("#30383d"),true)
-        draw_rect(Rect2(origin+Vector2(330,158),Vector2(170,72)),Color("#53616a"),true)
-        draw_rect(Rect2(origin+Vector2(590,140),Vector2(170,105)),Color("#242e34"),true)
-        draw_string(ThemeDB.fallback_font,origin+Vector2(615,175),"BEDROOM",HORIZONTAL_ALIGNMENT_LEFT,120,12,Color.WHITE)
-        draw_circle(origin+Vector2(430,365),54,Color(0.24,0.34,0.38,0.55))
-        draw_string(ThemeDB.fallback_font,origin+Vector2(360,365),"PRIVATE STUDIO",HORIZONTAL_ALIGNMENT_CENTER,140,11,Color("#dfecee"))

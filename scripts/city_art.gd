@@ -135,44 +135,52 @@ static func draw_building(g: Node2D, b: Dictionary) -> void:
     g._draw_massing_detail(b,roof)
 
 static func draw_roads(g: Node2D) -> void:
-    var scale: float = g.world_zoom
-    # All road beds first: lane paint and zebra crossings survive intersections.
+    var scale: float=g.world_zoom
+    # Every footway and curb is laid first. Every carriageway is cut through
+    # afterwards, so crossing streets form one open, continuous asphalt surface.
     for road in g.roads:
-        var pts: PackedVector2Array = road.points
-        var projected = PackedVector2Array()
-        for p in pts:
-            projected.append(g._project(p))
-        var width: float = float(road.width)*scale
-        g.draw_polyline(projected,Color("#14181e"),width+68.0*scale,true)
-        g.draw_polyline(projected,Color("#afa691"),width+56.0*scale,true)
-        g.draw_polyline(projected,Color("#ded1af"),width+5.0*scale,true)
-        g.draw_polyline(projected,Color("#343c43"),width,true)
+        var projected=PackedVector2Array()
+        for p in road.points: projected.append(g._project(p))
+        var width: float=float(road.width)*scale
+        g.draw_polyline(projected,Color("#19212a"),width+68*scale,true)
+        g.draw_polyline(projected,Color("#a89f8b"),width+56*scale,true)
+        g.draw_polyline(projected,Color("#c9c3ad"),width+5*scale,true)
+        if g.graphics_quality>0:
+            for k in range(road.points.size()-1):
+                var a: Vector2=road.points[k]
+                var b: Vector2=road.points[k+1]
+                if not g._world_rect_visible(Rect2(a.min(b),a.max(b)-a.min(b)).grow(float(road.width)+80)): continue
+                var normal=(b-a).normalized().orthogonal()
+                for side in [-1.0,1.0]:
+                    var inner=normal*(float(road.width)*0.5+4)*side
+                    var outer=normal*(float(road.width)*0.5+27)*side
+                    var poly=PackedVector2Array()
+                    var uv=PackedVector2Array()
+                    for q in [a+inner,b+inner,b+outer,a+outer]:
+                        poly.append(g._project(q))
+                        uv.append(q/52.0)
+                    g.draw_colored_polygon(poly,Color(0.92,0.90,0.81,1),uv,g.VS_SIDEWALK)
+    for road in g.roads:
+        var pts: PackedVector2Array=road.points
+        var projected=PackedVector2Array()
+        for p in pts: projected.append(g._project(p))
+        var width: float=float(road.width)*scale
+        g.draw_polyline(projected,Color("#343e49"),width,true)
         if g.graphics_quality>0:
             for k in range(pts.size()-1):
-                var a: Vector2 = pts[k]
-                var b: Vector2 = pts[k+1]
-                if not g._world_rect_visible(Rect2(a.min(b),Vector2(absf(a.x-b.x),absf(a.y-b.y))).grow(float(road.width)+80)):
-                    continue
-                var tangent = (b-a).normalized()
-                var normal = Vector2(-tangent.y,tangent.x)*float(road.width)*0.5
-                var corners = [a-normal,b-normal,b+normal,a+normal]
-                var poly = PackedVector2Array()
-                var uv = PackedVector2Array()
-                for p in corners:
-                    poly.append(g._project(p))
-                    uv.append(p/165.0)
-                g.draw_colored_polygon(poly,Color(0.64,0.70,0.81,0.70),uv,ASPHALT)
-                for side_sign in [-1.0,1.0]:
-                    var inner=normal.normalized()*(float(road.width)*0.5+4)*side_sign
-                    var outer=normal.normalized()*(float(road.width)*0.5+27)*side_sign
-                    var strip=PackedVector2Array()
-                    var paving_uv=PackedVector2Array()
-                    for q in [a+inner,b+inner,b+outer,a+outer]:
-                        strip.append(g._project(q))
-                        paving_uv.append(q/52.0)
-                    g.draw_colored_polygon(strip,Color(0.93,0.89,0.78,0.78),paving_uv,g.VS_SIDEWALK)
+                var a: Vector2=pts[k]
+                var b: Vector2=pts[k+1]
+                if not g._world_rect_visible(Rect2(a.min(b),a.max(b)-a.min(b)).grow(float(road.width)+80)): continue
+                var normal=(b-a).normalized().orthogonal()*float(road.width)*0.5
+                var poly=PackedVector2Array()
+                var uv=PackedVector2Array()
+                for q in [a-normal,b-normal,b+normal,a+normal]:
+                    poly.append(g._project(q))
+                    uv.append(q/165.0)
+                g.draw_colored_polygon(poly,Color(0.75,0.80,0.88,1),uv,ASPHALT)
         if g._weather_state() in ["rain","storm"]:
-            g.draw_polyline(projected,Color(0.26,0.43,0.58,0.13),width-6*scale,true)
+            g.draw_polyline(projected,Color(0.26,0.43,0.58,0.12),width-6*scale,true)
+    draw_canal_bridges(g)
     for road in g.roads:
         var pts: PackedVector2Array = road.points
         var length: float = g._polyline_length(pts)
@@ -197,6 +205,7 @@ static func draw_roads(g: Node2D) -> void:
                     if float(road.width)>100.0:
                         var lane = screen+normal*float(road.width)*0.27*scale*side_sign
                         g.draw_line(lane-tangent*10*scale,lane+tangent*10*scale,Color("#dedace"),1.6*scale,true)
+            if at_junction: continue
             for side_sign in [-1.0,1.0]:
                 var curb = screen+normal*(float(road.width)*0.5+13.0)*scale*side_sign
                 g.draw_line(curb-normal*9*scale,curb+normal*9*scale,Color(0.15,0.17,0.19,0.28),0.8*scale,true)
@@ -228,7 +237,7 @@ static func add_street_blocks(g: Node2D) -> void:
                 var center = wp+normal*(float(road.width)*0.5+53+depth*0.5)*side_sign
                 var size = Vector2(depth,front) if absf(tangent.y)>0.7 else Vector2(front,depth)
                 var rect = Rect2(center-size*0.5,size)
-                if not Rect2(Vector2(50,50),g.WORLD_SIZE-Vector2(100,100)).encloses(rect) or g._rect_in_park(rect) or g._rect_hits_landmark(rect) or g._rect_near_road(rect,34):
+                if not Rect2(Vector2(50,50),g.WORLD_SIZE-Vector2(100,100)).encloses(rect) or g._rect_in_park(rect) or g._rect_hits_landmark(rect) or g._rect_near_road(rect,34) or g.waters.any(func(w): return Rect2(w.rect).grow(22).intersects(rect)):
                     continue
                 var blocked = false
                 for p in protected:
@@ -249,7 +258,7 @@ static func add_street_blocks(g: Node2D) -> void:
                 var seed_value = local_rng.randi_range(0,1000000)
                 g.buildings.append({"rect":rect,"height":h,"wall":district.wall,"roof":district.roof,"accent":district.accent,"style":district.style,"seed":seed_value,"floors":4,"massing":"slab","facade":recipe.facade[seed_value%recipe.facade.size()],"roof_mode":recipe.roof[seed_value%recipe.roof.size()],"street_block":true})
                 var frontage=wp+normal*(float(road.width)*0.5+39.0)*side_sign
-                if frontage_is_clear(g,frontage):
+                if frontage_is_clear(g,frontage) and not g._point_over_water(frontage):
                     g.street_ensembles.append({"pos":frontage,"tangent":tangent,"normal":normal*side_sign,"seed":seed_value,"style":district.style})
     g.buildings.sort_custom(func(a,b): return Rect2(a.rect).end.y<Rect2(b.rect).end.y)
     # Trees, cafés and benches also belong on open frontages between buildings.
@@ -298,43 +307,127 @@ static func draw_pavers(g: Node2D, district: Dictionary) -> void:
 
 static func draw_junction(g: Node2D, j: Dictionary) -> void:
     var wp: Vector2=j.pos
-    var p: Vector2=g._project(wp)
     var scale: float=g.world_zoom
-    var a: Dictionary=g.roads[int(j.a)]
-    var b: Dictionary=g.roads[int(j.b)]
-    var ta: Vector2=g._closest_road_tangent(int(j.a),wp)
-    var tb: Vector2=g._closest_road_tangent(int(j.b),wp)
-    var width_a: float=a.width
-    var width_b: float=b.width
-    var size=Vector2(width_a,width_b)*scale
-    var rect=Rect2(p-size*0.5,size)
-    g.draw_rect(rect,Color("#333b40"))
-    if g.graphics_quality>0:
-        var poly=PackedVector2Array([rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)])
-        var origin=wp-Vector2(width_a,width_b)*0.5
-        var uv=PackedVector2Array([origin/165,(origin+Vector2(width_a,0))/165,(origin+Vector2(width_a,width_b))/165,(origin+Vector2(0,width_b))/165])
-        g.draw_colored_polygon(poly,Color(0.64,0.70,0.81,0.70),uv,ASPHALT)
+    var widths=[float(g.roads[int(j.a)].width),float(g.roads[int(j.b)].width)]
+    var axes=[g._closest_road_tangent(int(j.a),wp),g._closest_road_tangent(int(j.b),wp)]
+    # Crosswalks and stop bars belong on the approaches, beyond the open centre.
+    # There is no perimeter box, transverse footway, or raised lip in the node.
     for axis in range(2):
-        var tangent=ta if axis==0 else tb
+        var tangent: Vector2=axes[axis]
         var normal=Vector2(-tangent.y,tangent.x)
-        var own=width_a if axis==0 else width_b
-        var cross=width_b if axis==0 else width_a
-        var stripes=maxi(4,int(own/14))
+        var own: float=widths[axis]
+        var cross: float=widths[1-axis]
+        var stripes=maxi(5,int((own-18)/10))
         for sign_value in [-1.0,1.0]:
-            var c=p+tangent*(cross*0.5-8)*scale*sign_value
+            var centre=wp+tangent*(cross*0.5+21)*sign_value
             for k in range(stripes):
-                var stripe=c+normal*(float(k)-float(stripes-1)*0.5)*11*scale
-                g.draw_line(stripe-tangent*6*scale,stripe+tangent*6*scale,Color("#d9d4c5"),6*scale,true)
-            var light=c+tangent*17*scale*sign_value+normal*(own*0.5+18)*scale
-            g.draw_circle(light,3.0*scale,Color("#61e294") if g._junction_green(j,int(j.a) if axis==0 else int(j.b)) else Color("#ff7252"))
-            g.draw_line(c-tangent*17*scale*sign_value-normal*own*0.42*scale,c-tangent*17*scale*sign_value+normal*own*0.42*scale,Color("#ddd6c6"),1.6*scale,true)
-    if g.graphics_quality>=2 and minf(width_a,width_b)>100:
-        var inset=size*0.19
-        var c_rect=Rect2(p-inset,inset*2)
-        g.draw_rect(c_rect,Color(0.96,0.73,0.28,0.25),false,1.0*scale)
-        for i in range(-2,3):
-            var shift=float(i)*10*scale
-            g.draw_line(p+Vector2(-inset.x,inset.y*0.7+shift),p+Vector2(inset.x,-inset.y*0.7+shift),Color(0.96,0.73,0.28,0.18),0.8*scale,true)
+                var stripe=centre+normal*(float(k)-float(stripes-1)*0.5)*10
+                g.draw_line(g._project(stripe-tangent*8),g._project(stripe+tangent*8),Color("#e6dfca"),5*scale,true)
+            var stop=centre+tangent*23*sign_value
+            g.draw_line(g._project(stop-normal*own*0.43),g._project(stop+normal*own*0.43),Color("#e1dac7"),2.2*scale,true)
+            var pole=centre+tangent*13*sign_value+normal*(own*0.5+18)
+            var foot: Vector2=g._project(pole)
+            var top: Vector2=g._project(pole,14)
+            g.draw_line(foot,top,Color("#26363c"),3*scale,true)
+            g.draw_rect(Rect2(top-Vector2(3.8,7)*scale,Vector2(7.6,15)*scale),Color("#17242c"))
+            var green: bool=g._junction_green(j,int(j.a) if axis==0 else int(j.b))
+            g.draw_circle(top+Vector2(0,3 if green else -3)*scale,2*scale,Color("#83dba4") if green else Color("#ee7a67"))
+    # Four corner kerbs finish before the zebra; the road surface remains level.
+    for sx in [-1.0,1.0]:
+        for sy in [-1.0,1.0]:
+            var corner=wp+Vector2(sx*(widths[0]*0.5+18),sy*(widths[1]*0.5+18))
+            var screen: Vector2=g._project(corner)
+            g.draw_circle(screen,6.5*scale,Color("#918d7c"))
+            g.draw_circle(screen,3.8*scale,Color("#c3bea7"))
+
+static func draw_canal_bridges(g: Node2D) -> void:
+    # Water runs underneath a continuous deck; stone abutments and guardrails
+    # identify these spans without implying a flyover at ordinary intersections.
+    for road in g.roads:
+        for k in range(road.points.size()-1):
+            var a: Vector2=road.points[k]
+            var b: Vector2=road.points[k+1]
+            var tangent=(b-a).normalized()
+            var normal=Vector2(-tangent.y,tangent.x)
+            for water in g.waters:
+                var r: Rect2=water.rect
+                var first=0.0
+                var last=1.0
+                var hit=true
+                for axis in range(2):
+                    var d: float=(b-a)[axis]
+                    if absf(d)<0.001:
+                        if a[axis]<r.position[axis] or a[axis]>r.end[axis]: hit=false; break
+                    else:
+                        var t1=(r.position[axis]-a[axis])/d
+                        var t2=(r.end[axis]-a[axis])/d
+                        first=maxf(first,minf(t1,t2))
+                        last=minf(last,maxf(t1,t2))
+                        if first>last: hit=false; break
+                if not hit or last<first: continue
+                var begin=a.lerp(b,first)-tangent*18
+                var finish=a.lerp(b,last)+tangent*18
+                if not g._world_rect_visible(Rect2(begin.min(finish),begin.max(finish)-begin.min(finish)).grow(150)): continue
+                var half: float=float(road.width)*0.5+29
+                for side in [-1.0,1.0]:
+                    var e1=begin+normal*half*side
+                    var e2=finish+normal*half*side
+                    g.draw_line(g._project(e1),g._project(e2),Color(0.02,0.09,0.12,0.48),8*g.world_zoom,true)
+                    g.draw_line(g._project(e1,9),g._project(e2,9),Color("#b5c6c3"),3*g.world_zoom,true)
+                    var count=maxi(1,int(begin.distance_to(finish)/55))
+                    for i in range(count+1):
+                        var post=e1.lerp(e2,float(i)/count)
+                        g.draw_line(g._project(post),g._project(post,9),Color("#879e9e"),2.8*g.world_zoom,true)
+                for end in [begin,finish]:
+                    for side in [-1.0,1.0]:
+                        var p: Vector2=g._project(end+normal*(half+4)*side)
+                        g.draw_rect(Rect2(p-Vector2(8,11)*g.world_zoom,Vector2(16,22)*g.world_zoom),Color("#7e9594"))
+                        g.draw_rect(Rect2(p-Vector2(8,11)*g.world_zoom,Vector2(16,22)*g.world_zoom),Color("#203842"),false,1.5*g.world_zoom)
+
+static func clear_crossings(g: Node, own_road: int, a: Vector2, b: Vector2, clearance: float) -> Array:
+    # Subtract other carriageways from a footway/lane centreline in world space.
+    # The same intervals drive 3D sidewalk meshes, so there is no raised curb
+    # slab across an at-grade junction in the photo scene either.
+    var intervals: Array=[Vector2(0,1)]
+    for ri in range(g.roads.size()):
+        if ri==own_road: continue
+        var road: Dictionary=g.roads[ri]
+        for k in range(road.points.size()-1):
+            var begin: Vector2=road.points[k]
+            var end: Vector2=road.points[k+1]
+            var tangent=(end-begin).normalized()
+            var normal=Vector2(-tangent.y,tangent.x)
+            var center=(begin+end)*0.5
+            var start=Vector2((a-center).dot(tangent),(a-center).dot(normal))
+            var finish=Vector2((b-center).dot(tangent),(b-center).dot(normal))
+            var delta=finish-start
+            var half=Vector2(begin.distance_to(end)*0.5,float(road.width)*0.5+clearance)
+            var first=0.0
+            var last=1.0
+            var hit=true
+            for axis in range(2):
+                if absf(delta[axis])<0.001:
+                    if absf(start[axis])>half[axis]: hit=false; break
+                else:
+                    var near_t=(-half[axis]-start[axis])/delta[axis]
+                    var far_t=(half[axis]-start[axis])/delta[axis]
+                    first=maxf(first,minf(near_t,far_t))
+                    last=minf(last,maxf(near_t,far_t))
+                    if first>last: hit=false; break
+            if not hit: continue
+            var remaining: Array=[]
+            for interval in intervals:
+                if last<=interval.x or first>=interval.y:
+                    remaining.append(interval)
+                else:
+                    if first>interval.x: remaining.append(Vector2(interval.x,first))
+                    if last<interval.y: remaining.append(Vector2(last,interval.y))
+            intervals=remaining
+    var result: Array=[]
+    for interval in intervals:
+        if a.distance_to(b)*(interval.y-interval.x)>2:
+            result.append(PackedVector2Array([a.lerp(b,interval.x),a.lerp(b,interval.y)]))
+    return result
 
 static func draw_street_pools(g: Node2D) -> void:
     if g.graphics_quality==0:
@@ -432,7 +525,7 @@ static func draw_vehicle(g: Node2D, pos: Vector2, heading: float, cls: String, c
     g.draw_texture_rect_region(VEHICLES,Rect2(-sprite_size*0.5,sprite_size),source,Color.WHITE if index>=10 else color.lightened(0.12))
     g.draw_set_transform(Vector2.ZERO,0,Vector2.ONE)
     var player_car: bool=g.current_vehicle>=0 and g.player_pos.distance_to(pos)<2 and not parked
-    var braking: bool=player_car and g.move_vec.y>0.18
+    var braking: bool=player_car and g.vehicle_braking
     var front=center+forward*size.x*0.43
     var rear=center-forward*size.x*0.44
     var dark: bool=g.world_clock>18 or g.world_clock<7 or g._weather_state() in ["rain","storm","mist"]
@@ -452,7 +545,7 @@ static func draw_vehicle(g: Node2D, pos: Vector2, heading: float, cls: String, c
             g.draw_circle(light,2.0*scale,Color(flash.r,flash.g,flash.b,0.85))
     if archetype=="taxi":
         g.draw_line(center-side*4*scale,center+side*4*scale,Color("#ffcf51"),3*scale,true)
-    if player_car and absf(g.vehicle_velocity)>200 and absf(g.move_vec.x)>0.45:
+    if player_car and absf(g.vehicle_velocity)>200 and absf(g.vehicle_turn_error)>0.7:
         for sign_value in [-1.0,1.0]:
             var tire=rear+side*size.y*0.40*sign_value
             g.draw_line(tire,tire-forward*23*scale,Color(0,0,0,0.27),2*scale,true)

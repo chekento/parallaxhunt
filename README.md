@@ -1,6 +1,17 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.22.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+**Parallax Hunt 1.23.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+
+## 1.23.0 — Clean menus, authored interiors and reliable city access
+
+- Map, missions and collection are real controls on an input-owning modal canvas. Opening any menu, dialogue, commerce card or puzzle hides the entire gameplay HUD and pauses street movement. Large close buttons, scrollable cards, collection tabs, map categories and a neighborhood view replace fixed draw coordinates. Popup timers cancel their predecessors instead of hiding newer notifications.
+- Eleven interior identities use larger authored cutaway layouts: bars with bottle shelves and taps, cafes and restaurants, furnished homes, stocked shops, service bays, a clinic, research spaces, roof terraces and utility rooms. Directional character sprites share the exterior style. Furniture has collision, and feature, exit and stair routes are checked on a walking grid.
+- Every road-to-road junction is at grade. Footways and curbs are drawn first, followed by all asphalt carriageways, so no sidewalk continues across the intersecting road. Zebras and stop bars lie on the approaches. Canal spans have an actual continuous deck, footways, railings and abutments above the water. 3D photo footways and lane sections are also split at crossings.
+- Buildings, trees and ground vegetation are excluded from canal water. A deterministic access pass checks 250 interaction and collectible positions for a clear body-width route from a road, relocating blocked coordinates while retaining item IDs and flags. The reported canal archive is now on a bridge footway and is checked through actual player walking and interaction proximity. Mira points to the nearest remaining archive and gives the archive count. Roof relays point to street-level entrances and use the explorable roof scene.
+- Cars follow the chosen joystick/WASD world direction with bounded smooth turning, corner slowdown, acceleration and automatic braking when released. Driving assist improves braking and turn rate without pulling against the chosen direction. Stop collisions do not bounce the car into reverse. Idle walking restores energy gradually.
+- A spatial index limits collision checks to nearby buildings. Existing preview slots, collected flags, credits and the delivered test signature are retained. A saved blocked position or obsolete active-job coordinate is moved to a reachable approach.
+
+The `--quality-smoke` regression covers menu input isolation, all 250 street approaches, the reported canal route, all 25 district survey points, 49 newly generated city jobs, twelve interior routes, all four car directions and popup timer replacement. New visit contracts, deliveries and event follow-ups also use reachable approaches. Real OpenGL captures cover the three menus, junction, bar, cafe, home, garage, shop, clinic, rooftop, dialogue and puzzle. Android camera behavior and phone frame pacing still require a physical-device test.
 
 ## 1.22.0 — Characters, readable missions and richer Photo Hunt
 
@@ -30,7 +41,7 @@ The preview retains the 1.21.0 application ID and delivered test signing key, so
 
 The delivered **Parallax Hunt · Preview** APK installs as `com.kosch.parallaxhunt.preview` alongside the previous app. The old debug signing key was unavailable, so the preview keeps the previous installation and its saves intact. The preview starts with separate saves. The standard `Android` export preset retains the original app ID.
 
-Use the left joystick to walk or drive, the right side to adjust perspective, AKTION (or the contextual action label) for nearby actions and SCAN for signals. For camera tracking, enable **Kamera-Headtracking** in options, grant camera access and use the recenter button while looking at the phone. Without camera tracking, touch and phone tilt remain available. On desktop: WASD/arrows, E to interact, Q to scan, right drag for perspective, C to recenter and Escape to close a panel.
+Use the left joystick to choose the world direction for walking or driving; release it to brake the car. Use the right side to adjust perspective, AKTION (or the contextual action label) for nearby actions and SCAN for signals. For camera tracking, enable **Kamera-Headtracking** in options, grant camera access and use the recenter button while looking at the phone. Without camera tracking, touch and phone tilt remain available. On desktop: WASD/arrows, E to interact, Q to scan, right drag for perspective, C to recenter and Escape to close a panel.
 
 ### Build and validation
 
@@ -42,10 +53,11 @@ godot --headless --editor --path . --import --quit
 godot --headless --path . -- --city-smoke
 godot --headless --path . -- --experience-smoke
 godot --headless --path . -- --photo-smoke
-godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.22.0-preview.apk
+godot --headless --path . -- --quality-smoke
+godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.23.0-preview.apk
 ```
 
-Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
+Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
 
 The private source archive supplied with this build includes `signing/debug.keystore` for subsequent local test builds. Use `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` to point to it (debug alias `androiddebugkey`, password `android`). The key is excluded from the repository. CI can reuse it through the optional `PARALLAX_DEBUG_KEYSTORE_BASE64` repository secret; otherwise a CI run creates its own test key.
 

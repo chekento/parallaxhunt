@@ -1,6 +1,17 @@
 # Native Roadmap
 
-## 1.22.0 — current delivered build
+## 1.23.0 — current delivered build
+
+- Input-owning menus with scrollable mission and collection cards, map filters and a neighborhood view; clean modal cards and independent notification lifetimes.
+- Eleven furnished interior identities with coherent character art, readable feature and exit markers, furniture collision and verified walking routes.
+- At-grade crossings with continuous road surfaces and approach markings; canal bridges have footways, railings and abutments.
+- Deterministic walking access for collectible and interaction points, district surveys and newly generated jobs. Canal buildings are removed and Mira's archive has a tested bridge approach.
+- Direction-based car control with smooth turning, corner slowdown and automatic braking; street movement pauses while menus are open.
+- Android preview version code 65, existing preview save slots and delivered test signing key retained. Local and CI checks cover menus, access, rooms, driving and existing gameplay/photo behavior.
+
+Next priorities are physical-device camera and frame-time measurements, more character walking frames, district-specific facade artwork and further mission pacing. Street exploration uses the 2.5D renderer; native 3D remains the stationary photo scene.
+
+## 1.22.0 — previous delivered build
 
 - Authored four-direction character art for the player, pedestrians and contacts.
 - Nearest remaining collection targets, mission progress bar, next-action text and goal/edge markers.
