@@ -33,6 +33,11 @@ static func dog(g: Node2D,p: Vector2) -> void:
         g.draw_circle(screen+Vector2(side*2.7,-19)*scale,1.1*scale,Color("#273d36"))
     g.draw_circle(screen-Vector2(0,15)*scale,1.8*scale,Color("#34413a"))
     g.draw_line(screen+Vector2(8,-7)*scale,screen+Vector2(14,-14+sin(Time.get_ticks_msec()*.009)*3)*scale,Color("#bf9b6f"),3*scale,true)
+static func pico_position(g: Node) -> Vector2:
+    var progress: int=int(g.life_progress.get("pico",0))
+    if progress==3 and (g.life_active=="pico" or not g.life_completed.get("pico",false)):return g.player_pos+Vector2(-23,9)
+    if g.life_active=="pico" or not g.life_completed.get("pico",false):return Vector2(g.CityLife.get_place(g,"dog").pos)-Vector2(0,15)
+    return Vector2(g.CityLife.get_place(g,"kiosk").pos)+Vector2(48,4)
 static func draw(g: Node2D) -> void:
     var s: float=g.world_zoom
     for place in g.life_places:
@@ -90,7 +95,6 @@ static func draw(g: Node2D) -> void:
             g.draw_line(g._project(scene,4),g._project(scene,38),Color("#b6ddd4"),2*s,true)
             for side in [-1.0,1.0]:planter(g,scene+Vector2(side*80,10),true)
         elif kind=="dog":
-            if not g.life_completed.get("pico",false) and int(g.life_progress.get("pico",0))<3:dog(g,p-Vector2(0,15))
             for side in [-1.0,1.0]:
                 var base: Vector2=scene+Vector2(side*40,0)
                 g.draw_line(g._project(base),g._project(base,74),Color("#607558"),3*s,true);planter(g,base,true)
@@ -129,11 +133,11 @@ static func draw(g: Node2D) -> void:
                 for x in range(-72,80,24):g.draw_line(g._project(scene+Vector2(x,0),4),g._project(scene+Vector2(x,0),105),Color("#82958b"),s,true)
         elif kind=="bench":
             slab(g,scene,Vector2(76,27),18,Color("#aa8765"));planter(g,scene+Vector2(56,0),true)
-        if place.id=="kiosk" and g.life_completed.get("pico",false):dog(g,p+Vector2(48,4))
         if g._modal_active():continue
         var active: bool=not g.CityLife.step(g).is_empty() and str(g.CityLife.step(g).at)==str(place.id)
         var tint:=Color("#f0ca8c") if active else Color("#c4d8c8")
         if p.distance_to(g.player_pos)<260:
             caption(g,p+Vector2(-105,65),str(place.name),tint)
             if not bool(g.life_seen.get(place.id,false)):g.draw_circle(g._project(p+Vector2(0,14)),3*s,Color("#eaca8d"))
-    if g.life_active=="pico" and int(g.life_progress.get("pico",0))==3:dog(g,g.player_pos+Vector2(-23,9))
+    var pico: Vector2=pico_position(g)
+    if g._tile_visible(g._project(pico),70):dog(g,pico)

@@ -37,6 +37,7 @@ static func play_step(g: Node) -> void:
         assert(int(g.life_progress.get(id,0))==index and not g.minigame_finishing,"Unsolved puzzles cannot advance a story")
         await solve(g)
     assert(int(g.life_progress.get(id,0))==index+1,"Interaction advances exactly one story step")
+    if id=="pico" and index==2:assert(g.NeighborhoodArt.pico_position(g)==g.player_pos+Vector2(-23,9),"Found Pico visibly follows the player during the return step")
     var after: int=g.credits;g.CityLife.advance(g,id,index)
     assert(g.credits==after and int(g.life_progress.get(id,0))==index+1,"A repeated callback cannot pay or progress twice")
 static func smoke(g: Node) -> void:
@@ -62,8 +63,10 @@ static func smoke(g: Node) -> void:
         g.CityLife.begin(g,str(s.id))
         for i in range(s.steps.size()):await play_step(g)
         assert(g.life_completed.get(s.id,false) and g.life_active.is_empty(),"Story finishes through normal interaction")
+        if s.id=="pico":assert(g.NeighborhoodArt.pico_position(g)==Vector2(g.CityLife.get_place(g,"kiosk").pos)+Vector2(48,4),"Returned Pico stays visibly at his owner's kiosk")
         assert(g.credits==before+int(s.reward)+new_places.size()*8,"First discovery and story completion pay exactly once")
         before=g.credits;g.CityLife.begin(g,str(s.id))
+        if s.id=="pico":assert(g.NeighborhoodArt.pico_position(g)==Vector2(g.CityLife.get_place(g,"dog").pos)-Vector2(0,15),"Replay puts Pico at the actual search location")
         for i in range(s.steps.size()):await play_step(g)
         assert(g.credits==before,"Completed stories and their puzzles do not duplicate rewards on replay")
     assert(g.city_reputation==14 and g.life_completed.size()==7,"Seven stories grant their reputation once")
