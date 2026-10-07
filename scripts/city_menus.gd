@@ -4,6 +4,7 @@ const WorldAtlas=preload("res://scripts/world_atlas.gd")
 var game: Node
 var section := ""
 var album_tab := 0
+var mission_tab := "Entdecken"
 var map_mode := "city"
 var map_category := "Ziele"
 var atlas: Control
@@ -20,7 +21,7 @@ func setup(owner_game: Node) -> void:
     game=owner_game
     position=Vector2(40,84)
     size=Vector2(1000,2170)
-    add_theme_stylebox_override("panel",card_style(Color("#0b1923"),Color("#36535e"),30))
+    add_theme_stylebox_override("panel",card_style(Color("#101f26"),Color("#52675f"),32))
     var column=VBoxContainer.new()
     column.add_theme_constant_override("separation",24)
     add_child(column)
@@ -30,7 +31,7 @@ func setup(owner_game: Node) -> void:
     var titles=VBoxContainer.new()
     titles.size_flags_horizontal=Control.SIZE_EXPAND_FILL
     top.add_child(titles)
-    titles.add_child(label("PARALLAX  /  STADT & UMLAND",22,Color("#73f3ce")))
+    titles.add_child(label("PARALLAX  /  DEIN REISEBUCH",22,Color("#eccb91")))
     heading=label("",42)
     titles.add_child(heading)
     var close=button("SCHLIESSEN",game._close_overview)
@@ -56,16 +57,19 @@ func setup(owner_game: Node) -> void:
     content.size_flags_horizontal=Control.SIZE_EXPAND_FILL
     content.add_theme_constant_override("separation",20)
     scroll.add_child(content)
-    column.add_child(label("Wischen zum Scrollen  ·  Entdecke, was hinter der Stadt liegt.",21,Color("#7894a3")))
+    column.add_child(label("Jeder Ort hat eine Geschichte.  ·  Wischen zum Weiterlesen.",21,Color("#91aaad")))
     visible=false
 
 static func card_style(bg: Color, border: Color, margin: int=24) -> StyleBoxFlat:
     var style=StyleBoxFlat.new()
     style.bg_color=bg
     style.border_color=border
-    style.set_border_width_all(2)
-    style.set_corner_radius_all(20)
+    style.set_border_width_all(1)
+    style.set_corner_radius_all(24)
     style.set_content_margin_all(margin)
+    style.shadow_color=Color(0.02,0.06,0.06,.24)
+    style.shadow_size=5
+    style.shadow_offset=Vector2(0,3)
     return style
 
 static func label(text: String, font_size: int=26, color: Color=Color.WHITE) -> Label:
@@ -80,14 +84,26 @@ static func label(text: String, font_size: int=26, color: Color=Color.WHITE) -> 
 static func button(text: String, callback: Callable) -> Button:
     var b=Button.new()
     b.text=text
-    b.custom_minimum_size=Vector2(0,76)
+    b.custom_minimum_size=Vector2(0,84)
     b.add_theme_font_size_override("font_size",25)
+    b.add_theme_color_override("font_color",Color("#f0ecdc"))
+    b.add_theme_color_override("font_hover_color",Color("#ffffff"))
+    b.add_theme_stylebox_override("normal",card_style(Color("#25413f"),Color("#638476"),18))
+    b.add_theme_stylebox_override("hover",card_style(Color("#35594e"),Color("#b4d1a8"),18))
+    b.add_theme_stylebox_override("pressed",card_style(Color("#466f5a"),Color("#e5cd92"),18))
+    var focus=card_style(Color.TRANSPARENT,Color("#f1d19a"),0)
+    focus.set_border_width_all(3)
+    b.add_theme_stylebox_override("focus",focus)
+    b.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    b.clip_text=true
     b.pressed.connect(callback)
     return b
 
 func card(title: String, detail: String, accent: Color=Color("#73f3ce")) -> VBoxContainer:
     var panel=PanelContainer.new()
-    panel.add_theme_stylebox_override("panel",card_style(Color("#122731"),Color(accent,0.28)))
+    var style=card_style(Color("#1b3036"),Color(accent,0.35),26)
+    style.border_width_left=5
+    panel.add_theme_stylebox_override("panel",style)
     content.add_child(panel)
     var v=VBoxContainer.new()
     v.add_theme_constant_override("separation",12)
@@ -114,8 +130,21 @@ func show_section(kind: String) -> void:
         build_collection()
 
 func build_missions() -> void:
-    heading.text="Deine Aufträge"
-    subtitle.text="Kapitel %d von %d  ·  %d Credits" % [game.native_chapter+1,game.native_chapters.size(),game.credits]
+    heading.text="Geschichten & Wege"
+    subtitle.text="%d Kiezgeschichten  ·  %d Ausflüge  ·  %d CR" % [game.life_completed.size(),game.region_completed.size(),game.credits]
+    var nav=HBoxContainer.new();nav.add_theme_constant_override("separation",10);content.add_child(nav)
+    for name in ["Entdecken","Kiezbuch","Umland","Hauptstory"]:
+        var category: String=name
+        var b=button(name,func(): mission_tab=category;show_section("missions"));b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+        b.add_theme_font_size_override("font_size",23)
+        if mission_tab==name:b.add_theme_stylebox_override("normal",card_style(Color("#5c6043"),Color("#e2c58c"),14))
+        nav.add_child(b)
+    if not game.life_active.is_empty():
+        var s: Dictionary=game.CityLife.story(game.life_active)
+        var active=card("AKTIV · "+str(s.title),str(game.CityLife.step(game).task),Color(s.accent))
+        progress_bar(active,int(game.life_progress.get(s.id,0)),s.steps.size(),Color(s.accent))
+        active.add_child(button("NÄCHSTEN SCHRITT AUF DER KARTE",func(): game._open_overview("map")))
+        active.add_child(button("PAUSIEREN · FORTSCHRITT BEHALTEN",func(): game.CityLife.pause(game);show_section("missions")))
     if not game.active_npc_contract.is_empty():
         card("PERSÖNLICHER AUFTRAG",game._contract_description(game.active_npc_contract),Color("#ffb3e6"))
     if not game.active_job.is_empty():
@@ -124,7 +153,40 @@ func build_missions() -> void:
         var trip: Dictionary=game.RegionWorld.OUTINGS[int(game.region_contract.tour)]
         var active=card("AKTIVER AUSFLUG · "+str(trip.title),"%d / %d Stationen  ·  %s" % [int(game.region_contract.step),trip.stops.size(),game._objective_action()],Color("#c9e4a2"))
         active.add_child(button("AUSFLUG BEENDEN",func(): game.region_contract={};game.navigation_timer=0;show_section("missions")))
-    card("RAUS AUS DER STADT","Vier freie Ausflüge führen dich durch Sonnenhagen, die Felder und den Fichtenwald. Die Stationen ansprechen, um sie zu besuchen.",Color("#c9e4a2"))
+    if mission_tab=="Kiezbuch":build_stories();return
+    if mission_tab=="Umland":build_outings();return
+    if mission_tab=="Hauptstory":build_chapters();return
+    var welcome=card("EIN VIERTEL VOLLER KLEINER GESCHICHTEN","Emil sucht seinen Hund, Jo plant ein Straßenfest und Ada möchte die Uferwand bemalen. Alle Geschichten lassen sich pausieren und später fortsetzen.",Color("#edca91"))
+    welcome.add_child(button("DAS KIEZBUCH ÖFFNEN",func(): mission_tab="Kiezbuch";show_section("missions")))
+    var nearby: Array=game.life_places.duplicate()
+    nearby.sort_custom(func(a,b):return Vector2(a.pos).distance_squared_to(game.player_pos)<Vector2(b.pos).distance_squared_to(game.player_pos))
+    for i in range(mini(3,nearby.size())):
+        var place: Dictionary=nearby[i]
+        var v=card(str(place.name),"%d m entfernt  ·  %s" % [int(game.player_pos.distance_to(place.pos)/10),"Schon entdeckt" if game.life_seen.get(place.id,false) else "Ein neuer Ort für dein Kiezbuch"],Color("#a8d2ba"))
+        v.add_child(button("WEG DORTHIN",navigate_place.bind(place)))
+    var chapter: Dictionary=game.native_chapters[mini(game.native_chapter,game.native_chapters.size()-1)]
+    var main=card("DEINE HAUPTGESCHICHTE",str(chapter.title)+"\n"+str(chapter.desc),Color("#9dc5d9"))
+    main.add_child(button("ALLE KAPITEL",func(): mission_tab="Hauptstory";show_section("missions")))
+    var out=card("WEITER HINAUS","Sonnenhagen, Seen, Wald und die weite Reise über den Heidekamm nach Mühlenau.",Color("#c9e4a2"))
+    out.add_child(button("AUSFLÜGE INS UMLAND",func(): mission_tab="Umland";show_section("missions")))
+
+func progress_bar(parent: Control,value: int,total: int,accent: Color) -> void:
+    parent.add_child(label("%d / %d Schritte" % [value,total],22,Color("#b9ccc7")))
+    var bar=ProgressBar.new();bar.custom_minimum_size.y=10;bar.show_percentage=false;bar.max_value=maxi(1,total);bar.value=value
+    bar.add_theme_stylebox_override("background",card_style(Color("#2d4244"),Color.TRANSPARENT,0))
+    bar.add_theme_stylebox_override("fill",card_style(accent,Color.TRANSPARENT,0));parent.add_child(bar)
+func build_stories() -> void:
+    for s in game.CityLife.STORIES:
+        var done: bool=bool(game.life_completed.get(s.id,false));var current: int=int(game.life_progress.get(s.id,0))
+        var v=card(str(s.tag)+("  ·  ABGESCHLOSSEN" if done else "  ·  KIEZGESCHICHTE"),str(s.title)+"\n\n"+str(s.desc),Color(s.accent))
+        progress_bar(v,current,s.steps.size(),Color(s.accent))
+        v.add_child(label("Einmalige Belohnung: %d CR  ·  +2 Stadtruf" % int(s.reward) if not done else "Deine Hilfe hat diesen Ort verändert. Wiederholen ist kostenlos.",22,Color("#b9ccc7")))
+        if s.id!=game.life_active:
+            var id: String=s.id
+            v.add_child(button("ERNEUT ERLEBEN" if current>=s.steps.size() else ("FORTSETZEN" if current>0 else "GESCHICHTE BEGINNEN"),func(): game.CityLife.begin(game,id)))
+        if current>0 and current<s.steps.size():v.add_child(label("Letzter Hinweis: "+str(s.steps[current-1].text),23,Color("#b4c7c3")))
+func build_outings() -> void:
+    card("RAUS AUS DER STADT","Sechs Ausflüge führen durch Sonnenhagen, Wald und Heide bis nach Mühlenau. An den Stationen aussteigen und ENTDECKEN wählen.",Color("#c9e4a2"))
     for i in range(game.RegionWorld.OUTINGS.size()):
         var index: int=i
         var trip: Dictionary=game.RegionWorld.OUTINGS[index]
@@ -132,6 +194,7 @@ func build_missions() -> void:
         var v=card(str(trip.title),str(trip.desc),Color("#c9e4a2"))
         v.add_child(label("%d Stationen  ·  %s" % [trip.stops.size(),"BEREITS ENTDECKT" if complete else "%d CR Belohnung" % int(trip.reward)],23,Color("#aac39b")))
         v.add_child(button("ERNEUT ERKUNDEN" if complete else "AUSFLUG STARTEN",func(): game.RegionWorld.begin_outing(game,index)))
+func build_chapters() -> void:
     for i in range(game.native_chapters.size()):
         var chapter: Dictionary=game.native_chapters[i]
         var progress: int=game._chapter_progress(chapter)
@@ -150,9 +213,10 @@ func build_collection() -> void:
     var nav=HBoxContainer.new()
     nav.add_theme_constant_override("separation",12)
     content.add_child(nav)
-    for i in range(3):
+    for i in range(4):
         var index=i
-        var b=button(["ÜBERSICHT","FOTOALBUM","GARAGE"][i],func(): album_tab=index; show_section("collection"))
+        var b=button(["ÜBERSICHT","FOTOALBUM","GARAGE","KIEZBUCH"][i],func(): album_tab=index; show_section("collection"))
+        b.add_theme_font_size_override("font_size",22)
         b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
         if i==album_tab:
             b.add_theme_color_override("font_color",Color("#ffb3e6"))
@@ -169,6 +233,7 @@ func build_collection() -> void:
             ["Zeitprüfungen",game.race_completed.size(),game.race_sites.size(),"#ffd36b"],
             ["Vertrauen",game._total_npc_trust(),game.named_npcs.size()*3,"#ff9fe8"],
             ["Stadtleben",game.micro_event_seen.size(),game.city_micro_events.size(),"#ffb66f"]]
+        entries.append_array([["Kiez-Orte",game.life_seen.size(),game.life_places.size(),"#edca91"],["Kiezgeschichten",game.life_completed.size(),game.CityLife.STORIES.size(),"#edca91"]])
         for e in entries:
             var accent=Color(e[3])
             var v=card(e[0],"%d / %d" % [e[1],e[2]],accent)
@@ -188,11 +253,20 @@ func build_collection() -> void:
         for ph in game.photo_points:
             var done: bool=bool(ph.taken)
             card(("●  " if done else "○  ")+str(ph.label),"%s  ·  %d / 300 Punkte" % [str(ph.district),game._photo_spot_score(str(ph.id))],Color("#73f3ce") if done else Color("#ffb3e6"))
-    else:
+    elif album_tab==2:
         for cls in game.VEHICLE_CLASSES:
             var up: Dictionary=game._vehicle_upgrade_state(cls)
             var seen: bool=bool(game.driven_classes.get(cls,false))
             card(cls.capitalize()+"  ·  "+("GEFAHREN" if seen else "NOCH ENTDECKEN"),"Motor %d  ·  Handling %d  ·  Bremsen %d" % [up.engine,up.handling,up.brake],Color("#73f3ce") if seen else Color("#9cb6c5"))
+    else:
+        for p in game.life_places:
+            var seen: bool=bool(game.life_seen.get(p.id,false))
+            var v=card(("●  " if seen else "○  ")+str(p.name),str(p.desc) if seen else "Eine neue Geschichte wartet hier. Besuche den Ort, um seine Notiz ins Kiezbuch aufzunehmen.",Color("#edca91") if seen else Color("#94ada4"))
+            v.add_child(button("ORT AUF DER KARTE",navigate_place.bind(p)))
+
+func navigate_place(place: Dictionary) -> void:
+    game.map_waypoint={"pos":place.pos,"name":str(place.name)};game.navigation_timer=0
+    game._close_overview();game._notify("Route zu "+str(place.name)+" gestartet");game._save_game()
 
 func build_map() -> void:
     heading.text="Stadt & Umland"
@@ -209,10 +283,11 @@ func build_map() -> void:
     var filters=HBoxContainer.new()
     filters.add_theme_constant_override("separation",12)
     content.add_child(filters)
-    for key in ["Ziele","Orte","Fotos","Transit"]:
+    for key in ["Ziele","Orte","Erleben","Fotos","Transit"]:
         var category: String=key
         var b=button(key,func(): map_category=category;show_section("map"))
         b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+        b.add_theme_font_size_override("font_size",23)
         if key==map_category:b.add_theme_color_override("font_color",Color("#c9e4a2"))
         filters.add_child(b)
     atlas=WorldAtlas.new()
@@ -242,7 +317,7 @@ func build_map() -> void:
         map_selection={"pos":pos if pos!=Vector2.ZERO else game.player_pos,"name":game._current_objective_label() if pos!=Vector2.ZERO else "Deine Position"}
     _select_map_point(map_selection)
     var guide=card("ORIENTIERUNG","Mint: Du  ·  Gold: Route / Ziel  ·  Blau: Wasser\nB Bus  ·  C Café  ·  G Garage  ·  W Waldhaus  ·  V Aussicht  ·  T Zeltplatz",Color("#73f3ce"))
-    guide.add_child(label("Die Landstraße L01 führt nach Sonnenhagen und weiter in die Wildnis. Vier Haltestellen verbinden die Region. Eine Busfahrt kostet 15 CR.",23,Color("#afc5d0")))
+    guide.add_child(label("L01 führt nach Sonnenhagen und in die Wildnis. L02 verbindet das Freiland mit Mühlenau. Fünf Regionalhaltestellen verbinden die Orte für 15 CR pro Fahrt. ERLEBEN zeigt Kiez-Orte und Geschichten.",23,Color("#afc5d0")))
 func _select_map_point(selection: Dictionary) -> void:
     map_selection=selection
     selected_title.text=str(selection.name)

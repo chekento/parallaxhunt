@@ -3,11 +3,14 @@ extends RefCounted
 const CELL:=1600.0
 const GRASS=preload("res://assets/visual/materials/country_grass.tres")
 const TRAIL=preload("res://assets/visual/materials/country_trail.tres")
+const Expansion=preload("res://scripts/region_expansion.gd")
 const OUTINGS: Array=[
     {"id":"welcome","title":"Raus aus der Stadt","desc":"Über den Grüngürtel nach Sonnenhagen. Am Dorfplatz beginnt dein Ausflug.","stops":["greenbelt","suburb_square","suburb_cafe"],"reward":140},
     {"id":"neighborhood","title":"Sonnenhagen entdecken","desc":"Nachbarschaft, Obstwiese und ein ruhiger Platz am See.","stops":["suburb_square","orchard","farm_stall","lake_view"],"reward":180},
     {"id":"forest","title":"Auf den Waldpfaden","desc":"Vom Waldrand über den Fluss zur Rangerstation und zum Camp.","stops":["trailhead","river_bridge","ranger","pine_camp","ridge_view"],"reward":220},
-    {"id":"panorama","title":"Die große Panoramarunde","desc":"Eine längere Tour durch Felder, Seen und offenes Bergland. Nimm ein Auto oder den Regionalbus.","stops":["farm_stall","lake_view","ridge_view","far_view"],"reward":260}
+    {"id":"panorama","title":"Die große Panoramarunde","desc":"Eine längere Tour durch Felder, Seen und offenes Bergland. Nimm ein Auto oder den Regionalbus.","stops":["farm_stall","lake_view","ridge_view","far_view"],"reward":260},
+    {"id":"heath","title":"Hinter dem Heidekamm","desc":"Eine weite Reise aus dem Freiland bis ins Dorf Mühlenau. Auto oder Regionalbus empfohlen.","stops":["far_view","heath_view","village_square","old_mill"],"reward":300},
+    {"id":"mill","title":"Mühlenau und die Auen","desc":"Vom Dorfplatz über die Mühlenbrücke in die weite südliche Landschaft.","stops":["village_square","village_cafe","old_bridge","old_mill","south_view"],"reward":280}
 ]
 static func build(g: Node) -> void:
     g.world_regions=[
@@ -63,6 +66,7 @@ static func build(g: Node) -> void:
     for entry in [[Rect2(34000,11830,205,160),"cafe"],[Rect2(32040,13390,230,185),"garage"],[Rect2(42130,7300,240,180),"farm"],[Rect2(60140,9790,200,145),"ranger"]]:house(g,entry[0],random.randi(),entry[1])
     for p in [Vector2(33750,10430),Vector2(32000,13800),Vector2(42300,7720),Vector2(44900,13450),Vector2(60100,9960)]:
         g.parked_cars.append({"pos":p,"class":"suv" if p.x>43000 else "hatch","heading":0.0,"color":Color("#b0cab2"),"occupied":false})
+    Expansion.build(g)
     g.country_segments.clear()
     for road in g.roads:
         if not road.get("regional",false):continue
@@ -100,6 +104,7 @@ static func active_target(g: Node) -> Vector2:
     return Vector2(get_poi(g,str(trip.stops[step])).pos) if step<trip.stops.size() else Vector2.ZERO
 static func begin_outing(g: Node,index: int) -> void:
     if index<0 or index>=OUTINGS.size():return
+    g.CityLife.pause(g)
     g.region_contract={"tour":index,"step":0};g.map_waypoint={};g.navigation_timer=0
     g._close_overview();g._close_commerce()
     g._notify(str(OUTINGS[index].title)+" · Folge der Route zum ersten Halt.");g._save_game()
@@ -209,7 +214,7 @@ static func draw_ground(g: Node2D) -> void:
     if g._world_rect_visible(suburb):g.draw_rect(Rect2(g._project(suburb.position),suburb.size*g.world_zoom),Color("#6a7858"))
     for boundary in [[44400.0,Color("#4b5e45"),Color("#2f4f43")],[69200.0,Color("#2f4f43"),Color("#4a5649")]]:
         for k in range(16):
-            var r:=Rect2(float(boundary[0])-800+k*100,0,102,36000)
+            var r:=Rect2(float(boundary[0])-800+k*100,0,102,g.WORLD_SIZE.y)
             if g._world_rect_visible(r):g.draw_rect(Rect2(g._project(r.position),r.size*g.world_zoom),Color(boundary[1]).lerp(boundary[2],float(k)/15))
     for key in cells(g):
         var origin:=Vector2(key)*CELL
@@ -363,7 +368,7 @@ static func draw_house(g: Node2D,b: Dictionary) -> void:
     if b.kind!="home":
         var sign: Vector2=door-Vector2(42,48)*scale
         g.draw_rect(Rect2(sign,Vector2(84,17)*scale),Color("#355d54"))
-        g.draw_string(ThemeDB.fallback_font,sign+Vector2(4,12)*scale,{"cafe":"CAFÉ","garage":"WERKSTATT","farm":"LINDENHOF","ranger":"WALDHAUS"}.get(str(b.kind),""),HORIZONTAL_ALIGNMENT_CENTER,76*scale,int(10*scale),Color("#f1dcaa"))
+        g.draw_string(ThemeDB.fallback_font,sign+Vector2(4,12)*scale,{"cafe":"CAFÉ","garage":"WERKSTATT","farm":"LINDENHOF","ranger":"WALDHAUS","mill":"ALTE MÜHLE"}.get(str(b.kind),""),HORIZONTAL_ALIGNMENT_CENTER,76*scale,int(10*scale),Color("#f1dcaa"))
 static func draw_tree(g: Node2D,data: Dictionary) -> void:
     var p: Vector2=data.pos;var foot: Vector2=g._project(p);var scale: float=g.world_zoom
     if not g._tile_visible(foot,180):return
@@ -414,8 +419,21 @@ static func draw_pois(g: Node2D) -> void:
                 g.draw_colored_polygon(PackedVector2Array([tent-Vector2(15,0)*s,tent-Vector2(0,34)*s,tent+Vector2(10,0)*s]),Color("#4b614b"))
                 g.draw_circle(screen+Vector2(9,40)*s,13*s,Color("#53654b"));g.draw_line(screen+Vector2(-1,35)*s,screen+Vector2(19,45)*s,Color("#785d43"),4*s,true)
         elif kind=="square":
-            g.draw_rect(Rect2(screen-Vector2(150,95)*s,Vector2(300,190)*s),Color("#b2aa89"))
+            for x in range(12):
+                for y in range(8):
+                    var tile: Vector2=pos+Vector2(-150+x*25,-95+y*24)
+                    if g.roads.any(func(r):return g._distance_to_polyline(tile+Vector2(12,12),r.points)<float(r.width)*.5+21):continue
+                    g.draw_rect(Rect2(g._project(tile),Vector2(24,23)*s),Color("#aba58a") if (x+y)%3 else Color("#bcb296"))
             g.draw_circle(screen+Vector2(40,0)*s,30*s,Color("#517f76"));g.draw_circle(screen+Vector2(40,0)*s,23*s,Color("#85b6ae"))
+            g.draw_arc(screen+Vector2(40,0)*s,(8+fposmod(Time.get_ticks_msec()*.01,13))*s,0,TAU,24,Color(.8,.93,.8,.5),s,true)
+            for point in [Vector2(-90,-45),Vector2(-90,50),Vector2(110,52)]:
+                var bench: Vector2=screen+point*s
+                g.draw_line(bench-Vector2(19,0)*s,bench+Vector2(19,0)*s,Color("#755d46"),7*s,true)
+                g.draw_line(bench-Vector2(19,5)*s,bench+Vector2(19,-5)*s,Color("#b99a70"),5*s,true)
+            for point in [Vector2(-130,-73),Vector2(130,-73),Vector2(132,77),Vector2(-132,77)]:
+                var planter: Vector2=screen+point*s
+                g.draw_rect(Rect2(planter-Vector2(10,7)*s,Vector2(20,14)*s),Color("#8d7056"));g.draw_circle(planter-Vector2(0,7)*s,10*s,Color("#6c9862"))
+                for k in range(5):g.draw_circle(planter+(Vector2.from_angle(k*TAU/5)*6-Vector2(0,8))*s,2.5*s,Color("#e8bc91"))
             g.CityArt.draw_character(g,pos+Vector2(-35,0),0,1,0,"chat")
         var sign:=screen-Vector2(0,30)*s
         g.draw_line(sign,sign-Vector2(0,25)*s,Color("#405548"),3*s,true);g.draw_circle(sign-Vector2(0,30)*s,9*s,Color(p.accent))
