@@ -1,6 +1,19 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.23.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+**Parallax Hunt 1.24.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+
+## 1.24.0 — Sonnenhagen, countryside and a navigable atlas
+
+- The original city occupies its original 26,000 × 18,000 units. The playable world extends to 86,000 × 36,000 units. A greenbelt of at least 4,700 units separates Megacity from Sonnenhagen. Low houses, gabled roofs, gardens, fences, planters, a square, cafe and workshop give the suburb a distinct identity. Existing city generation, collectible IDs, photo spots and vehicle indices stay stable.
+- Eight connected roads and trails lead through cultivated fields, the Lindensee shore, Fichtenwald, a real river bridge, ranger station, campsite and high-country viewpoints. Long open corridors leave room for later villages and towns. Those additional settlements are a future step, not included in this build.
+- The map is an illustrated, aspect-preserving atlas with city, regional and nearby views. Tap places or free ground to select a safe waypoint, start a route, drag to pan, zoom with large controls and recenter on the player. Place labels avoid each other. Road guidance is shared with the in-world path and measures the actual route instead of the straight-line distance.
+- Eighteen regional places reward first discovery. Four optional multi-stop excursions have saved progress and one-time completion rewards; replaying them cannot duplicate credits. Free rest stops restore energy. A regional bus connects the city, suburb, lake and woodland gateway for 15 CR per trip, leaving an occupied car safely parked.
+- The Lindenfelder road rally accepts every vehicle class and follows clear road checkpoints. Existing directional steering, release braking, clean modal menus and furnished interiors remain integrated. City district visits are now recorded during normal play without counting countryside regions as city districts.
+- Lake and river collision follow their real shore polygons; dry ground in the surrounding bounding boxes remains walkable. Bridges carry continuous body-clear roads. Ground texture, crop rows, layered trees, rocks and gradual biome bands enrich the countryside. Vegetation cells load near the camera and their cache is capped at 96 cells.
+
+Start a countryside excursion from **AUFTRÄGE**, or use **KARTE → UMLAND** and set a waypoint. The regional bus near the starting neighborhood is shown in the Transit map filter. The UI distance scale is unchanged: ten game units are displayed as one meter. These are stylized game distances rather than a geographic map.
+
+The `--region-smoke` integration check covers city preservation, all 18 routes from the city, full land-road and bridge clearance, lake collision, four excursions through normal interaction, reward replays, bus fare and parking, rest, full save/load, actual screen-touch map selection and drag, and bounded landscape generation. Physical Android camera behavior and device performance still need an on-phone test.
 
 ## 1.23.0 — Clean menus, authored interiors and reliable city access
 
@@ -55,10 +68,11 @@ godot --headless --path . -- --city-smoke
 godot --headless --path . -- --experience-smoke
 godot --headless --path . -- --photo-smoke
 godot --headless --path . -- --quality-smoke
-godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.23.0-preview.apk
+godot --headless --path . -- --region-smoke
+godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.24.0-preview.apk
 ```
 
-Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
+Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality, region and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
 
 The private source archive supplied with this build includes `signing/debug.keystore` for subsequent local test builds. Use `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` to point to it (debug alias `androiddebugkey`, password `android`). The key is excluded from the repository. CI can reuse it through the optional `PARALLAX_DEBUG_KEYSTORE_BASE64` repository secret; otherwise a CI run creates its own test key.
 

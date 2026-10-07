@@ -2375,7 +2375,7 @@ func _run_quality_smoke_test() -> void:
     assert(junctions.all(func(j): return not bool(j.bridge)),"Every road-to-road node must be at grade")
     var road_x: float=roads[0].points[0].x
     var foot_a=Vector2(road_x+float(roads[0].width)*0.5+11.5,0)
-    var foot_b=Vector2(foot_a.x,WORLD_SIZE.y)
+    var foot_b=Vector2(foot_a.x,CITY_SIZE.y)
     var sections=CityArt.clear_crossings(self,0,foot_a,foot_b,5)
     for junction in junctions:
         if int(junction.a)!=0: continue
@@ -6419,7 +6419,7 @@ func _draw_buildings() -> void:
     for b in buildings:
         if _world_rect_visible(Rect2(b.rect).grow(float(b.height)+100)):
             if b.get("regional",false):RegionWorld.draw_house(self,b)
-        else:CityArt.draw_building(self,b)
+            else:CityArt.draw_building(self,b)
 
 func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Vector2, edge: int) -> void:
     var height_vec := d-a
@@ -10196,3 +10196,9 @@ func _car_color(cls: String) -> Color:
     }
     var arr: Array = palettes.get(cls,palettes["sedan"])
     return arr[rng.randi_range(0,arr.size()-1)]
+
+func _run_region_smoke_test() -> void:
+    await load("res://scripts/region_checks.gd").smoke(self)
+
+func _run_region_capture() -> void:
+    await load("res://scripts/region_checks.gd").capture(self)

@@ -100,6 +100,13 @@ jobs:
           if grep -E 'SCRIPT ERROR|Parse Error|Assertion failed' quality-smoke.log; then exit 1; fi
           grep -q 'QUALITY_SMOKE_OK' quality-smoke.log
 
+      - name: Regional routes, outings, bus, atlas touch input and save regression
+        run: |
+          timeout 60 "$GODOT_BIN" --headless --path . -- --region-smoke > region-smoke.log 2>&1
+          cat region-smoke.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Assertion failed' region-smoke.log; then exit 1; fi
+          grep -q 'REGION_SMOKE_OK' region-smoke.log
+
       - name: 3D Photo Hunt smoke test
         run: |
           photo_exit=0

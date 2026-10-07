@@ -2,6 +2,7 @@ extends RefCounted
 ## Original city indices stay stable; countryside detail is streamed around the camera.
 const CELL:=1600.0
 const GRASS=preload("res://assets/visual/materials/country_grass.tres")
+const TRAIL=preload("res://assets/visual/materials/country_trail.tres")
 const OUTINGS: Array=[
     {"id":"welcome","title":"Raus aus der Stadt","desc":"Über den Grüngürtel nach Sonnenhagen. Am Dorfplatz beginnt dein Ausflug.","stops":["greenbelt","suburb_square","suburb_cafe"],"reward":140},
     {"id":"neighborhood","title":"Sonnenhagen entdecken","desc":"Nachbarschaft, Obstwiese und ein ruhiger Platz am See.","stops":["suburb_square","orchard","farm_stall","lake_view"],"reward":180},
@@ -256,15 +257,22 @@ static func draw_roads(g: Node2D) -> void:
                 if not g._world_rect_visible(Rect2(a.min(b),a.max(b)-a.min(b)).grow(180)):continue
                 var sa: Vector2=g._project(a);var sb: Vector2=g._project(b)
                 if pass_index==0:
-                    g.draw_line(sa,sb,Color("#34463a"),width+66*g.world_zoom,true)
-                    g.draw_line(sa,sb,Color("#c4b993") if road.kind=="residential" else Color("#8c9471"),width+48*g.world_zoom,true)
+                    g.draw_line(sa,sb,Color("#34463a"),width+(16 if road.kind=="trail" else 66)*g.world_zoom,true)
+                    g.draw_line(sa,sb,Color("#c4b993") if road.kind=="residential" else Color("#8c9471"),width+(8 if road.kind=="trail" else 48)*g.world_zoom,true)
                 else:
                     g.draw_line(sa,sb,Color("#a69a73") if road.kind=="trail" else Color("#313d42"),width,true)
-                    if road.kind!="trail" and g.graphics_quality>0:
+                    if g.graphics_quality>0:
                         var normal: Vector2=(b-a).normalized().orthogonal()*float(road.width)*.5
                         var poly:=PackedVector2Array();var uv:=PackedVector2Array()
                         for p in [a-normal,b-normal,b+normal,a+normal]:poly.append(g._project(p));uv.append(p/180)
-                        g.draw_colored_polygon(poly,Color(.76,.85,.81,1),uv,g.CityArt.ASPHALT)
+                        g.draw_colored_polygon(poly,Color.WHITE if road.kind=="trail" else Color(.76,.85,.81,1),uv,TRAIL if road.kind=="trail" else g.CityArt.ASPHALT)
+            for p in road.points:
+                if not g._tile_visible(g._project(p),180):continue
+                var radius: float=float(road.width)*g.world_zoom*.5
+                if pass_index==0:
+                    g.draw_circle(g._project(p),radius+(8 if road.kind=="trail" else 33)*g.world_zoom,Color("#34463a"))
+                    g.draw_circle(g._project(p),radius+(4 if road.kind=="trail" else 24)*g.world_zoom,Color("#c4b993") if road.kind=="residential" else Color("#8c9471"))
+                else:g.draw_circle(g._project(p),radius,Color("#a69a73") if road.kind=="trail" else Color("#3c4949"))
     for road in g.roads:
         if not road.get("regional",false):continue
         for i in range(road.points.size()-1):
@@ -279,7 +287,7 @@ static func draw_roads(g: Node2D) -> void:
                 if g._tile_visible(g._project(p),120) and road.kind!="trail":
                     g.draw_line(g._project(p),g._project(p+tangent*28),Color("#d7cf99"),2*g.world_zoom,true)
                     for side in [-1.0,1.0]:
-                        var edge:=p+tangent.orthogonal()*(float(road.width)*.5-5)*side
+                        var edge: Vector2=p+tangent.orthogonal()*(float(road.width)*.5-5)*side
                         g.draw_line(g._project(edge),g._project(edge+tangent*64),Color("#dfddd0"),1.1*g.world_zoom,true)
                 distance+=65
             draw_bridges(g,a,b,float(road.width))
@@ -298,12 +306,12 @@ static func draw_bridges(g: Node2D,a: Vector2,b: Vector2,width: float) -> void:
         if not g._world_rect_visible(Rect2(start.min(finish),start.max(finish)-start.min(finish)).grow(180)):continue
         var normal: Vector2=(b-a).normalized().orthogonal()
         for side in [-1.0,1.0]:
-            var p:=start+normal*(width*.5+23)*side;var q:=finish+normal*(width*.5+23)*side
+            var p: Vector2=start+normal*(width*.5+23)*side;var q: Vector2=finish+normal*(width*.5+23)*side
             g.draw_line(g._project(p),g._project(q),Color("#243b3e"),10*g.world_zoom,true)
             g.draw_line(g._project(p,12),g._project(q,12),Color("#d3d6bd"),4*g.world_zoom,true)
             var count: int=maxi(1,int(p.distance_to(q)/65))
             for k in range(count+1):
-                var post:=p.lerp(q,float(k)/count)
+                var post: Vector2=p.lerp(q,float(k)/count)
                 g.draw_line(g._project(post),g._project(post,12),Color("#8eaa9e"),3*g.world_zoom,true)
 static func draw_house(g: Node2D,b: Dictionary) -> void:
     var r: Rect2=b.rect;var z: float=b.height;var scale: float=g.world_zoom
