@@ -2685,9 +2685,14 @@ func _run_photo_smoke_test() -> void:
             return
         for target in photo_targets:
             if _photo_position_occluded(target.node.global_position):
-                push_error("PHOTO_SMOKE: unreachable subject at "+str(photo_points[index].id))
+                push_error("PHOTO_SMOKE: unreachable "+str(target.kind)+" at "+str(photo_points[index].id)+" base="+str(target.pos)+" actual="+str(target.node.global_position))
                 get_tree().quit(44)
                 return
+            if str(target.kind) in ["bird","drone"]:
+                for x in [-3.2,0.0,3.2]:
+                    for y in [-0.8,0.8]:
+                        for z in [-2.2,0.0,2.2]:
+                            assert(not _photo_position_occluded(_photo_visible_motion(Vector3(target.pos),Vector3(x,y,z))),"Animated subject must stay visible throughout its motion range")
         if index==0:
             var target: Dictionary=photo_targets[0]
             photo_camera.look_at(target.node.global_position,Vector3.UP)
@@ -3710,6 +3715,13 @@ func _complete_photo_challenge() -> void:
     if photo_mode and photo_session==session:
         _exit_photo_mode()
 
+func _photo_visible_motion(base: Vector3, offset: Vector3) -> Vector3:
+    # Keep the orbit on the camera-facing side of nearby walls at every phase.
+    for scale in [1.0,0.65,0.35,0.0]:
+        var candidate: Vector3=base+offset*float(scale)
+        if not _photo_position_occluded(candidate): return candidate
+    return base
+
 func _update_photo_3d_scene(_delta: float) -> void:
     _photo_update_camera()
     if active_photo_index<0:
@@ -3771,12 +3783,12 @@ func _update_photo_3d_scene(_delta: float) -> void:
             continue
         if str(t.kind)=="drone":
             var base: Vector3 = Vector3(t.pos)
-            node.position=base+Vector3(sin(time*1.7+float(i))*2.0,sin(time*2.4)*0.8,cos(time*1.3+float(i))*1.4)
+            node.position=_photo_visible_motion(base,Vector3(sin(time*1.7+float(i))*2.0,sin(time*2.4)*0.8,cos(time*1.3+float(i))*1.4))
         elif str(t.kind)=="symbol":
             node.rotation.y=time*0.45
         elif str(t.kind)=="bird":
             var base: Vector3 = Vector3(t.pos)
-            node.position=base+Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2)
+            node.position=_photo_visible_motion(base,Vector3(sin(time*0.9+float(i))*3.2,sin(time*1.8)*0.5,cos(time*0.9+float(i))*2.2))
             node.rotation.y=time*0.75
         elif str(t.kind)=="neoncode":
             node.scale=Vector3.ONE*(1.0+sin(time*3.0)*0.06)
