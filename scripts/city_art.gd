@@ -139,6 +139,7 @@ static func draw_roads(g: Node2D) -> void:
     # Every footway and curb is laid first. Every carriageway is cut through
     # afterwards, so crossing streets form one open, continuous asphalt surface.
     for road in g.roads:
+        if road.get("regional",false):continue
         var projected=PackedVector2Array()
         for p in road.points: projected.append(g._project(p))
         var width: float=float(road.width)*scale
@@ -161,6 +162,7 @@ static func draw_roads(g: Node2D) -> void:
                         uv.append(q/52.0)
                     g.draw_colored_polygon(poly,Color(0.92,0.90,0.81,1),uv,g.VS_SIDEWALK)
     for road in g.roads:
+        if road.get("regional",false):continue
         var pts: PackedVector2Array=road.points
         var projected=PackedVector2Array()
         for p in pts: projected.append(g._project(p))
@@ -182,6 +184,7 @@ static func draw_roads(g: Node2D) -> void:
             g.draw_polyline(projected,Color(0.26,0.43,0.58,0.12),width-6*scale,true)
     draw_canal_bridges(g)
     for road in g.roads:
+        if road.get("regional",false):continue
         var pts: PackedVector2Array = road.points
         var length: float = g._polyline_length(pts)
         var count: int = maxi(1,int(length/52.0))
@@ -237,7 +240,7 @@ static func add_street_blocks(g: Node2D) -> void:
                 var center = wp+normal*(float(road.width)*0.5+53+depth*0.5)*side_sign
                 var size = Vector2(depth,front) if absf(tangent.y)>0.7 else Vector2(front,depth)
                 var rect = Rect2(center-size*0.5,size)
-                if not Rect2(Vector2(50,50),g.WORLD_SIZE-Vector2(100,100)).encloses(rect) or g._rect_in_park(rect) or g._rect_hits_landmark(rect) or g._rect_near_road(rect,34) or g.waters.any(func(w): return Rect2(w.rect).grow(22).intersects(rect)):
+                if not Rect2(Vector2(50,50),g.CITY_SIZE-Vector2(100,100)).encloses(rect) or g._rect_in_park(rect) or g._rect_hits_landmark(rect) or g._rect_near_road(rect,34) or g.waters.any(func(w): return Rect2(w.rect).grow(22).intersects(rect)):
                     continue
                 var blocked = false
                 for p in protected:
@@ -344,12 +347,14 @@ static func draw_canal_bridges(g: Node2D) -> void:
     # Water runs underneath a continuous deck; stone abutments and guardrails
     # identify these spans without implying a flyover at ordinary intersections.
     for road in g.roads:
+        if road.get("regional",false):continue
         for k in range(road.points.size()-1):
             var a: Vector2=road.points[k]
             var b: Vector2=road.points[k+1]
             var tangent=(b-a).normalized()
             var normal=Vector2(-tangent.y,tangent.x)
             for water in g.waters:
+                if water.get("regional",false):continue
                 var r: Rect2=water.rect
                 var first=0.0
                 var last=1.0

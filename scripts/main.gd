@@ -6,7 +6,10 @@ const CityMenus = preload("res://scripts/city_menus.gd")
 const InteriorArt = preload("res://scripts/interior_art.gd")
 const WireTile = preload("res://scripts/wire_tile.gd")
 const PhotoArt = preload("res://scripts/photo_art.gd")
-const WORLD_SIZE := Vector2(26000.0, 18000.0)
+const CITY_SIZE := Vector2(26000.0, 18000.0)
+const WORLD_SIZE := Vector2(86000.0, 36000.0)
+const RegionWorld=preload("res://scripts/region_world.gd")
+const WorldNavigation=preload("res://scripts/world_navigation.gd")
 const WALK_SPEED := 165.0
 const VEHICLE_CLASSES := ["micro","hatch","sedan","executive","suv","pickup","van","delivery","sport","hyper"]
 const VEHICLE_SPEEDS := {
@@ -58,6 +61,19 @@ var collision_grid: Dictionary = {}
 var collision_index_ready := false
 var access_repairs := 0
 var district_access_points: Dictionary = {}
+var world_regions: Array=[]
+var region_pois: Array=[]
+var country_segments: Array=[]
+var landscape_cells: Dictionary={}
+var region_seen: Dictionary={}
+var region_completed: Dictionary={}
+var region_contract: Dictionary={}
+var map_waypoint: Dictionary={}
+var region_fade:=0.0
+var navigation_graph:=AStar2D.new()
+var navigation_route:=PackedVector2Array()
+var navigation_target:=Vector2.ZERO
+var navigation_timer:=0.0
 var interior_exit_button: Button
 var recenter_hud_button: Button
 var hud_root: Control
@@ -350,7 +366,9 @@ func _ready() -> void:
     _update_response_dispatches(true)
     _generate_collectibles()
     _seed_neighborhood_start()
+    RegionWorld.build(self)
     CityAccess.repair(self)
+    WorldNavigation.build(self)
     _build_ui()
     _build_photo_3d_system()
     _build_audio()
@@ -372,6 +390,8 @@ func _ready() -> void:
         call_deferred("_run_quality_capture")
     if "--experience-smoke" in OS.get_cmdline_user_args():
         call_deferred("_run_experience_smoke_test")
+    if "--region-smoke" in OS.get_cmdline_user_args():call_deferred("_run_region_smoke_test")
+    if "--region-capture" in OS.get_cmdline_user_args():call_deferred("_run_region_capture")
 
 func _exit_tree() -> void:
     for player in [sfx_player,ambient_player,weather_player]:
@@ -413,6 +433,7 @@ func _process(delta: float) -> void:
         target_world_zoom = 2.65
     world_zoom = lerpf(world_zoom,target_world_zoom,minf(1.0,delta*4.5))
     _update_player(delta)
+    region_fade=maxf(0,region_fade-delta*2.2)
     if not interior_active:
         _update_response_dispatches()
         _update_traffic(delta)
@@ -447,6 +468,8 @@ func _process(delta: float) -> void:
         _check_npc_contract()
         _check_active_job_progress()
         _update_active_race(delta)
+        RegionWorld.check_arrival(self)
+        WorldNavigation.refresh(self,delta)
         _check_milestones()
     ui_refresh_timer+=delta
     if ui_refresh_timer>=0.12:
@@ -568,9 +591,9 @@ func _build_districts() -> void:
 func _build_roads() -> void:
     roads.clear()
     for x in [900.0, 2700.0, 5000.0, 7500.0, 10100.0, 12800.0, 15400.0, 18100.0, 21000.0, 24400.0]:
-        roads.append({"points":PackedVector2Array([Vector2(x,0),Vector2(x,WORLD_SIZE.y)]), "width":180.0})
+        roads.append({"points":PackedVector2Array([Vector2(x,0),Vector2(x,CITY_SIZE.y)]), "width":180.0})
     for y in [900.0, 2600.0, 4450.0, 6500.0, 9000.0, 11600.0, 14300.0, 16800.0]:
-        roads.append({"points":PackedVector2Array([Vector2(0,y),Vector2(WORLD_SIZE.x,y)]), "width":170.0})
+        roads.append({"points":PackedVector2Array([Vector2(0,y),Vector2(CITY_SIZE.x,y)]), "width":170.0})
     roads.append({"points":PackedVector2Array([Vector2(1200,10500),Vector2(3700,9800),Vector2(6200,10300),Vector2(9000,12100),Vector2(12400,12600),Vector2(16000,11800)]), "width":150.0})
     roads.append({"points":PackedVector2Array([Vector2(16800,1200),Vector2(18000,2600),Vector2(19200,5000),Vector2(21000,6800),Vector2(24800,7600)]), "width":140.0})
     roads.append({"points":PackedVector2Array([Vector2(500,15500),Vector2(3300,14600),Vector2(5400,15000),Vector2(7800,16500),Vector2(11200,17000)]), "width":130.0})
@@ -594,8 +617,8 @@ func _build_junctions() -> void:
                 "pos":pos,
                 "a":vi,
                 "b":hi,
-                "ta":hy/WORLD_SIZE.y,
-                "tb":vx/WORLD_SIZE.x,
+                "ta":hy/CITY_SIZE.y,
+                "tb":vx/CITY_SIZE.x,
                 "bridge":bridge,
                 "over":vi if (vi+hi)%2==0 else hi,
                 "phase":(vi+hi)%2
@@ -1637,7 +1660,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · 1.23"
+    title.text = "PARALLAX HUNT · 1.24"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2352,7 +2375,7 @@ func _run_quality_smoke_test() -> void:
     assert(junctions.all(func(j): return not bool(j.bridge)),"Every road-to-road node must be at grade")
     var road_x: float=roads[0].points[0].x
     var foot_a=Vector2(road_x+float(roads[0].width)*0.5+11.5,0)
-    var foot_b=Vector2(foot_a.x,WORLD_SIZE.y)
+    var foot_b=Vector2(foot_a.x,CITY_SIZE.y)
     var sections=CityArt.clear_crossings(self,0,foot_a,foot_b,5)
     for junction in junctions:
         if int(junction.a)!=0: continue
@@ -3900,9 +3923,9 @@ func _make_ambient_loop(base_freq: float, activity: float, amp: float) -> AudioS
 func _ambient_profile_for_style(style: String) -> String:
     if style=="heritage":
         return "heritage"
-    if style in ["green","garden","wind"]:
+    if style in ["green","garden","wind","suburb","meadow","forest","wild"]:
         return "green"
-    if style in ["canal","harbor","coast"]:
+    if style in ["canal","harbor","coast","lake"]:
         return "water"
     if style in ["industry","rail","terminal","data","solar"]:
         return "industrial"
@@ -5612,7 +5635,12 @@ func _district_identity_label(style: String) -> String:
         "wind":"WIND PARK",
         "data":"DATA GRID",
         "coast":"COAST WALK",
-        "rail":"RAIL WORKS"
+        "rail":"RAIL WORKS",
+        "suburb":"VORSTADT & GÄRTEN",
+        "meadow":"FELDER & GRÜNGÜRTEL",
+        "forest":"WALD & WILDNIS",
+        "lake":"SEE & UFERWEGE",
+        "wild":"WEITES FREILAND"
     }
     return str(labels.get(style,"MEGACITY"))
 
@@ -5644,6 +5672,11 @@ func _update_ui() -> void:
     mission_progress_bar.max_value=maxf(1,float(chapter.get("goal",1)))
     mission_progress_bar.value=minf(_chapter_progress(chapter),mission_progress_bar.max_value)
     mission_progress_bar.visible=not interior_active
+    if not interior_active and not region_contract.is_empty():
+        var tour: Dictionary=RegionWorld.OUTINGS[int(region_contract.tour)]
+        mission_label.text="%s · %d/%d" % [str(tour.title),int(region_contract.step),tour.stops.size()]
+        mission_progress_bar.max_value=tour.stops.size()
+        mission_progress_bar.value=int(region_contract.step)
     if interior_active: mission_label.text=InteriorArt.title(interior_kind,interior_floor)+" · "+interior_name
     if interior_active:
         detail_label.text = "%s · %s" % [interior_name,_interior_feature_message()]
@@ -5699,6 +5732,9 @@ func _interact() -> void:
         return
     var n := _nearest_interactable()
     if n.is_empty():
+        return
+    if n.type == "region_poi":
+        RegionWorld.visit(self,int(n.index))
         return
     if n.type == "race":
         _start_race(int(n.index))
@@ -5825,6 +5861,9 @@ func _nearest_interactable() -> Dictionary:
             return {"type":"interior_feature","action":{"bar":"BESTELLEN","restaurant":"BESTELLEN","cafe":"BESTELLEN","shop":"EINKAUFEN","home":"HAUSGARAGE","garage":"SERVICE","workshop":"SERVICE","roof":"SYNCHRONISIEREN","sublevel":"AKTIVIEREN","hospital":"HEILEN"}.get(interior_kind,"BENUTZEN"),"message":_interior_feature_message()}
         return {}
     if current_vehicle >= 0:
+        for i in range(region_pois.size()):
+            if region_pois[i].kind in ["bus","garage","race"] and player_pos.distance_to(Vector2(region_pois[i].pos))<135:
+                return {"type":"region_poi","index":i,"action":"REGIONALBUS" if region_pois[i].kind=="bus" else "ENTDECKEN"}
         if active_race.is_empty():
             for ri in range(race_sites.size()):
                 var drace: float = player_pos.distance_to(Vector2(race_sites[ri].pos))
@@ -5842,6 +5881,11 @@ func _nearest_interactable() -> Dictionary:
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
     var best := {}
     var bd := 999999.0
+    for i in range(region_pois.size()):
+        var d: float=player_pos.distance_to(Vector2(region_pois[i].pos))
+        if d<100 and d<bd:
+            best={"type":"region_poi","index":i,"action":"REGIONALBUS" if region_pois[i].kind=="bus" else "ENTDECKEN"}
+            bd=d
     for ei in range(city_micro_events.size()):
         var event: Dictionary = city_micro_events[ei]
         if not _micro_event_active(ei,event):
@@ -5969,15 +6013,20 @@ func _draw() -> void:
             _draw_touch_controls()
             _draw_peek_meter()
         return
+    RegionWorld.draw_ground(self)
     _draw_district_ground()
     _draw_water()
+    RegionWorld.draw_water(self)
     _draw_parks()
     _draw_roads()
+    RegionWorld.draw_roads(self)
+    WorldNavigation.draw_route(self)
     CityArt.draw_street_pools(self)
     _draw_vertical_slice_road_materials()
     _draw_buildings()
     _draw_landmarks()
     _draw_trees()
+    RegionWorld.draw_flora(self)
     _draw_vegetation_props()
     CityArt.draw_street_ensembles(self)
     _draw_storefronts()
@@ -5989,6 +6038,7 @@ func _draw() -> void:
     _draw_race_markers()
     _draw_transit_stops()
     _draw_jobboards()
+    RegionWorld.draw_pois(self)
     _draw_active_job_target()
     _draw_street_props()
     _draw_city_micro_events()
@@ -6002,6 +6052,7 @@ func _draw() -> void:
     _draw_collectibles()
     _draw_player()
     _draw_ambient_overlay()
+    if region_fade>0:draw_rect(Rect2(Vector2.ZERO,get_viewport_rect().size),Color(.04,.09,.08,region_fade))
     if photo_flash_alpha>0.0:
         draw_rect(Rect2(Vector2.ZERO,get_viewport_rect().size),Color(1,1,1,photo_flash_alpha*0.72),true)
         var frame := Rect2(Vector2(42,130),get_viewport_rect().size-Vector2(84,260))
@@ -6273,6 +6324,7 @@ func _draw_district_ground() -> void:
 
 func _draw_water() -> void:
     for w in waters:
+        if w.get("regional",false):continue
         var r: Rect2 = w.rect
         if not _world_rect_visible(r):
             continue
@@ -6366,7 +6418,8 @@ func _draw_parks() -> void:
 func _draw_buildings() -> void:
     for b in buildings:
         if _world_rect_visible(Rect2(b.rect).grow(float(b.height)+100)):
-            CityArt.draw_building(self,b)
+            if b.get("regional",false):RegionWorld.draw_house(self,b)
+            else:CityArt.draw_building(self,b)
 
 func _draw_facade_face(b: Dictionary, a: Vector2, bb: Vector2, c: Vector2, d: Vector2, edge: int) -> void:
     var height_vec := d-a
@@ -8750,6 +8803,8 @@ func _reset_game_state() -> void:
     vehicle_upgrades.clear()
     milestones_claimed.clear()
     active_race={}
+    region_seen.clear();region_completed.clear();region_contract={};map_waypoint={}
+    navigation_route=PackedVector2Array();navigation_timer=0
     photo_found.clear()
     photo_scores.clear()
     micro_event_seen.clear()
@@ -8907,6 +8962,7 @@ func _save_game() -> void:
         "inventory":inventory,
         "shop_stock":shop_stock,
         "save_version":2,
+        "region":RegionWorld.save_state(self),
         "fragments":fragments.map(func(x): return bool(x.taken)),
         "secrets":secrets.map(func(x): return bool(x.found)),
         "frag_count":mission_fragments,
@@ -8959,6 +9015,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     if not parsed is Dictionary:
         return
     var d: Dictionary = parsed
+    RegionWorld.load_state(self,Dictionary(d.get("region",{})))
     if d.has("player") and d.player is Array and d.player.size()>=2:
         player_pos = Vector2(float(d.player[0]),float(d.player[1]))
     credits = int(d.get("credits",credits))
@@ -9414,7 +9471,7 @@ func _start_race(index: int) -> void:
     var cls: String = str(parked_cars[current_vehicle]["class"])
     var required: String = str(race.group)
     var actual: String = str(VEHICLE_SPEED_GROUP.get(cls,"ROAD"))
-    var allowed := required==actual or required=="ROAD" and actual in ["ROAD","PERFORMANCE","HYPER"] or required=="PERFORMANCE" and actual in ["PERFORMANCE","HYPER"]
+    var allowed := required=="ANY" or required==actual or required=="ROAD" and actual in ["ROAD","PERFORMANCE","HYPER"] or required=="PERFORMANCE" and actual in ["PERFORMANCE","HYPER"]
     if not allowed:
         _play_sfx("error")
         _show_reward_popup("FALSCHE FAHRZEUGKLASSE","%s benötigt %s\nAktuell: %s · %s" % [str(race.name),required,cls.capitalize(),actual],Color("#ff8f7a"))
@@ -9553,6 +9610,9 @@ func _localized_action(action: String) -> String:
     return {"INTERACT":"AKTION","ENTER":"EINTRETEN","EXIT":"VERLASSEN","USE":"BENUTZEN","EXIT CAR":"AUSSTEIGEN","ENTER CAR":"EINSTEIGEN","PHOTO CHALLENGE":"FOTO-SUCHE","PHOTO REPLAY":"FOTO WIEDERHOLEN","COLLECT":"BERGEN","OPEN SECRET":"ÖFFNEN","PROPERTY":"WOHNUNG","DELIVER":"ABGEBEN","JOBS":"AUFTRÄGE","SIGIL":"SICHERN","CACHE":"BERGEN","ENTER OPENAI HQ":"HQ BETRETEN"}.get(action,action)
 
 func _objective_action() -> String:
+    if not active_race.is_empty():return "Nächsten Kontrollpunkt passieren"
+    if not map_waypoint.is_empty():return "Der markierten Route folgen · Karte öffnet die Zielauswahl"
+    if not region_contract.is_empty():return "Zum markierten Halt gehen, aussteigen und ENTDECKEN wählen"
     if not active_race.is_empty():
         return "Nächsten Kontrollpunkt passieren"
     if not active_job.is_empty():
@@ -9579,6 +9639,9 @@ func _current_objective_pos() -> Vector2:
     var contract_target := _npc_contract_target()
     if contract_target!=Vector2.ZERO:
         return contract_target
+    if not map_waypoint.is_empty():return Vector2(map_waypoint.pos)
+    var region_target: Vector2=RegionWorld.active_target(self)
+    if region_target!=Vector2.ZERO:return region_target
     if not active_job.is_empty():
         var job_target := Vector2(active_job.get("target",Vector2.ZERO))
         if job_target!=Vector2.ZERO:
@@ -9640,6 +9703,11 @@ func _current_objective_pos() -> Vector2:
     return Vector2.ZERO
 
 func _current_objective_label() -> String:
+    if active_race.is_empty():
+        if not map_waypoint.is_empty():return str(map_waypoint.name)
+        if not region_contract.is_empty():
+            var tour: Dictionary=RegionWorld.OUTINGS[int(region_contract.tour)]
+            return str(RegionWorld.get_poi(self,str(tour.stops[int(region_contract.step)])).name)
     if not active_race.is_empty():
         var rr: Dictionary = race_sites[int(active_race.index)]
         return "RENNEN · %s" % str(rr.name)
@@ -10035,7 +10103,7 @@ func _district_at(p: Vector2) -> Dictionary:
     for d in districts:
         if (d.rect as Rect2).has_point(p):
             return d
-    return districts[0]
+    return RegionWorld.region_at(self,p)
 
 func _world_rect_visible(r: Rect2) -> bool:
     var screen := Rect2(_project(r.position),r.size*world_zoom).grow(380)
@@ -10102,7 +10170,7 @@ func _polyline_tangent(pts: PackedVector2Array, t: float) -> Vector2:
 
 func _random_open_point() -> Vector2:
     for _i in range(300):
-        var p := Vector2(rng.randf_range(100,WORLD_SIZE.x-100),rng.randf_range(100,WORLD_SIZE.y-100))
+        var p := Vector2(rng.randf_range(100,CITY_SIZE.x-100),rng.randf_range(100,CITY_SIZE.y-100))
         if not _point_blocked(p,45.0) and _distance_to_any_road(p)<500.0:
             return p
     return Vector2(5200,4200)
@@ -10128,3 +10196,9 @@ func _car_color(cls: String) -> Color:
     }
     var arr: Array = palettes.get(cls,palettes["sedan"])
     return arr[rng.randi_range(0,arr.size()-1)]
+
+func _run_region_smoke_test() -> void:
+    await load("res://scripts/region_checks.gd").smoke(self)
+
+func _run_region_capture() -> void:
+    await load("res://scripts/region_checks.gd").capture(self)

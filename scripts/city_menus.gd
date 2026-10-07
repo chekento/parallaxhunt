@@ -1,10 +1,15 @@
 extends PanelContainer
 ## Real controls own menu input and scrolling; no world HUD shares this canvas.
+const WorldAtlas=preload("res://scripts/world_atlas.gd")
 var game: Node
 var section := ""
 var album_tab := 0
-var map_local := false
+var map_mode := "city"
 var map_category := "Ziele"
+var atlas: Control
+var map_selection: Dictionary={}
+var selected_title: Label
+var selected_detail: Label
 var content: VBoxContainer
 var scroll: ScrollContainer
 var heading: Label
@@ -25,7 +30,7 @@ func setup(owner_game: Node) -> void:
     var titles=VBoxContainer.new()
     titles.size_flags_horizontal=Control.SIZE_EXPAND_FILL
     top.add_child(titles)
-    titles.add_child(label("PARALLAX  /  DEINE STADT",22,Color("#73f3ce")))
+    titles.add_child(label("PARALLAX  /  STADT & UMLAND",22,Color("#73f3ce")))
     heading=label("",42)
     titles.add_child(heading)
     var close=button("SCHLIESSEN",game._close_overview)
@@ -51,7 +56,7 @@ func setup(owner_game: Node) -> void:
     content.size_flags_horizontal=Control.SIZE_EXPAND_FILL
     content.add_theme_constant_override("separation",20)
     scroll.add_child(content)
-    column.add_child(label("Wischen zum Scrollen  ·  Die Stadt wartet auf dich.",21,Color("#7894a3")))
+    column.add_child(label("Wischen zum Scrollen  ·  Entdecke, was hinter der Stadt liegt.",21,Color("#7894a3")))
     visible=false
 
 static func card_style(bg: Color, border: Color, margin: int=24) -> StyleBoxFlat:
@@ -115,6 +120,18 @@ func build_missions() -> void:
         card("PERSÖNLICHER AUFTRAG",game._contract_description(game.active_npc_contract),Color("#ffb3e6"))
     if not game.active_job.is_empty():
         card("STADTAUFTRAG · "+str(game.active_job.get("title","")),str(game.active_job.get("task","Ziel auf der Karte erreichen")),Color("#ffd27a"))
+    if not game.region_contract.is_empty():
+        var trip: Dictionary=game.RegionWorld.OUTINGS[int(game.region_contract.tour)]
+        var active=card("AKTIVER AUSFLUG · "+str(trip.title),"%d / %d Stationen  ·  %s" % [int(game.region_contract.step),trip.stops.size(),game._objective_action()],Color("#c9e4a2"))
+        active.add_child(button("AUSFLUG BEENDEN",func(): game.region_contract={};game.navigation_timer=0;show_section("missions")))
+    card("RAUS AUS DER STADT","Vier freie Ausflüge führen dich durch Sonnenhagen, die Felder und den Fichtenwald. Die Stationen ansprechen, um sie zu besuchen.",Color("#c9e4a2"))
+    for i in range(game.RegionWorld.OUTINGS.size()):
+        var index: int=i
+        var trip: Dictionary=game.RegionWorld.OUTINGS[index]
+        var complete: bool=bool(game.region_completed.get(str(trip.id),false))
+        var v=card(str(trip.title),str(trip.desc),Color("#c9e4a2"))
+        v.add_child(label("%d Stationen  ·  %s" % [trip.stops.size(),"BEREITS ENTDECKT" if complete else "%d CR Belohnung" % int(trip.reward)],23,Color("#aac39b")))
+        v.add_child(button("ERNEUT ERKUNDEN" if complete else "AUSFLUG STARTEN",func(): game.RegionWorld.begin_outing(game,index)))
     for i in range(game.native_chapters.size()):
         var chapter: Dictionary=game.native_chapters[i]
         var progress: int=game._chapter_progress(chapter)
@@ -147,6 +164,8 @@ func build_collection() -> void:
             ["Fahrzeugklassen",game.driven_classes.size(),game.VEHICLE_CLASSES.size(),"#73f3ce"],
             ["Hacking-Terminals",game._completed_hack_count(),game.mission_sites.size(),"#ffdf75"],
             ["Stadtteile",game.visited_districts.size(),game.districts.size(),"#9ad5ff"],
+            ["Umland-Orte",game.region_seen.size(),game.region_pois.size(),"#c9e4a2"],
+            ["Ausflüge",game.region_completed.size(),game.RegionWorld.OUTINGS.size(),"#c9e4a2"],
             ["Zeitprüfungen",game.race_completed.size(),game.race_sites.size(),"#ffd36b"],
             ["Vertrauen",game._total_npc_trust(),game.named_npcs.size()*3,"#ff9fe8"],
             ["Stadtleben",game.micro_event_seen.size(),game.city_micro_events.size(),"#ffb66f"]]
@@ -176,112 +195,60 @@ func build_collection() -> void:
             card(cls.capitalize()+"  ·  "+("GEFAHREN" if seen else "NOCH ENTDECKEN"),"Motor %d  ·  Handling %d  ·  Bremsen %d" % [up.engine,up.handling,up.brake],Color("#73f3ce") if seen else Color("#9cb6c5"))
 
 func build_map() -> void:
-    heading.text="Parallax Megacity"
-    subtitle.text="%s  ·  Aktuelles Ziel: %s" % [game.current_district,game._current_objective_label()]
+    heading.text="Stadt & Umland"
+    subtitle.text="%s  ·  %s" % [game.current_district,game._current_objective_label()]
+    var views=HBoxContainer.new()
+    views.add_theme_constant_override("separation",12)
+    content.add_child(views)
+    for entry in [["city","STADT"],["region","UMLAND"],["local","UMGEBUNG"]]:
+        var view: String=entry[0]
+        var b=button(entry[1],func(): map_mode=view;show_section("map"))
+        b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+        if view==map_mode:b.add_theme_color_override("font_color",Color("#c9e4a2"))
+        views.add_child(b)
+    var filters=HBoxContainer.new()
+    filters.add_theme_constant_override("separation",12)
+    content.add_child(filters)
+    for key in ["Ziele","Orte","Fotos","Transit"]:
+        var category: String=key
+        var b=button(key,func(): map_category=category;show_section("map"))
+        b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+        if key==map_category:b.add_theme_color_override("font_color",Color("#c9e4a2"))
+        filters.add_child(b)
+    atlas=WorldAtlas.new()
+    atlas.setup(game,map_mode,map_category,_select_map_point)
+    atlas.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+    content.add_child(atlas)
     var controls=HBoxContainer.new()
     controls.add_theme_constant_override("separation",12)
     content.add_child(controls)
-    controls.add_child(button("GANZE STADT" if map_local else "UMGEBUNG",func(): map_local=not map_local; show_section("map")))
-    for key in ["Ziele","Orte","Fotos","Transit"]:
-        var category: String=key
-        var b=button(key,func(): map_category=category; show_section("map"))
-        b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
-        if key==map_category:
-            b.add_theme_color_override("font_color",Color("#73f3ce"))
+    for entry in [["−",.8],["+",1.25]]:
+        var factor: float=entry[1]
+        var b=button(entry[0],func(): atlas.zoom_by(factor))
+        b.custom_minimum_size.x=120
         controls.add_child(b)
-    var map=MapCanvas.new()
-    map.game=game
-    map.local=map_local
-    map.category=map_category
-    map.custom_minimum_size=Vector2(0,890)
-    map.size_flags_horizontal=Control.SIZE_EXPAND_FILL
-    content.add_child(map)
-    var guidance=card("AKTUELLES ZIEL",game._objective_action(),Color("#73f3ce"))
-    guidance.add_child(label("Mint: Du  ·  Gold: Ziel  ·  Blau: Wasser und Kanäle",23,Color("#afc5d0")))
-    var grid=GridContainer.new()
-    grid.columns=2
-    grid.add_theme_constant_override("h_separation",24)
-    grid.add_theme_constant_override("v_separation",22)
-    content.add_child(grid)
-    for entry in [["●  Kontakte / NPCs","#c7f2e7"],["!  Hacking-Terminals","#ffdf75"],["↑  Dachzugang / Relay","#9bdcff"],["↓  Untergrundzugang","#ffb66f"],["H  Wohnung / Garage","#d6a8ff"],["J  Nebenjobs","#8de9aa"],["R  Zeitprüfungen","#ffd36b"],["◎  Foto-Spots","#ffb3e6"],["G  Werkstatt / Garage","#ff9b72"],["S  Shop / Café / Bar","#ffd27a"],["T  Bus / Tram","#72d7e6"],["◆  Live-Events","#ffb66f"]]:
-        var l=label(entry[0],23,Color(entry[1]))
-        l.custom_minimum_size.x=420
-        l.size_flags_horizontal=Control.SIZE_EXPAND_FILL
-        grid.add_child(l)
-
-class MapCanvas extends Control:
-    var game: Node
-    var local: bool
-    var category: String
-    var region: Rect2
-    var map_rect: Rect2
-
-    func point(world: Vector2) -> Vector2:
-        return map_rect.position+(world-region.position)/region.size*map_rect.size
-
-    func marker(world: Vector2, color: Color, glyph: String="") -> void:
-        if not region.has_point(world): return
-        var p=point(world)
-        draw_circle(p+Vector2(1,2),13,Color("#07131b"))
-        draw_circle(p,10,color)
-        if not glyph.is_empty():
-            draw_string(ThemeDB.fallback_font,p+Vector2(-7,5),glyph,HORIZONTAL_ALIGNMENT_CENTER,14,13,Color("#07131b"))
-
-    func _draw() -> void:
-        if game==null: return
-        map_rect=Rect2(Vector2(4,4),size-Vector2(8,8))
-        region=Rect2(Vector2.ZERO,game.WORLD_SIZE)
-        if local:
-            region=Rect2(game._district_at(game.player_pos).rect).grow(250).intersection(region)
-        draw_style_box(CityMenusStyle(),Rect2(Vector2.ZERO,size))
-        for d in game.districts:
-            var r: Rect2=Rect2(d.rect).intersection(region)
-            if r.size.x<=0 or r.size.y<=0: continue
-            var screen=Rect2(point(r.position),r.size/region.size*map_rect.size)
-            draw_rect(screen,Color(d.ground).lightened(0.06))
-            draw_rect(screen,Color(Color(d.accent),0.20),false,1)
-            draw_string(ThemeDB.fallback_font,screen.position+Vector2(8,25),str(d.name),HORIZONTAL_ALIGNMENT_LEFT,screen.size.x-12,18,Color("#c6d9e0"))
-        for w in game.waters:
-            var r: Rect2=Rect2(w.rect).intersection(region)
-            if r.size.x>0 and r.size.y>0:
-                draw_rect(Rect2(point(r.position),r.size/region.size*map_rect.size),Color("#24617b"))
-        for road in game.roads:
-            for k in range(road.points.size()-1):
-                var clipped: PackedVector2Array=game._photo_clip_road(road.points[k],road.points[k+1],region.get_center(),maxf(region.size.x,region.size.y)*0.5)
-                if clipped.size()<2: continue
-                draw_line(point(clipped[0]),point(clipped[1]),Color("#788d91"),2 if not local else 7,true)
-        if category=="Ziele":
-            for npc in game.named_npcs: marker(npc.pos,npc.accent,"N")
-            for m in game.mission_sites: marker(m.pos,Color("#66717a") if game.hack_done.get(str(m.id),false) else Color("#ffdf75"),"!")
-            for v in game.vertical_sites: marker(v.pos,v.accent,"↑" if v.kind=="roof" else "↓")
-            for p in game.property_sites: marker(p.pos,Color("#d6a8ff"),"H")
-            for j in game.side_job_sites: marker(j.pos,Color("#8de9aa"),"J")
-            for r in game.race_sites: marker(r.pos,Color("#ffd36b"),"R")
-        elif category=="Orte":
-            for l in game.landmarks: marker(l.pos,l.accent,"+")
-            for s in game.storefronts: marker(s.pos,Color("#ff9b72") if s.kind in ["garage","workshop"] else Color("#ffd27a"),"G" if s.kind in ["garage","workshop"] else "S")
-            for i in range(game.city_micro_events.size()):
-                var e: Dictionary=game.city_micro_events[i]
-                if game._micro_event_active(i,e): marker(e.pos,e.accent)
-        elif category=="Fotos":
-            for ph in game.photo_points: marker(ph.pos,Color("#526c6d") if ph.taken else Color("#ffb3e6"),"◎")
-        else:
-            for stop in game.transit_stops: marker(stop.pos,Color("#72d7e6"),"T")
-        var objective: Vector2=game._current_objective_pos()
-        if objective!=Vector2.ZERO and region.has_point(objective):
-            var p=point(objective)
-            draw_circle(p,20,Color("#ffdf75"),false,3,true)
-            draw_line(p-Vector2(26,0),p+Vector2(26,0),Color("#ffdf75"),2)
-            draw_line(p-Vector2(0,26),p+Vector2(0,26),Color("#ffdf75"),2)
-        var player=point(game.player_pos)
-        draw_circle(player,17,Color("#07131b"))
-        draw_circle(player,12,Color("#73f3ce"))
-        var f=Vector2.from_angle(game.player_heading)
-        draw_colored_polygon(PackedVector2Array([player+f*20,player+f.rotated(2.5)*9,player+f.rotated(-2.5)*9]),Color.WHITE)
-
-    func CityMenusStyle() -> StyleBoxFlat:
-        var style=StyleBoxFlat.new()
-        style.bg_color=Color("#10202b")
-        style.border_color=Color("#36535e")
-        style.set_border_width_all(2)
-        return style
+    var recenter=button("MEINE POSITION",func(): atlas.recenter())
+    recenter.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+    controls.add_child(recenter)
+    content.add_child(label("Karte ziehen  ·  Ort oder freie Fläche antippen  ·  Mit + / − zoomen",21,Color("#afc5d0")))
+    var selection=card("","",Color("#c9e4a2"))
+    selected_title=selection.get_child(0)
+    selected_detail=label("",24,Color("#c6d9e0"))
+    selection.add_child(selected_detail)
+    selection.add_child(button("ROUTE STARTEN",_navigate_selection))
+    if not game.map_waypoint.is_empty():selection.add_child(button("WEGPUNKT LÖSCHEN",func(): game.map_waypoint={};game.navigation_timer=0;show_section("map")))
+    if map_selection.is_empty():
+        var pos: Vector2=game._current_objective_pos()
+        map_selection={"pos":pos if pos!=Vector2.ZERO else game.player_pos,"name":game._current_objective_label() if pos!=Vector2.ZERO else "Deine Position"}
+    _select_map_point(map_selection)
+    var guide=card("ORIENTIERUNG","Mint: Du  ·  Gold: Route / Ziel  ·  Blau: Wasser\nB Bus  ·  C Café  ·  G Garage  ·  W Waldhaus  ·  V Aussicht  ·  T Zeltplatz",Color("#73f3ce"))
+    guide.add_child(label("Die Landstraße L01 führt nach Sonnenhagen und weiter in die Wildnis. Vier Haltestellen verbinden die Region. Eine Busfahrt kostet 15 CR.",23,Color("#afc5d0")))
+func _select_map_point(selection: Dictionary) -> void:
+    map_selection=selection
+    selected_title.text=str(selection.name)
+    var route: PackedVector2Array=game.WorldNavigation.route(game,game.player_pos,selection.pos)
+    selected_detail.text=("%d m Wegstrecke  ·  Route folgt freien Wegen" % int(game.WorldNavigation.length(route)/10)) if not route.is_empty() else "Kein durchgehender Weg gefunden. Wähle einen anderen Zugang."
+func _navigate_selection() -> void:
+    if map_selection.is_empty():return
+    game.map_waypoint=map_selection.duplicate(true);game.navigation_timer=0
+    game._close_overview();game._notify("Route zu "+str(map_selection.name)+" gestartet")
