@@ -1,6 +1,15 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.27.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+**Parallax Hunt 1.27.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world city game. This repository is **public**.
+
+### ⬇ Download latest public Android APK
+
+[**Download Parallax Hunt – Android APK (always latest passing build)**](https://github.com/chekento/parallaxhunt/releases/download/android-latest/ParallaxHunt-latest.apk)
+
+[Latest GitHub Release](https://github.com/chekento/parallaxhunt/releases/tag/android-latest) · [All releases](https://github.com/chekento/parallaxhunt/releases) · [GitHub Actions build history](https://github.com/chekento/parallaxhunt/actions/workflows/android-debug.yml)
+
+Only successful Android CI builds are published to the rolling `android-latest` release, with an APK and SHA-256 checksum. This is experimental development software, potentially debug-signed. Existing Android installations may require the same signing certificate for in-place updates; back up saves before replacing an older build.
+
 
 ## 1.27.0 — Herz & Heim: a second continuous life story
 
