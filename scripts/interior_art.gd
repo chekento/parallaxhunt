@@ -5,11 +5,12 @@ const CARS=preload("res://assets/visual/materials/vehicles_ink.png")
 const INK=Color("#17212a")
 
 static func feature_pos(kind: String, floor_index: int) -> Vector2:
+    if kind=="apartment":return Vector2(460,840)
     if kind=="home": return Vector2(720,835) if floor_index==0 else Vector2(755,420)
     return {"bar":Vector2(300,455),"cafe":Vector2(700,405),"restaurant":Vector2(725,480),"shop":Vector2(740,395),"garage":Vector2(765,420),"workshop":Vector2(765,420),"hospital":Vector2(600,405),"openai_hq":Vector2(465,425),"roof":Vector2(460,470),"sublevel":Vector2(460,460)}.get(kind,Vector2(460,420))
 
 static func title(kind: String, floor_index: int) -> String:
-    return {"bar":"BAR & LOUNGE","cafe":"CAFÉ","restaurant":"RESTAURANT","shop":"CITY STORE","garage":"GARAGE","workshop":"WERKSTATT","home":"WOHNUNG" if floor_index==0 else "HAUSGARAGE","hospital":"STADTKLINIKUM","openai_hq":"VISITOR LAB" if floor_index==0 else "RESEARCH GALLERY","roof":"DACHTERRASSE","sublevel":"UNTERGRUND"}.get(kind,"INNENRAUM")
+    return {"apartment":"APARTMENT","bar":"BAR & LOUNGE","cafe":"CAFÉ","restaurant":"RESTAURANT","shop":"CITY STORE","garage":"GARAGE","workshop":"WERKSTATT","home":"WOHNUNG" if floor_index==0 else "HAUSGARAGE","hospital":"STADTKLINIKUM","openai_hq":"VISITOR LAB" if floor_index==0 else "RESEARCH GALLERY","roof":"DACHTERRASSE","sublevel":"UNTERGRUND"}.get(kind,"INNENRAUM")
 
 static func obstacles(kind: String, floor_index: int) -> Array[Rect2]:
     if kind=="bar": return [Rect2(90,245,470,120),Rect2(70,620,235,90),Rect2(610,910,230,100),Rect2(595,520,130,110),Rect2(365,800,130,110)]

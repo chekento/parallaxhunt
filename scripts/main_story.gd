@@ -61,6 +61,7 @@ static func token(g: Node,lane: String) -> String:
 static func valid(g: Node,lane: String,key: String) -> bool:
     return token(g,lane)==key and not task(g,lane).is_empty() and target(g,lane)!=Vector2.ZERO and g.player_pos.distance_to(target(g,lane))<108 and g.current_vehicle<0 and not g.interior_active and g.transit_riding<0
 static func focus(g: Node) -> void:
+    g.love_state.tracking=false
     g.campaign_state.enabled=true;g.campaign_state.follow=true;g.street_state.active=""
     g.CityLife.pause(g);g.region_contract={};g.map_waypoint={};g.navigation_timer=0
     g._close_overview();g._close_commerce();g._save_game();g._update_ui()

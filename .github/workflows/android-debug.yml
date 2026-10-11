@@ -121,6 +121,13 @@ jobs:
           if grep -E 'SCRIPT ERROR|Parse Error|Assertion failed' story-smoke.log; then exit 1; fi
           grep -q 'STORY_SMOKE_OK' story-smoke.log
 
+      - name: Romance, dates, housing, wedding, family and old-save regression
+        run: |
+          timeout 180 "$GODOT_BIN" --headless --path . -- --romance-smoke > romance-smoke.log 2>&1
+          cat romance-smoke.log
+          if grep -E 'SCRIPT ERROR|Parse Error|Assertion failed|Invalid access|Invalid call' romance-smoke.log; then exit 1; fi
+          grep -q 'ROMANCE_SMOKE_OK' romance-smoke.log
+
       - name: 3D Photo Hunt smoke test
         run: |
           photo_exit=0
@@ -134,16 +141,16 @@ jobs:
         run: |
           mkdir -p build
           touch build/.gdignore
-          "$GODOT_BIN" --headless --path . --export-debug 'Android Preview' build/ParallaxHunt-1.26.0-preview.apk
-          test -s build/ParallaxHunt-1.26.0-preview.apk
-          sha256sum build/ParallaxHunt-1.26.0-preview.apk > build/ParallaxHunt-1.26.0-preview.apk.sha256
+          "$GODOT_BIN" --headless --path . --export-debug 'Android Preview' build/ParallaxHunt-1.27.0-preview.apk
+          test -s build/ParallaxHunt-1.27.0-preview.apk
+          sha256sum build/ParallaxHunt-1.27.0-preview.apk > build/ParallaxHunt-1.27.0-preview.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ParallaxHunt-1.26.0-Android-Preview
+          name: ParallaxHunt-1.27.0-Android-Preview
           path: |
-            build/ParallaxHunt-1.26.0-preview.apk
-            build/ParallaxHunt-1.26.0-preview.apk.sha256
+            build/ParallaxHunt-1.27.0-preview.apk
+            build/ParallaxHunt-1.27.0-preview.apk.sha256
           if-no-files-found: error
           retention-days: 30

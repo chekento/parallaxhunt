@@ -131,6 +131,8 @@ func build_markers() -> Array:
         for p in game.region_pois:
             if str(p.id) in ["suburb_square","lake_view","trailhead","ranger","ridge_view","far_view","village_square","old_mill","south_view","echo_station","echo_view","echo_gate"]:result.append(marker_data(p))
         return result
+    if category=="Orte":
+        for h in game.apartment_sites:result.append({"pos":h.pos,"name":h.name,"glyph":"H","color":Color("#a56f7e")})
     if category=="Erleben":
         for p in game.life_places:result.append({"pos":p.pos,"name":p.name,"glyph":"★" if game.life_seen.get(p.id,false) else "!","color":Color("#84693e")})
         return result

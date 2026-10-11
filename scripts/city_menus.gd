@@ -1,5 +1,6 @@
 extends PanelContainer
 ## Real controls own menu input and scrolling; no world HUD shares this canvas.
+const RomanceBook=preload("res://scripts/romance_book.gd")
 const WorldAtlas=preload("res://scripts/world_atlas.gd")
 var game: Node
 var section := ""
@@ -141,6 +142,14 @@ func build_missions() -> void:
         b.add_theme_font_size_override("font_size",19)
         if mission_tab==name:b.add_theme_stylebox_override("normal",card_style(Color("#5c6043"),Color("#e2c58c"),14))
         nav.add_child(b)
+    var life_nav=HBoxContainer.new();life_nav.add_theme_constant_override("separation",12);content.add_child(life_nav)
+    for item in ["Herz & Heim","Wohnungen"]:
+        var category: String=item
+        var b=button(item,func():mission_tab=category;show_section("missions"));b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+        if category==mission_tab:b.add_theme_stylebox_override("normal",card_style(Color("#59414a"),Color("#e8b0ba"),14))
+        life_nav.add_child(b)
+    if mission_tab=="Herz & Heim":RomanceBook.build(self);return
+    if mission_tab=="Wohnungen":RomanceBook.homes(self);return
     if not game.street_state.get("active","").is_empty():
         var q: Dictionary=game.MainStory.side_quest(game.street_state.active)
         var active=card("NEBENAUFTRAG · "+str(q.title),str(game.MainStory.task(game,"side").title),Color("#b8d5a9"))

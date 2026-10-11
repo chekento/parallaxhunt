@@ -11,6 +11,10 @@ const NeighborhoodArt = preload("res://scripts/neighborhood_art.gd")
 const MainStory=preload("res://scripts/main_story.gd")
 const StoryRegion=preload("res://scripts/story_region.gd")
 const StoryArt=preload("res://scripts/story_art.gd")
+const Romance=preload("res://scripts/romance_game.gd")
+const RomanceWorld=preload("res://scripts/romance_world.gd")
+const RomancePanel=preload("res://scripts/romance_panel.gd")
+const ApartmentArt=preload("res://scripts/apartment_art.gd")
 const CITY_SIZE := Vector2(26000.0, 18000.0)
 const WORLD_SIZE := Vector2(144000.0, 56000.0)
 const RegionWorld=preload("res://scripts/region_world.gd")
@@ -219,6 +223,13 @@ var credits: int = 520
 var energy: float = 100.0
 var inventory: Dictionary = {"scan_cell":0,"energy_drink":0,"transit_pass":0}
 var shop_stock: Dictionary = {}
+var love_state: Dictionary={}
+var home_state: Dictionary={}
+var apartment_sites: Array=[]
+var active_apartment: String=""
+var love_session: int=0
+var romance_panel: PanelContainer
+var love_hint_button: Button
 var owned_property: String = ""
 var property_sites: Array = []
 var mission_sites: Array = []
@@ -355,6 +366,7 @@ var last_secret_sound_ms := -99999
 
 func _ready() -> void:
     MainStory.clear(self)
+    Romance.clear(self)
     get_tree().quit_on_go_back=false
     rng.seed = 420042
     _build_districts()
@@ -386,7 +398,9 @@ func _ready() -> void:
     _seed_neighborhood_start()
     RegionWorld.build(self)
     CityLife.build(self)
+    RomanceWorld.build(self)
     CityAccess.repair(self)
+    RomanceWorld.finish(self)
     WorldNavigation.build(self)
     _build_ui()
     _build_photo_3d_system()
@@ -415,6 +429,8 @@ func _ready() -> void:
     if "--life-capture" in OS.get_cmdline_user_args():call_deferred("_run_life_capture")
     if "--story-smoke" in OS.get_cmdline_user_args():call_deferred("_run_story_smoke")
     if "--story-capture" in OS.get_cmdline_user_args():call_deferred("_run_story_capture")
+    if "--romance-smoke" in OS.get_cmdline_user_args():call_deferred("_run_romance_smoke")
+    if "--romance-capture" in OS.get_cmdline_user_args():call_deferred("_run_romance_capture")
 
 func _exit_tree() -> void:
     for player in [sfx_player,ambient_player,weather_player]:
@@ -467,6 +483,7 @@ func _process(delta: float) -> void:
     if photo_mode:
         _update_photo_3d_scene(delta)
     world_clock = fposmod(world_clock + delta * 0.018, 24.0)
+    Romance.update(self,delta)
     scan_time = maxf(0.0, scan_time - delta)
     photo_flash_alpha=maxf(0.0,photo_flash_alpha-delta*2.8)
     camera_shake_strength=move_toward(camera_shake_strength,0.0,delta*18.0)
@@ -503,7 +520,8 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and event.physical_keycode==KEY_ESCAPE and _modal_active():
-        if map_open or missions_open or collection_open: _close_overview()
+        if is_instance_valid(romance_panel) and romance_panel.visible: Romance.close(self)
+        elif map_open or missions_open or collection_open: _close_overview()
         elif minigame_open: _close_minigame()
         elif commerce_panel.visible: _close_commerce()
         elif dialogue_panel.visible: _close_dialogue()
@@ -1668,6 +1686,11 @@ func _build_ui() -> void:
     encounter_button.add_theme_font_size_override("font_size",26)
     encounter_button.visible=false
     hud_root.add_child(encounter_button)
+    love_hint_button=CityMenus.button("",func():Romance.open(self,RomanceWorld.nearest(self)))
+    love_hint_button.position=Vector2(24,614);love_hint_button.size=Vector2(1032,88)
+    love_hint_button.add_theme_font_size_override("font_size",26)
+    love_hint_button.add_theme_stylebox_override("normal",CityMenus.card_style(Color("#46343e"),Color("#bb8d9a"),18))
+    love_hint_button.visible=false;hud_root.add_child(love_hint_button)
 
     var mission_panel := PanelContainer.new()
     mission_panel.position = Vector2(20, 38)
@@ -1690,7 +1713,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · 1.26"
+    title.text = "PARALLAX HUNT · 1.27"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2173,18 +2196,19 @@ func _build_modal_layer() -> void:
     city_menus=CityMenus.new()
     modal_root.add_child(city_menus)
     city_menus.setup(self)
+    romance_panel=RomancePanel.new();modal_root.add_child(romance_panel);romance_panel.setup(self)
     for panel in [game_panel,commerce_panel,dialogue_panel,main_menu_panel]:
         panel.reparent(modal_root)
         if panel!=main_menu_panel: panel.minimum_size_changed.connect(_queue_modal_fit)
     _sync_modal_ui()
 
 func _modal_active() -> bool:
-    return main_menu_active or map_open or missions_open or collection_open or minigame_open or (is_instance_valid(commerce_panel) and commerce_panel.visible) or (is_instance_valid(dialogue_panel) and dialogue_panel.visible)
+    return main_menu_active or map_open or missions_open or collection_open or minigame_open or (is_instance_valid(romance_panel) and romance_panel.visible) or (is_instance_valid(commerce_panel) and commerce_panel.visible) or (is_instance_valid(dialogue_panel) and dialogue_panel.visible)
 
 func _sync_modal_ui() -> void:
     if not is_instance_valid(modal_root): return
     var active:=_modal_active()
-    var state: String="map" if map_open else ("missions" if missions_open else ("collection" if collection_open else ("main" if main_menu_active else ("puzzle" if minigame_open else ("commerce" if commerce_panel.visible else ("dialogue" if dialogue_panel.visible else ""))))))
+    var state: String="romance" if is_instance_valid(romance_panel) and romance_panel.visible else ("map" if map_open else ("missions" if missions_open else ("collection" if collection_open else ("main" if main_menu_active else ("puzzle" if minigame_open else ("commerce" if commerce_panel.visible else ("dialogue" if dialogue_panel.visible else "")))))))
     hud_root.visible=not active and not photo_mode
     modal_root.visible=active
     city_menus.visible=map_open or missions_open or collection_open
@@ -2230,6 +2254,7 @@ func _close_overview() -> void:
 
 func _open_overview(kind: String) -> void:
     if photo_mode or minigame_open or main_menu_active: return
+    Romance.close(self)
     _close_dialogue()
     _close_commerce()
     map_open=kind=="map"
@@ -2364,6 +2389,7 @@ func _toggle_camera_tracking() -> void:
 func _notification(what: int) -> void:
     if what==NOTIFICATION_WM_GO_BACK_REQUEST:
         if photo_mode: _exit_photo_mode()
+        elif is_instance_valid(romance_panel) and romance_panel.visible: Romance.close(self)
         elif map_open or missions_open or collection_open: _close_overview()
         elif minigame_open: _close_minigame()
         elif commerce_panel.visible: _close_commerce()
@@ -4262,9 +4288,9 @@ func _update_player(delta: float) -> void:
         var iv := move_vec.normalized() * WALK_SPEED * minf(1.0,move_vec.length())
         var candidate:=interior_player_pos+iv*delta
         var horizontal:=Vector2(candidate.x,interior_player_pos.y)
-        if InteriorArt.walkable(self,horizontal): interior_player_pos.x=horizontal.x
+        if _interior_walkable(horizontal): interior_player_pos.x=horizontal.x
         var vertical:=Vector2(interior_player_pos.x,candidate.y)
-        if InteriorArt.walkable(self,vertical): interior_player_pos.y=vertical.y
+        if _interior_walkable(vertical): interior_player_pos.y=vertical.y
         player_heading = iv.angle()
         return
     if current_vehicle>=0 and not active_race.is_empty() and float(active_race.get("countdown",0.0))>0.0:
@@ -5680,6 +5706,15 @@ func _district_identity_label(style: String) -> String:
 
 func _update_ui() -> void:
     _sync_modal_ui()
+    if is_instance_valid(love_hint_button):
+        var show_encounter:=false
+        if love_state.get("enabled",false) and not _modal_active() and not photo_mode and not interior_active and current_vehicle<0 and transit_riding<0:
+            var person_id: String=RomanceWorld.nearest(self)
+            if not person_id.is_empty():
+                var person: Dictionary=Romance.Data.person(person_id)
+                love_hint_button.text="HERZ · "+str(person.name)+" · Gespräch & Flirt"
+                show_encounter=true
+        love_hint_button.visible=show_encounter
     if photo_mode:
         objective_label.visible=false
         mission_label.text="PHOTO CHALLENGE"
@@ -5697,7 +5732,7 @@ func _update_ui() -> void:
     recenter_hud_button.visible=not interior_active
     scan_button.visible=not interior_active
     if interior_active:
-        objective_label.text={"bar":"Zum markierten Tresen gehen und BESTELLEN","cafe":"Kaffee und Gebäck am markierten Tresen bestellen","restaurant":"Zur Küche gehen und BESTELLEN","home":"Hausgarage am Terminal öffnen · Treppe zur zweiten Etage","shop":"Zur Kasse gehen und EINKAUFEN","garage":"Am Diagnose-Terminal SERVICE wählen","workshop":"Am Diagnose-Terminal SERVICE wählen","hospital":"Zur Triage gehen und Energie auffüllen","openai_hq":"Die markierte Ausstellung erkunden","roof":"Zum leuchtenden Dach-Relay gehen und SYNCHRONISIEREN","sublevel":"Zum Terminal gehen und den Knoten AKTIVIEREN"}.get(interior_kind,"Den markierten Punkt erkunden")
+        objective_label.text={"bar":"Zum markierten Tresen gehen und BESTELLEN","cafe":"Kaffee und Gebäck am markierten Tresen bestellen","restaurant":"Zur Küche gehen und BESTELLEN","home":"Hausgarage am Terminal öffnen · Treppe zur zweiten Etage","shop":"Zur Kasse gehen und EINKAUFEN","garage":"Am Diagnose-Terminal SERVICE wählen","workshop":"Am Diagnose-Terminal SERVICE wählen","hospital":"Zur Triage gehen und Energie auffüllen","openai_hq":"Die markierte Ausstellung erkunden","roof":"Zum leuchtenden Dach-Relay gehen und SYNCHRONISIEREN","sublevel":"Zum Terminal gehen und den Knoten AKTIVIEREN","apartment":"Küche, Ruhebereich und Wohnzimmertisch erkunden · ZUHAUSE öffnet dein Wohnbuch"}.get(interior_kind,"Den markierten Punkt erkunden")
     if tracking_label!=null:
         tracking_label.text=("KOPF · "+camera_tracking_state) if camera_tracking_enabled else "PERSPEKTIVE · Touch / Neigung"
         tracking_label.modulate=Color("#73f3ce") if camera_tracking_state=="Gesicht erkannt" and camera_tracking_enabled else Color("#9cb9c4")
@@ -5733,6 +5768,9 @@ func _update_ui() -> void:
     if not interior_active and not street_state.get("active","").is_empty():
         var side: Dictionary=MainStory.side_quest(street_state.active)
         mission_label.text=str(side.title);mission_progress_bar.max_value=side.steps.size();mission_progress_bar.value=int(street_state.progress.get(side.id,0))
+    if not interior_active and Romance.target(self)!=Vector2.ZERO:
+        mission_label.text="Ein Zuhause für zwei · "+Romance.Data.PHASES[Romance.phase(self)]
+        mission_progress_bar.max_value=8;mission_progress_bar.value=Romance.phase(self)
     var mode: String = "Etage %d" % (interior_floor+1) if interior_active else "Zu Fuß"
     if current_vehicle >= 0:
         var drive_cls: String = str(parked_cars[current_vehicle]["class"])
@@ -5775,11 +5813,14 @@ func _scan() -> void:
 func _interact() -> void:
     if photo_mode:
         return
-    if map_open or missions_open or collection_open or minigame_open or dialogue_panel.visible or commerce_panel.visible:
-        return
+    if _modal_active():return
     var n := _nearest_interactable()
     if n.is_empty():
         return
+    if n.type=="romance_person":Romance.open(self,str(n.id));return
+    if n.type=="apartment":romance_panel.open_home(str(n.id));return
+    if n.type=="home_moment":
+        romance_panel.open_home(active_apartment);Romance.home_action(self,str(n.id),love_session);return
     if n.type=="story_task":
         MainStory.visit(self,str(n.lane));return
     if n.type=="street_offer":
@@ -5910,9 +5951,12 @@ func _nearest_interactable() -> Dictionary:
             return {"type":"interior_exit","action":"EXIT"}
         if interior_kind in ["openai_hq","home","shop","restaurant","cafe","bar","hospital"] and interior_player_pos.distance_to(_interior_elevator_pos())<78.0:
             return {"type":"interior_floor","action":"ETAGE %d" % (2 if interior_floor==0 else 1)}
+        if interior_kind=="apartment":
+            var at_home: Dictionary=ApartmentArt.nearest(self)
+            if not at_home.is_empty():return at_home
         var feature := _interior_feature_pos()
         if interior_player_pos.distance_to(feature) < 82.0:
-            return {"type":"interior_feature","action":{"bar":"BESTELLEN","restaurant":"BESTELLEN","cafe":"BESTELLEN","shop":"EINKAUFEN","home":"HAUSGARAGE","garage":"SERVICE","workshop":"SERVICE","roof":"SYNCHRONISIEREN","sublevel":"AKTIVIEREN","hospital":"HEILEN"}.get(interior_kind,"BENUTZEN"),"message":_interior_feature_message()}
+            return {"type":"interior_feature","action":{"bar":"BESTELLEN","restaurant":"BESTELLEN","cafe":"BESTELLEN","shop":"EINKAUFEN","home":"HAUSGARAGE","garage":"SERVICE","workshop":"SERVICE","roof":"SYNCHRONISIEREN","sublevel":"AKTIVIEREN","hospital":"HEILEN","apartment":"ZUHAUSE"}.get(interior_kind,"BENUTZEN"),"message":_interior_feature_message()}
         return {}
     if current_vehicle >= 0:
         for i in range(region_pois.size()):
@@ -5933,10 +5977,19 @@ func _nearest_interactable() -> Dictionary:
             if player_pos.distance_to(Vector2(property_sites[pi].pos)) < 135.0:
                 return {"type":"property","index":pi,"action":"GARAGE"}
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
+    if love_state.get("tracking",false) and not love_state.get("date",{}).is_empty():
+        var date_id: String=love_state.date.person
+        if player_pos.distance_to(RomanceWorld.person_pos(self,date_id))<105:return {"type":"romance_person","id":date_id,"action":"DATE"}
     var story_action: Dictionary=MainStory.interactable(self)
     if not story_action.is_empty():return story_action
     var best := {}
     var bd := 999999.0
+    if love_state.get("enabled",false) and not love_state.get("date",{}).is_empty():
+        var date_id: String=love_state.date.person
+        if player_pos.distance_to(RomanceWorld.person_pos(self,date_id))<105:return {"type":"romance_person","id":date_id,"action":"DATE"}
+    for home in apartment_sites:
+        var distance: float=player_pos.distance_to(Vector2(home.pos))
+        if distance<105 and distance<bd:best={"type":"apartment","id":home.id,"action":"WOHNUNG"};bd=distance
     var life_target: Vector2=CityLife.target(self)
     if life_target!=Vector2.ZERO and player_pos.distance_to(life_target)<100:
         var place: Dictionary=CityLife.get_place(self,str(CityLife.step(self).at))
@@ -5961,7 +6014,7 @@ func _nearest_interactable() -> Dictionary:
     for ni in range(named_npcs.size()):
         var dn: float = player_pos.distance_to(Vector2(named_npcs[ni].pos))
         if dn < 82.0 and dn < bd:
-            best = {"type":"named_npc","index":ni,"action":"SPRECHEN"}
+            best = {"type":"romance_person","id":str(named_npcs[ni].id),"action":"FLIRTEN"} if named_npcs[ni].get("new_romance",false) and love_state.get("enabled",false) else {"type":"named_npc","index":ni,"action":"SPRECHEN"}
             bd = dn
     for ci in range(caches.size()):
         if bool(caches[ci].taken):
@@ -6095,6 +6148,7 @@ func _draw() -> void:
     _draw_storefronts()
     _draw_vertical_slice_architecture()
     _draw_named_npcs()
+    ApartmentArt.draw_exteriors(self)
     _draw_story_collectibles()
     _draw_scan_points()
     _draw_photo_points()
@@ -6940,16 +6994,17 @@ func _draw_trees() -> void:
 func _draw_named_npcs() -> void:
     for i in range(named_npcs.size()):
         var npc: Dictionary=named_npcs[i]
-        var pos:=Vector2(npc.pos)
+        var pos: Vector2=RomanceWorld.person_pos(self,str(npc.id)) if npc.get("romance",false) else Vector2(npc.pos)
         var foot:=_project(pos)
         if not _tile_visible(foot,120):
             continue
         var accent: Color=npc.accent
         var heading: float=(player_pos-pos).angle() if pos.distance_to(player_pos)<160 else PI*0.5
-        CityArt.draw_character(self,pos,heading,1+i%3,0,"idle",accent.lightened(0.78))
-        var top:=foot-Vector2(0,43)*world_zoom
+        if npc.get("romance",false):ApartmentArt.draw_person(self,str(npc.id))
+        else:CityArt.draw_character(self,pos,heading,1+i%3,0,"idle",accent.lightened(0.78))
+        var top:=foot-Vector2(0,64 if npc.get("romance",false) else 43)*world_zoom
         var width: float=110*clampf(world_zoom,1,1.8)
-        draw_rect(Rect2(top-Vector2(width*0.5,21),Vector2(width,32)),Color(0.025,0.075,0.10,0.87))
+        draw_rect(Rect2(top-Vector2(width*0.5,24),Vector2(width,32)),Color(0.025,0.075,0.10,0.87))
         draw_string(ThemeDB.fallback_font,top+Vector2(-width*0.5,0),str(npc.name),HORIZONTAL_ALIGNMENT_CENTER,width,18,Color("#e9f6f4"))
 
 func _draw_story_collectibles() -> void:
@@ -6973,6 +7028,7 @@ func _talk_named_npc(index: int) -> void:
         return
     active_dialogue_npc=index
     var npc: Dictionary = named_npcs[index]
+    if npc.get("new_romance",false) and love_state.get("enabled",false):Romance.open(self,str(npc.id));return
     dialogue_title.text="%s · %s" % [str(npc.name),str(npc.role)]
     dialogue_body.text=str(npc.text)+"\n\n"+_npc_context_line(npc)
     for child in dialogue_actions.get_children():
@@ -6984,6 +7040,7 @@ func _talk_named_npc(index: int) -> void:
     dialogue_actions.add_child(mission_btn)
     dialogue_actions.add_child(contract_btn)
     dialogue_actions.add_child(city_btn)
+    if npc.get("romance",false) and love_state.get("enabled",false):dialogue_actions.add_child(_commerce_button("PERSÖNLICH WERDEN · FLIRTEN",func():Romance.open(self,str(npc.id))))
     dialogue_actions.add_child(close_btn)
     commerce_panel.visible=false
     dialogue_panel.visible=true
@@ -8126,6 +8183,7 @@ func _enter_interior(name: String, kind: String, accent: Color, return_pos: Vect
     _notify("%s · Willkommen" % name)
 
 func _leave_interior() -> void:
+    Romance.close(self);active_apartment=""
     commerce_panel.visible = false
     interior_active = false
     current_vertical_id = ""
@@ -8176,6 +8234,7 @@ func _interior_feature_pos() -> Vector2:
     return InteriorArt.feature_pos(interior_kind,interior_floor)
 
 func _interior_feature_message() -> String:
+    if interior_kind=="apartment":return "Deine Wohnung verwalten, ausruhen und ein gemeinsames Leben gestalten."
     if interior_kind == "openai_hq":
         return "Interaktive Forschungsausstellung im Visitor Lab."
     if interior_kind == "hospital":
@@ -8193,7 +8252,8 @@ func _interior_feature_message() -> String:
     return "Am markierten Terminal die Hausgarage öffnen."
 
 func _draw_interior_scene() -> void:
-    InteriorArt.draw_room(self)
+    if interior_kind=="apartment":ApartmentArt.draw_room(self)
+    else:InteriorArt.draw_room(self)
 
 func _enter_vertical(index: int) -> void:
     if index<0 or index>=vertical_sites.size():
@@ -8902,6 +8962,7 @@ func _reset_game_state() -> void:
     region_seen.clear();region_completed.clear();region_contract={};map_waypoint={}
     CityLife.clear(self)
     MainStory.clear(self,true)
+    Romance.clear(self,true)
     navigation_route=PackedVector2Array();navigation_timer=0
     photo_found.clear()
     photo_scores.clear()
@@ -9059,7 +9120,9 @@ func _save_game() -> void:
         "chapter":native_chapter,
         "inventory":inventory,
         "shop_stock":shop_stock,
-        "save_version":3,
+        "save_version":4,
+        "romance":love_state,
+        "homes":home_state,
         "campaign":campaign_state,
         "street_quests":street_state,
         "region":RegionWorld.save_state(self),
@@ -9125,6 +9188,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     energy = float(d.get("energy",energy))
     accident_count = int(d.get("accident_count",0))
     owned_property = str(d.get("owned_property",""))
+    Romance.restore(self,Dictionary(d.get("romance",{})),Dictionary(d.get("homes",{})))
     owned_cars = Array(d.get("owned_cars",[]))
     current_paint = str(d.get("current_paint",""))
     jobs_done = int(d.get("jobs_done",0))
@@ -9247,6 +9311,7 @@ func _close_commerce() -> void:
     _sync_modal_ui()
 
 func _use_interior_feature() -> void:
+    if interior_kind=="apartment":romance_panel.open_home(active_apartment);return
     if commerce_panel.visible:
         return
     if interior_kind in ["roof","sublevel"]:
@@ -9712,6 +9777,7 @@ func _localized_action(action: String) -> String:
 func _objective_action() -> String:
     if not active_race.is_empty():return "Nächsten Kontrollpunkt passieren"
     if not map_waypoint.is_empty():return "Der markierten Route folgen · Karte öffnet die Zielauswahl"
+    if Romance.target(self)!=Vector2.ZERO:return Romance.task_text(self)
     if not street_state.get("active","").is_empty():return str(MainStory.task(self,"side").title)+" · aussteigen und AKTION wählen"
     if not life_active.is_empty():return str(CityLife.step(self).task)+" · aussteigen und AKTION wählen"
     if not region_contract.is_empty():return "Zum markierten Halt gehen, aussteigen und ENTDECKEN wählen"
@@ -9740,6 +9806,8 @@ func _current_objective_pos() -> Vector2:
         if cp<rpts.size():
             return Vector2(rpts[cp])
     if not map_waypoint.is_empty():return Vector2(map_waypoint.pos)
+    var love_target: Vector2=Romance.target(self)
+    if love_target!=Vector2.ZERO:return love_target
     var side_target: Vector2=MainStory.target(self,"side")
     if side_target!=Vector2.ZERO:return side_target
     var life_target: Vector2=CityLife.target(self)
@@ -9813,6 +9881,7 @@ func _current_objective_pos() -> Vector2:
 func _current_objective_label() -> String:
     if active_race.is_empty():
         if not map_waypoint.is_empty():return str(map_waypoint.name)
+        if Romance.target(self)!=Vector2.ZERO:return "HERZ & HEIM · "+Romance.Data.PHASES[Romance.phase(self)]
         if not street_state.get("active","").is_empty():return str(MainStory.side_quest(street_state.active).title)
         if not life_active.is_empty():return str(CityLife.story(life_active).title)
         if not region_contract.is_empty():
@@ -9831,8 +9900,7 @@ func _current_objective_label() -> String:
     return str(native_chapters[mini(native_chapter,native_chapters.size()-1)].title)
 
 func _draw_mission_compass() -> void:
-    if main_menu_active or map_open or missions_open or collection_open or interior_active or minigame_open or dialogue_panel.visible or commerce_panel.visible:
-        return
+    if _modal_active() or interior_active:return
     var target:=_current_objective_pos()
     if target==Vector2.ZERO:
         return
@@ -9979,6 +10047,8 @@ func _interact_property(index: int) -> void:
         return
     credits -= int(p.price)
     owned_property = str(p.id)
+    home_state.leases[owned_property]={"mode":"own","deposit":0,"next":0.0,"arrears":0}
+    if home_state.primary.is_empty():home_state.primary=owned_property
     service_vehicle_index=-1
     _save_game()
     _play_sfx("collect")
@@ -10324,3 +10394,14 @@ func _run_story_smoke() -> void:
     await preload("res://scripts/story_checks.gd").smoke(self)
 func _run_story_capture() -> void:
     await preload("res://scripts/story_checks.gd").capture(self)
+
+func _interior_walkable(point: Vector2) -> bool:
+    if interior_kind!="apartment":return InteriorArt.walkable(self,point)
+    if not Rect2(Vector2(45,185),interior_size-Vector2(90,225)).has_point(point):return false
+    for rect in ApartmentArt.obstacles():
+        if rect.grow(19).has_point(point):return false
+    return true
+func _run_romance_smoke() -> void:
+    await load("res://scripts/romance_checks.gd").run(self)
+func _run_romance_capture() -> void:
+    await load("res://scripts/romance_checks.gd").capture(self)

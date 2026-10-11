@@ -86,7 +86,7 @@ static func safe_point(g: Node, p: Vector2, radius: float=16.0) -> Vector2:
 static func repair(g: Node) -> void:
     rebuild_index(g)
     g.access_repairs=0
-    for data in [g.named_npcs,g.caches,g.glyphs,g.mission_sites,g.property_sites,g.vertical_sites,g.scan_points,g.photo_points,g.side_job_sites,g.city_micro_events,g.storefronts,g.fragments,g.secrets,g.region_pois,g.life_places]:
+    for data in [g.named_npcs,g.caches,g.glyphs,g.mission_sites,g.property_sites,g.vertical_sites,g.scan_points,g.photo_points,g.side_job_sites,g.city_micro_events,g.storefronts,g.fragments,g.secrets,g.region_pois,g.life_places,g.apartment_sites]:
         for entry in data:
             var before: Vector2=entry.pos
             var after=safe_point(g,before)
