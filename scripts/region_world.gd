@@ -67,6 +67,7 @@ static func build(g: Node) -> void:
     for p in [Vector2(33750,10430),Vector2(32000,13800),Vector2(42300,7720),Vector2(44900,13450),Vector2(60100,9960)]:
         g.parked_cars.append({"pos":p,"class":"suv" if p.x>43000 else "hatch","heading":0.0,"color":Color("#b0cab2"),"occupied":false})
     Expansion.build(g)
+    g.StoryRegion.build(g)
     g.country_segments.clear()
     for road in g.roads:
         if not road.get("regional",false):continue
@@ -370,7 +371,7 @@ static func draw_house(g: Node2D,b: Dictionary) -> void:
     if b.kind!="home":
         var sign: Vector2=door-Vector2(42,48)*scale
         g.draw_rect(Rect2(sign,Vector2(84,17)*scale),Color("#355d54"))
-        g.draw_string(ThemeDB.fallback_font,sign+Vector2(4,12)*scale,{"cafe":"CAFÉ","garage":"WERKSTATT","farm":"LINDENHOF","ranger":"WALDHAUS","mill":"ALTE MÜHLE"}.get(str(b.kind),""),HORIZONTAL_ALIGNMENT_CENTER,76*scale,int(10*scale),Color("#f1dcaa"))
+        g.draw_string(ThemeDB.fallback_font,sign+Vector2(4,12)*scale,{"cafe":"CAFÉ","garage":"WERKSTATT","farm":"LINDENHOF","ranger":"WALDHAUS","mill":"ALTE MÜHLE","observatory":"STATION"}.get(str(b.kind),""),HORIZONTAL_ALIGNMENT_CENTER,76*scale,int(10*scale),Color("#f1dcaa"))
 static func draw_tree(g: Node2D,data: Dictionary) -> void:
     var p: Vector2=data.pos;var foot: Vector2=g._project(p);var scale: float=g.world_zoom
     if not g._tile_visible(foot,180):return

@@ -8,8 +8,11 @@ const WireTile = preload("res://scripts/wire_tile.gd")
 const PhotoArt = preload("res://scripts/photo_art.gd")
 const CityLife = preload("res://scripts/city_life.gd")
 const NeighborhoodArt = preload("res://scripts/neighborhood_art.gd")
+const MainStory=preload("res://scripts/main_story.gd")
+const StoryRegion=preload("res://scripts/story_region.gd")
+const StoryArt=preload("res://scripts/story_art.gd")
 const CITY_SIZE := Vector2(26000.0, 18000.0)
-const WORLD_SIZE := Vector2(110000.0, 46000.0)
+const WORLD_SIZE := Vector2(144000.0, 56000.0)
 const RegionWorld=preload("res://scripts/region_world.gd")
 const WorldNavigation=preload("res://scripts/world_navigation.gd")
 const WALK_SPEED := 165.0
@@ -78,6 +81,12 @@ var life_completed: Dictionary={}
 var life_progress: Dictionary={}
 var life_choices: Dictionary={}
 var life_active: String=""
+var story_photo_context: Dictionary={}
+var campaign_state: Dictionary={}
+var street_state: Dictionary={}
+var encounter_id: String=""
+var encounter_clock:=0.0
+var encounter_button: Button
 var navigation_graph:=AStar2D.new()
 var navigation_route:=PackedVector2Array()
 var navigation_target:=Vector2.ZERO
@@ -345,6 +354,7 @@ var current_weather_audio_key := ""
 var last_secret_sound_ms := -99999
 
 func _ready() -> void:
+    MainStory.clear(self)
     get_tree().quit_on_go_back=false
     rng.seed = 420042
     _build_districts()
@@ -403,6 +413,8 @@ func _ready() -> void:
     if "--region-capture" in OS.get_cmdline_user_args():call_deferred("_run_region_capture")
     if "--life-smoke" in OS.get_cmdline_user_args():call_deferred("_run_life_smoke")
     if "--life-capture" in OS.get_cmdline_user_args():call_deferred("_run_life_capture")
+    if "--story-smoke" in OS.get_cmdline_user_args():call_deferred("_run_story_smoke")
+    if "--story-capture" in OS.get_cmdline_user_args():call_deferred("_run_story_capture")
 
 func _exit_tree() -> void:
     for player in [sfx_player,ambient_player,weather_player]:
@@ -480,6 +492,7 @@ func _process(delta: float) -> void:
         _check_active_job_progress()
         _update_active_race(delta)
         RegionWorld.check_arrival(self)
+        MainStory.update(self,delta)
         WorldNavigation.refresh(self,delta)
         _check_milestones()
     ui_refresh_timer+=delta
@@ -1649,6 +1662,12 @@ func _build_ui() -> void:
     hud_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     hud_root.mouse_filter=Control.MOUSE_FILTER_IGNORE
     layer.add_child(hud_root)
+    encounter_button=CityMenus.button("",func(): MainStory.offer(self,encounter_id))
+    encounter_button.position=Vector2(24,510)
+    encounter_button.size=Vector2(1032,88)
+    encounter_button.add_theme_font_size_override("font_size",26)
+    encounter_button.visible=false
+    hud_root.add_child(encounter_button)
 
     var mission_panel := PanelContainer.new()
     mission_panel.position = Vector2(20, 38)
@@ -1671,7 +1690,7 @@ func _build_ui() -> void:
     vb.add_theme_constant_override("separation", 5)
     mission_panel.add_child(vb)
     var title := Label.new()
-    title.text = "PARALLAX HUNT · 1.25"
+    title.text = "PARALLAX HUNT · 1.26"
     title.add_theme_font_size_override("font_size", 24)
     title.modulate = Color("#7ff0d2")
     vb.add_child(title)
@@ -2505,7 +2524,8 @@ func _capture_quality_frame(filename: String) -> void:
     queue_redraw()
     await get_tree().create_timer(0.4).timeout
     await RenderingServer.frame_post_draw
-    get_viewport().get_texture().get_image().save_png("res://build/"+filename+".png")
+    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://build"))
+    assert(get_viewport().get_texture().get_image().save_png("res://build/"+filename+".png")==OK,"Capture must be saved")
 
 func _run_quality_capture() -> void:
     main_menu_active=false
@@ -3580,6 +3600,7 @@ func _start_photo_challenge(index: int) -> void:
     _show_reward_popup("PHOTO CHALLENGE",str(photo_points[index].label)+"\nFinde und fotografiere alle versteckten Motive.",Color("#ffb3e6"))
 
 func _exit_photo_mode() -> void:
+    story_photo_context={}
     photo_session+=1
     photo_mode=false
     photo_viewport.render_target_update_mode=SubViewport.UPDATE_DISABLED
@@ -3728,6 +3749,8 @@ func _photo_set_feedback(message: String, duration: int = 4000) -> void:
 func _complete_photo_challenge() -> void:
     if active_photo_index<0:
         return
+    if photo_targets.is_empty() or not photo_targets.all(func(t):return bool(photo_found.get(str(t.key),false))):return
+    MainStory.photo_finished(self,active_photo_index)
     var ph: Dictionary = photo_points[active_photo_index]
     var session:=photo_session
     var quality: int = 0
@@ -5683,6 +5706,10 @@ func _update_ui() -> void:
     mission_progress_bar.max_value=maxf(1,float(chapter.get("goal",1)))
     mission_progress_bar.value=minf(_chapter_progress(chapter),mission_progress_bar.max_value)
     mission_progress_bar.visible=not interior_active
+    if not interior_active and MainStory.target(self)!=Vector2.ZERO:
+        var story_chapter: Dictionary=MainStory.chapter(self)
+        mission_label.text="%02d · %s" % [int(campaign_state.chapter)+1,str(story_chapter.title)]
+        mission_progress_bar.max_value=story_chapter.steps.size();mission_progress_bar.value=int(campaign_state.step)
     if not interior_active and not region_contract.is_empty():
         var tour: Dictionary=RegionWorld.OUTINGS[int(region_contract.tour)]
         mission_label.text="%s · %d/%d" % [str(tour.title),int(region_contract.step),tour.stops.size()]
@@ -5703,6 +5730,9 @@ func _update_ui() -> void:
         detail_label.text = "Stadtauftrag: %s · %d CR · Ziel %d m%s · Kompass aktiv." % [str(active_job.get("title","Auftrag")),int(active_job.get("pay",0)),job_distance,(" · "+task_text if task_text!="" else "")]
     else:
         detail_label.text = "Links Richtung wählen · rechts Perspektive · loslassen bremst das Auto."
+    if not interior_active and not street_state.get("active","").is_empty():
+        var side: Dictionary=MainStory.side_quest(street_state.active)
+        mission_label.text=str(side.title);mission_progress_bar.max_value=side.steps.size();mission_progress_bar.value=int(street_state.progress.get(side.id,0))
     var mode: String = "Etage %d" % (interior_floor+1) if interior_active else "Zu Fuß"
     if current_vehicle >= 0:
         var drive_cls: String = str(parked_cars[current_vehicle]["class"])
@@ -5722,6 +5752,7 @@ func _scan() -> void:
     if _modal_active() or photo_mode or interior_active: return
     scan_time = 2.2
     _play_sfx("scan")
+    if MainStory.scan(self):return
     var found := false
     for i in range(scan_points.size()):
         if bool(scan_points[i].taken):
@@ -5749,6 +5780,10 @@ func _interact() -> void:
     var n := _nearest_interactable()
     if n.is_empty():
         return
+    if n.type=="story_task":
+        MainStory.visit(self,str(n.lane));return
+    if n.type=="street_offer":
+        MainStory.offer(self,str(n.id));return
     if n.type == "life_place":
         CityLife.visit(self,int(n.index))
         return
@@ -5898,6 +5933,8 @@ func _nearest_interactable() -> Dictionary:
             if player_pos.distance_to(Vector2(property_sites[pi].pos)) < 135.0:
                 return {"type":"property","index":pi,"action":"GARAGE"}
         return {"type":"car", "index":current_vehicle, "action":"EXIT CAR"}
+    var story_action: Dictionary=MainStory.interactable(self)
+    if not story_action.is_empty():return story_action
     var best := {}
     var bd := 999999.0
     var life_target: Vector2=CityLife.target(self)
@@ -6067,6 +6104,7 @@ func _draw() -> void:
     RegionWorld.draw_pois(self)
     RegionWorld.Expansion.draw(self)
     NeighborhoodArt.draw(self)
+    StoryArt.draw(self)
     _draw_active_job_target()
     _draw_street_props()
     _draw_city_micro_events()
@@ -8251,12 +8289,21 @@ func _close_minigame() -> void:
 func _finish_minigame() -> void:
     if active_mission_site.is_empty() or minigame_finishing:
         return
+    if bool(active_mission_site.get("story_task",false)) and not MainStory.puzzle_solved(self):return
     if bool(active_mission_site.get("life",false)):
         if game_type=="wire" and not _wire_solved():return
         if game_type=="frequency" and game_current!=game_target:return
     minigame_finishing=true
     var session:=minigame_session
     var sid: String = str(active_mission_site.id)
+    if bool(active_mission_site.get("story_task",false)):
+        var story_site: Dictionary=active_mission_site.duplicate(true)
+        MainStory.puzzle_finished(self,story_site)
+        game_status.text="ERFOLG · Storyhinweis gesichert"
+        _play_sfx("secret");_haptic(55)
+        await get_tree().create_timer(.65).timeout
+        if minigame_open and minigame_session==session and str(active_mission_site.get("id",""))==sid:_close_minigame()
+        return
     if bool(active_mission_site.get("life",false)):
         var life_site: Dictionary=active_mission_site.duplicate(true)
         CityLife.puzzle_finished(self,life_site)
@@ -8382,7 +8429,7 @@ func _render_wire() -> void:
         button.disabled=minigame_finishing
         button.pressed.connect(_on_wire_cell.bind(i))
         game_grid.add_child(button)
-    game_info.text="NETZWERK %d × %d · %d/%d unter Strom\n%d Drehungen · %d Hinweise · %s" % [cols,cols,reachable.size(),game_current.size(),game_moves,game_hints,("12 CR Replay" if active_mission_replay else "35 CR + "+str(active_mission_site.reward))]
+    game_info.text="NETZWERK %d × %d · %d/%d unter Strom\n%d Drehungen · %d Hinweise · %s" % [cols,cols,reachable.size(),game_current.size(),game_moves,game_hints,("Storyfortschritt · kein zusätzlicher Rätselbonus" if active_mission_site.get("story_task",false) or active_mission_site.get("life",false) else ("12 CR Replay" if active_mission_replay else "35 CR + "+str(active_mission_site.reward)))]
     game_status.text="Tippe eine Kachel zum Drehen. Verbinde S mit T und bringe das gesamte Netz zum Leuchten."
 
 func _wire_reachable_cells() -> Array:
@@ -8580,10 +8627,13 @@ func _render_frequency() -> void:
     var symbols := ["▁","▂","▃","▄","▅"]
     for i in range(4):
         var idx := i
-        game_grid.add_child(_game_button(str(symbols[int(game_current[i])]),_on_frequency_cell.bind(idx)))
+        var tile=preload("res://scripts/frequency_tile.gd").new()
+        tile.channel=i;tile.level=int(game_current[i]);tile.target_level=int(game_target[i])
+        tile.pressed.connect(_on_frequency_cell.bind(idx));game_grid.add_child(tile)
     await get_tree().process_frame
 
 func _on_frequency_cell(index: int) -> void:
+    if minigame_finishing or not minigame_open:return
     game_current[index] = (int(game_current[index])+1)%5
     _render_frequency()
     var ok := true
@@ -8613,13 +8663,17 @@ func _render_memory(highlight: int = -1) -> void:
     await get_tree().process_frame
 
 func _show_memory_sequence() -> void:
+    var session:=minigame_session
+    if not minigame_open or game_type!="memory":return
     game_memory_locked = true
     game_status.text = "Paketfolge merken …"
-    for v in game_memory_seq:
+    for v in game_memory_seq.duplicate():
         _render_memory(int(v))
         await get_tree().create_timer(0.34).timeout
+        if not minigame_open or minigame_session!=session or game_type!="memory":return
         _render_memory(-1)
         await get_tree().create_timer(0.16).timeout
+        if not minigame_open or minigame_session!=session or game_type!="memory":return
     game_memory_locked = false
     game_status.text = "Jetzt die Paketfolge wiederholen."
 
@@ -8804,6 +8858,8 @@ func _start_game_from_slot(slot: int, fresh: bool) -> void:
     if fresh:
         _save_game()
     _play_sfx("collect")
+    _update_ui()
+    MainStory.introduce(self)
     queue_redraw()
 
 func _reset_game_state() -> void:
@@ -8845,6 +8901,7 @@ func _reset_game_state() -> void:
     active_race={}
     region_seen.clear();region_completed.clear();region_contract={};map_waypoint={}
     CityLife.clear(self)
+    MainStory.clear(self,true)
     navigation_route=PackedVector2Array();navigation_timer=0
     photo_found.clear()
     photo_scores.clear()
@@ -9002,7 +9059,9 @@ func _save_game() -> void:
         "chapter":native_chapter,
         "inventory":inventory,
         "shop_stock":shop_stock,
-        "save_version":2,
+        "save_version":3,
+        "campaign":campaign_state,
+        "street_quests":street_state,
         "region":RegionWorld.save_state(self),
         "city_life":CityLife.save(self),
         "fragments":fragments.map(func(x): return bool(x.taken)),
@@ -9059,6 +9118,7 @@ func _load_game(slot: int = selected_save_slot) -> void:
     var d: Dictionary = parsed
     RegionWorld.load_state(self,Dictionary(d.get("region",{})))
     CityLife.restore(self,Dictionary(d.get("city_life",{})))
+    MainStory.restore(self,Dictionary(d.get("campaign",{})),Dictionary(d.get("street_quests",{})))
     if d.has("player") and d.player is Array and d.player.size()>=2:
         player_pos = Vector2(float(d.player[0]),float(d.player[1]))
     credits = int(d.get("credits",credits))
@@ -9652,8 +9712,10 @@ func _localized_action(action: String) -> String:
 func _objective_action() -> String:
     if not active_race.is_empty():return "Nächsten Kontrollpunkt passieren"
     if not map_waypoint.is_empty():return "Der markierten Route folgen · Karte öffnet die Zielauswahl"
+    if not street_state.get("active","").is_empty():return str(MainStory.task(self,"side").title)+" · aussteigen und AKTION wählen"
     if not life_active.is_empty():return str(CityLife.step(self).task)+" · aussteigen und AKTION wählen"
     if not region_contract.is_empty():return "Zum markierten Halt gehen, aussteigen und ENTDECKEN wählen"
+    if MainStory.target(self)!=Vector2.ZERO:return str(MainStory.task(self).title)+(" · SCAN am markierten Ort" if MainStory.task(self).kind=="scan" else " · aussteigen und AKTION wählen")
     if not active_race.is_empty():
         return "Nächsten Kontrollpunkt passieren"
     if not active_job.is_empty():
@@ -9678,10 +9740,14 @@ func _current_objective_pos() -> Vector2:
         if cp<rpts.size():
             return Vector2(rpts[cp])
     if not map_waypoint.is_empty():return Vector2(map_waypoint.pos)
+    var side_target: Vector2=MainStory.target(self,"side")
+    if side_target!=Vector2.ZERO:return side_target
     var life_target: Vector2=CityLife.target(self)
     if life_target!=Vector2.ZERO:return life_target
     var region_target: Vector2=RegionWorld.active_target(self)
     if region_target!=Vector2.ZERO:return region_target
+    var main_target: Vector2=MainStory.target(self)
+    if main_target!=Vector2.ZERO:return main_target
     var contract_target := _npc_contract_target()
     if contract_target!=Vector2.ZERO:return contract_target
     if not active_job.is_empty():
@@ -9747,6 +9813,7 @@ func _current_objective_pos() -> Vector2:
 func _current_objective_label() -> String:
     if active_race.is_empty():
         if not map_waypoint.is_empty():return str(map_waypoint.name)
+        if not street_state.get("active","").is_empty():return str(MainStory.side_quest(street_state.active).title)
         if not life_active.is_empty():return str(CityLife.story(life_active).title)
         if not region_contract.is_empty():
             var tour: Dictionary=RegionWorld.OUTINGS[int(region_contract.tour)]
@@ -9754,6 +9821,7 @@ func _current_objective_label() -> String:
     if not active_race.is_empty():
         var rr: Dictionary = race_sites[int(active_race.index)]
         return "RENNEN · %s" % str(rr.name)
+    if MainStory.target(self)!=Vector2.ZERO:return "HAUPTSTORY · "+str(MainStory.chapter(self).title)
     if not active_npc_contract.is_empty():
         return str(active_npc_contract.get("title","Persönlicher Auftrag"))
     if not active_job.is_empty():
@@ -10251,3 +10319,8 @@ func _run_life_smoke() -> void:
 
 func _run_life_capture() -> void:
     await load("res://scripts/life_checks.gd").capture(self)
+
+func _run_story_smoke() -> void:
+    await preload("res://scripts/story_checks.gd").smoke(self)
+func _run_story_capture() -> void:
+    await preload("res://scripts/story_checks.gd").capture(self)

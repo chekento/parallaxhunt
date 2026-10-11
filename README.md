@@ -1,6 +1,19 @@
 # Parallax Hunt
 
-**Parallax Hunt 1.25.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+**Parallax Hunt 1.26.0 Native Alpha** is the current Godot 4.7.2 Android build of the PMDD open-world prototype. The repository remains private.
+
+## 1.26.0 — A continuous campaign from the first moment
+
+- **Die Stadt, die sich erinnert** begins in a fresh game with a message seventeen seconds before an interrupted station clock. Twelve authored chapters contain **144 sequential story steps**, recurring characters, evidence gathering, real circuit, spectrum, code and sequence puzzles plus native 3D photo investigations, scan objectives, deductions with retryable hints, choices about trust and shared memory, a complete ending and epilogue. The mystery connects the city, Sonnenhagen, lake, forest, distant Mühlenau and the new Echowarte. There are no real-time waiting gates; routes and optional work support play over many separate sessions. Exact human playtime has not been measured.
+- A saved storyjournal reveals only completed clues. It retains evidence, decisions, chapter conclusions and the exact next step. Major decisions reappear in later conversations and the final archive arrangement. The original 45 native goals remain available as additional city projects with all prior progress preserved. Existing saves gain the new campaign without resetting collections, chapter progress or neighborhood stories.
+- **Twelve additional optional missions with 43 steps** appear through a nonblocking nearby invitation. Discoveries unlock with campaign progress and remain listed under **AUFTRÄGE → NEBENWEGE**. Accept, ignore, pause or resume freely; these tasks never gate the main story. Rewards pay once, and old dialog or puzzle callbacks cannot advance a changed task.
+- Eight more authored city pockets add Ivo's clock, Mira's open archive, the neighborhood noticeboard, Rafi's repair market, Nova's freight window, a harbor reader, Dora's glass-roof shelter and Edda's independent relay. They sit on reserved dry, accessible plazas outside carriageways. The independent neighborhood lights appear after the corresponding chapter; the archive visibly reflects its final arrangement.
+- Playable bounds become **144,000 × 56,000 game units**, keeping the original city size and saved indices. L03 crosses the broad Wacholderweiten to the remote Echowarte, with a real stream crossing, walking path, lookout, observation station, camp and sixth regional bus stop. Eight new regional places bring the total to 35. Large unbuilt corridors remain between settlements for later expansion.
+- The mission menu adds an illustrated dossier cover, chapter progress, a chapter-by-chapter casefile, gathered evidence, remembered decisions and discovered side missions. Clear buttons return to the main route or pause optional work while retaining progress. The atlas marks the expanded landscape and travel routes.
+
+Start a fresh slot for the opening, or choose **AUFTRÄGE → HAUPTSTORY → HAUPTSTORY VERFOLGEN** in an existing save. **STORYJOURNAL** shows your secured clues and recap. **NEBENWEGE** remembers offers discovered while walking; **KIEZBUCH** retains the seven existing neighborhood stories. The complete main arc has an ending, while open-world activities remain available afterwards.
+
+The new `--story-smoke` integration check traverses all 144 main steps and every new optional mission through actual buttons, scans and puzzle moves, validates deductions, guarded callbacks, chapter and mission rewards, evidence, final choices, save/load and old-save migration. All eight runtime/regression checks run before Android export. Physical-device camera operation and performance still require an on-phone test.
 
 ## 1.25.0 — A neighborhood full of stories, a travel book and distant Mühlenau
 
@@ -83,10 +96,11 @@ godot --headless --path . -- --photo-smoke
 godot --headless --path . -- --quality-smoke
 godot --headless --path . -- --region-smoke
 godot --headless --path . -- --life-smoke
-godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.25.0-preview.apk
+godot --headless --path . -- --story-smoke
+godot --headless --path . --export-debug "Android Preview" build/ParallaxHunt-1.26.0-preview.apk
 ```
 
-Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality, region, life and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
+Set the Java and Android SDK paths in Godot's editor settings. The workflow installs the native tracker source and its bundled detector dependency, imports the project, runs the runtime, city, experience, quality, region, life, story and photo checks and exports a signed preview APK. Native libraries are compressed for direct APK downloads; screenshots and build files are excluded from the game.
 
 The private source archive supplied with this build includes `signing/debug.keystore` for subsequent local test builds. Use `GODOT_ANDROID_KEYSTORE_DEBUG_PATH` to point to it (debug alias `androiddebugkey`, password `android`). The key is excluded from the repository. CI can reuse it through the optional `PARALLAX_DEBUG_KEYSTORE_BASE64` repository secret; otherwise a CI run creates its own test key.
 

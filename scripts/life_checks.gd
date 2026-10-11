@@ -44,8 +44,8 @@ static func smoke(g: Node) -> void:
     g.set_process(false);g.main_menu_active=false;g.main_menu_panel.visible=false;g.selected_save_slot=3;g._sync_modal_ui()
     var path: String=g._save_path();var existed: bool=FileAccess.file_exists(path);var saved: String=FileAccess.get_file_as_string(path) if existed else ""
     g.active_npc_contract={};g.active_job={};g.region_contract={};g.map_waypoint={};g.current_vehicle=-1
-    assert(g.life_places.size()==20 and g.CityLife.STORIES.size()==7,"Authored city and cross-country content is built")
-    assert(g.life_places.filter(func(p):return p.has("plaza")).size()==18,"All eighteen city places have an authored pocket outside the carriageway")
+    assert(g.life_places.size()==28 and g.CityLife.STORIES.size()==7,"Authored city and cross-country content is built")
+    assert(g.life_places.filter(func(p):return p.has("plaza")).size()==26,"All twenty-six city places have an authored pocket outside the carriageway")
     for p in g.life_places:
         if p.has("plaza"):
             assert(not g._rect_near_road(p.plaza,20),"Authored plazas keep the carriageway clear")
@@ -55,7 +55,7 @@ static func smoke(g: Node) -> void:
         var route: PackedVector2Array=g.WorldNavigation.route(g,Vector2(5100,4220),p.pos)
         assert(route.size()>=2,"A route from the city reaches "+str(p.id))
         for i in range(route.size()-1):assert(g.CityAccess.path_clear(g,route[i],route[i+1],14),"Story route avoids walls and water")
-    g.CityLife.clear(g);g.credits=500;g.city_reputation=0
+    g.MainStory.clear(g);g.CityLife.clear(g);g.credits=500;g.city_reputation=0
     for s in g.CityLife.STORIES:
         var before: int=g.credits;var new_places: Dictionary={}
         for task in s.steps:
@@ -76,6 +76,7 @@ static func smoke(g: Node) -> void:
     g.CityLife.begin(g,"post");await play_step(g);g.CityLife.begin(g,"pico")
     assert(int(g.life_progress.pico)==1 and int(g.life_progress.post)==1,"Switching stories retains both pending steps")
     var choices: Dictionary=g.life_choices.duplicate(true);g._save_game();g.CityLife.clear(g);g._load_game(3)
+    g.campaign_state.enabled=false
     assert(g.life_active=="pico" and int(g.life_progress.pico)==1 and int(g.life_progress.post)==1,"Full save/load restores active and paused stories")
     assert(g.life_choices==choices,"Remembered decisions survive save/load")
     g._open_overview("missions");g.city_menus.mission_tab="Entdecken";g.city_menus.show_section("missions")
@@ -91,7 +92,7 @@ static func smoke(g: Node) -> void:
         for i in range(2):await g.get_tree().process_frame
         assert(g.city_menus.content.get_child_count()>3,"Every mission category contains its real content")
     g._close_overview();g._open_overview("collection");g.city_menus.album_tab=3;g.city_menus.show_section("collection")
-    assert(g.city_menus.content.get_child_count()==21,"Journal includes all twenty place notes and controls")
+    assert(g.city_menus.content.get_child_count()==29,"Journal includes all twenty place notes and controls")
     g._close_overview();g.CityLife.restore(g,{"active":"unknown_future_story","progress":{"pico":-4,"post":999}})
     assert(g.life_active.is_empty() and g.life_progress.pico==0 and g.life_progress.post==4,"Unknown and malformed future saves load safely")
     g.CityLife.restore(g,{});assert(g.life_seen.is_empty() and g.life_completed.is_empty(),"Older saves start with clean optional story progress")

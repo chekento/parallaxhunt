@@ -5,6 +5,8 @@ var game: Node
 var section := ""
 var album_tab := 0
 var mission_tab := "Entdecken"
+var case_open:=false
+var journal_chapter: int=-1
 var map_mode := "city"
 var map_category := "Ziele"
 var atlas: Control
@@ -131,14 +133,19 @@ func show_section(kind: String) -> void:
 
 func build_missions() -> void:
     heading.text="Geschichten & Wege"
-    subtitle.text="%d Kiezgeschichten  ·  %d Ausflüge  ·  %d CR" % [game.life_completed.size(),game.region_completed.size(),game.credits]
+    subtitle.text="Kapitel %d / 12  ·  %d Nebenwege entdeckt  ·  %d CR" % [mini(12,int(game.campaign_state.get("chapter",0))+1),game.street_state.get("seen",{}).size(),game.credits]
     var nav=HBoxContainer.new();nav.add_theme_constant_override("separation",10);content.add_child(nav)
-    for name in ["Entdecken","Kiezbuch","Umland","Hauptstory"]:
+    for name in ["Entdecken","Kiezbuch","Umland","Hauptstory","Nebenwege"]:
         var category: String=name
         var b=button(name,func(): mission_tab=category;show_section("missions"));b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
-        b.add_theme_font_size_override("font_size",23)
+        b.add_theme_font_size_override("font_size",19)
         if mission_tab==name:b.add_theme_stylebox_override("normal",card_style(Color("#5c6043"),Color("#e2c58c"),14))
         nav.add_child(b)
+    if not game.street_state.get("active","").is_empty():
+        var q: Dictionary=game.MainStory.side_quest(game.street_state.active)
+        var active=card("NEBENAUFTRAG · "+str(q.title),str(game.MainStory.task(game,"side").title),Color("#b8d5a9"))
+        progress_bar(active,int(game.street_state.progress.get(q.id,0)),q.steps.size(),Color("#b8d5a9"))
+        active.add_child(button("PAUSIEREN · SCHRITT BEHALTEN",func(): game.MainStory.pause_side(game);show_section("missions")))
     if not game.life_active.is_empty():
         var s: Dictionary=game.CityLife.story(game.life_active)
         var active=card("AKTIV · "+str(s.title),str(game.CityLife.step(game).task),Color(s.accent))
@@ -155,7 +162,8 @@ func build_missions() -> void:
         active.add_child(button("AUSFLUG BEENDEN",func(): game.region_contract={};game.navigation_timer=0;show_section("missions")))
     if mission_tab=="Kiezbuch":build_stories();return
     if mission_tab=="Umland":build_outings();return
-    if mission_tab=="Hauptstory":build_chapters();return
+    if mission_tab=="Hauptstory":build_campaign();return
+    if mission_tab=="Nebenwege":build_sidequests();return
     var welcome=card("EIN VIERTEL VOLLER KLEINER GESCHICHTEN","Emil sucht seinen Hund, Jo plant ein Straßenfest und Ada möchte die Uferwand bemalen. Alle Geschichten lassen sich pausieren und später fortsetzen.",Color("#edca91"))
     welcome.add_child(button("DAS KIEZBUCH ÖFFNEN",func(): mission_tab="Kiezbuch";show_section("missions")))
     var nearby: Array=game.life_places.duplicate()
@@ -164,10 +172,12 @@ func build_missions() -> void:
         var place: Dictionary=nearby[i]
         var v=card(str(place.name),"%d m entfernt  ·  %s" % [int(game.player_pos.distance_to(place.pos)/10),"Schon entdeckt" if game.life_seen.get(place.id,false) else "Ein neuer Ort für dein Kiezbuch"],Color("#a8d2ba"))
         v.add_child(button("WEG DORTHIN",navigate_place.bind(place)))
-    var chapter: Dictionary=game.native_chapters[mini(game.native_chapter,game.native_chapters.size()-1)]
-    var main=card("DEINE HAUPTGESCHICHTE",str(chapter.title)+"\n"+str(chapter.desc),Color("#9dc5d9"))
-    main.add_child(button("ALLE KAPITEL",func(): mission_tab="Hauptstory";show_section("missions")))
-    var out=card("WEITER HINAUS","Sonnenhagen, Seen, Wald und die weite Reise über den Heidekamm nach Mühlenau.",Color("#c9e4a2"))
+    var main=card("DIE STADT, DIE SICH ERINNERT",game.MainStory.recap(game),Color("#efca85"))
+    main.add_child(label("12 Hauptkapitel · 144 Handlungsschritte · fortsetzbar über viele Spielsitzungen",22,Color("#a9c5ba")))
+    main.add_child(button("HAUPTSTORY & STORYJOURNAL",func(): mission_tab="Hauptstory";show_section("missions")))
+    var sides=card("KLEINE WEGE, EIGENE GESCHICHTEN","Zwölf weitere Aufträge werden in der Nähe und mit deinem Storyfortschritt entdeckt. Ein Hinweis erscheint im Spiel; die Hauptstory bleibt dabei gespeichert.",Color("#b8d5a9"))
+    sides.add_child(button("ENTDECKTE NEBENWEGE",func(): mission_tab="Nebenwege";show_section("missions")))
+    var out=card("WEITER HINAUS","Sonnenhagen, Seen, Wald, Mühlenau und die weite Reise zur Echowarte.",Color("#c9e4a2"))
     out.add_child(button("AUSFLÜGE INS UMLAND",func(): mission_tab="Umland";show_section("missions")))
 
 func progress_bar(parent: Control,value: int,total: int,accent: Color) -> void:
@@ -317,7 +327,7 @@ func build_map() -> void:
         map_selection={"pos":pos if pos!=Vector2.ZERO else game.player_pos,"name":game._current_objective_label() if pos!=Vector2.ZERO else "Deine Position"}
     _select_map_point(map_selection)
     var guide=card("ORIENTIERUNG","Mint: Du  ·  Gold: Route / Ziel  ·  Blau: Wasser\nB Bus  ·  C Café  ·  G Garage  ·  W Waldhaus  ·  V Aussicht  ·  T Zeltplatz",Color("#73f3ce"))
-    guide.add_child(label("L01 führt nach Sonnenhagen und in die Wildnis. L02 verbindet das Freiland mit Mühlenau. Fünf Regionalhaltestellen verbinden die Orte für 15 CR pro Fahrt. ERLEBEN zeigt Kiez-Orte und Geschichten.",23,Color("#afc5d0")))
+    guide.add_child(label("L01 führt nach Sonnenhagen und in die Wildnis. L02 verbindet das Freiland mit Mühlenau; L03 führt weiter zur Echowarte. Sechs Regionalhaltestellen verbinden die Orte für 15 CR pro Fahrt. ERLEBEN zeigt Kiez-Orte und Geschichten.",23,Color("#afc5d0")))
 func _select_map_point(selection: Dictionary) -> void:
     map_selection=selection
     selected_title.text=str(selection.name)
@@ -327,3 +337,80 @@ func _navigate_selection() -> void:
     if map_selection.is_empty():return
     game.map_waypoint=map_selection.duplicate(true);game.navigation_timer=0
     game._close_overview();game._notify("Route zu "+str(map_selection.name)+" gestartet")
+
+func build_campaign() -> void:
+    heading.text="Die offene Akte"
+    var state: Dictionary=game.campaign_state
+    var index:=int(state.get("chapter",0))
+    var done: bool=index>=game.MainStory.Data.CHAPTERS.size()
+    var cover=preload("res://scripts/story_book_banner.gd").new()
+    cover.chapter_number=mini(12,index+1);cover.completed=done;content.add_child(cover)
+    var active=card(game.MainStory.Data.TITLE,game.MainStory.recap(game),Color("#efca85"))
+    if not done:
+        active.add_child(label("JETZT · "+str(game.MainStory.task(game).title),27,Color("#edf1de")))
+        progress_bar(active,game.MainStory.completed_steps(game),game.MainStory.total_steps(),Color("#efca85"))
+        active.add_child(button("HAUPTSTORY VERFOLGEN",func(): game.MainStory.focus(game)))
+    else:
+        active.add_child(label("12 / 12 Kapitel abgeschlossen · die offene Welt bleibt spielbar",25,Color("#b8d5a9")))
+        active.add_child(label("Deine Archiventscheidung: "+str(Dictionary(state.get("choices",{})).get("ending","Noch nicht gewählt")),24,Color("#dfd4b4")))
+    active.add_child(label("Jeder abgeschlossene Schritt wird gespeichert. Nach einer Pause findest du hier den Rückblick und deine nächste Spur.",22,Color("#a9c5ba")))
+    var nav=HBoxContainer.new();nav.add_theme_constant_override("separation",12);content.add_child(nav)
+    for entry in [[false,"KAPITEL"],[true,"STORYJOURNAL"]]:
+        var journal: bool=entry[0]
+        var b=button(entry[1],func(): case_open=journal;show_section("missions"));b.size_flags_horizontal=Control.SIZE_EXPAND_FILL;nav.add_child(b)
+    if case_open:build_casefile();return
+    for i in range(game.MainStory.Data.CHAPTERS.size()):
+        var c: Dictionary=game.MainStory.Data.CHAPTERS[i]
+        var status: String="ABGESCHLOSSEN" if i<index else ("DEIN AKTUELLES KAPITEL" if i==index else "WIRD IM VERLAUF FREIGESCHALTET")
+        var v=card("%02d  %s" % [i+1,str(c.title)],status,Color("#b6d3b8") if i<index else (Color("#efca85") if i==index else Color("#839e98")))
+        if i<index:v.add_child(label(str(c.reveal),24,Color("#b8cec5")))
+        if i==index:
+            v.add_child(label(str(c.recap),24,Color("#b8cec5")))
+            progress_bar(v,int(state.get("step",0)),c.steps.size(),Color("#efca85"))
+    var legacy=card("WEITERE STADTPROJEKTE","Die bisherigen 45 Sammel-, Hacking-, Fahrzeug- und Stadtziele bleiben als zusätzliche langfristige Projekte erhalten.",Color("#a4bfd0"))
+    legacy.add_child(button("STADTPROJEKTE ANSEHEN",show_projects))
+func build_casefile() -> void:
+    var highest:=mini(11,int(game.campaign_state.get("chapter",0)))
+    if journal_chapter<0 or journal_chapter>highest:journal_chapter=highest
+    var v=card("BISHER GESCHEHEN",game.MainStory.recap(game),Color("#efca85"))
+    v.add_child(label("Nur gesicherte Hinweise erscheinen in der Akte. Unentdeckte Wendungen bleiben verborgen.",22,Color("#a9c5ba")))
+    var nav=HBoxContainer.new();nav.add_theme_constant_override("separation",12);content.add_child(nav)
+    var prev=button("‹ FRÜHERES KAPITEL",func(): journal_chapter=maxi(0,journal_chapter-1);show_section("missions"));prev.disabled=journal_chapter<=0;prev.size_flags_horizontal=Control.SIZE_EXPAND_FILL;nav.add_child(prev)
+    var next=button("SPÄTERES KAPITEL ›",func(): journal_chapter=mini(highest,journal_chapter+1);show_section("missions"));next.disabled=journal_chapter>=highest;next.size_flags_horizontal=Control.SIZE_EXPAND_FILL;nav.add_child(next)
+    card("KAPITEL %02d · GESICHERTE HINWEISE" % [journal_chapter+1],"",Color("#efca85"))
+    var count:=0
+    for entry in game.campaign_state.get("journal",[]):
+        if int(entry.chapter)==journal_chapter:card(str(entry.title),str(entry.text),Color("#b6cec2"));count+=1
+    if count==0:card("Die erste Zeile ist noch frei","Folge der nächsten Spur. Dein erster gesicherter Hinweis erscheint hier.",Color("#839e98"))
+    var choices: Dictionary=game.campaign_state.get("choices",{})
+    if not choices.is_empty():
+        var record=card("DEINE ENTSCHEIDUNGEN","",Color("#efca85"))
+        for answer in choices.values():record.add_child(label("● "+str(answer),24,Color("#ccd7c6")))
+    var items: Dictionary=game.campaign_state.get("items",{})
+    if not items.is_empty():
+        var pocket=card("GESICHERTE BELEGE","",Color("#b8d5a9"))
+        for name in items:pocket.add_child(label("✓ "+str(name),24,Color("#ccd7c6")))
+func build_sidequests() -> void:
+    card("AUFTRÄGE, DIE DU UNTERWEGS FINDEST","Ein kleiner Hinweis erscheint, sobald du in die Nähe kommst. Du entscheidest, ob du mitmachst. Pausierte Aufträge behalten jeden Schritt; spätere Kapitel öffnen weitere Begegnungen.",Color("#b8d5a9"))
+    var count:=0
+    for q in game.MainStory.Side.QUESTS:
+        if not game.street_state.get("seen",{}).get(q.id,false):continue
+        count+=1
+        var done: bool=game.street_state.completed.get(q.id,false)
+        var current:=int(game.street_state.progress.get(q.id,0))
+        var v=card(str(q.title)+( " · ABGESCHLOSSEN" if done else ""),str(q.desc),Color("#b8d5a9"))
+        progress_bar(v,current,q.steps.size(),Color("#b8d5a9"))
+        if not done:
+            v.add_child(label("Einmalige Belohnung: %d CR" % int(q.reward),23,Color("#c8d3ba")))
+            if game.street_state.active!=q.id:
+                var id: String=q.id
+                v.add_child(button("FORTSETZEN" if current>0 else "ANNEHMEN",func(): game.MainStory.begin_side(game,id)))
+        var place: Dictionary=game.MainStory.location(game,str(q.steps[0].at))
+        v.add_child(button("AUFTRAGSORT AUF DER KARTE",navigate_place.bind(place)))
+    if count==0:card("Noch keine Begegnung entdeckt","Erkunde das Viertel rund um Ivos Uhr, Linas Lesefenster und Adas Atelier. Dort warten die ersten kleinen Aufgaben.",Color("#839e98"))
+
+func show_projects() -> void:
+    for child in content.get_children():content.remove_child(child);child.queue_free()
+    card("STADTPROJEKTE","45 zusätzliche Ziele. Dein Fortschritt aus früheren Versionen bleibt erhalten.",Color("#a4bfd0"))
+    content.add_child(button("ZURÜCK ZUR HAUPTSTORY",func(): show_section("missions")))
+    build_chapters()

@@ -48,12 +48,12 @@ func text(p: Vector2,title: String,font_size: int,color: Color,width: float=230)
     draw_string(ThemeDB.fallback_font,p,title,HORIZONTAL_ALIGNMENT_LEFT,width,font_size,color)
 func place_label(pixel: Vector2,title: String,color: Color) -> void:
     var label: String=title.split(" · ")[0]
-    var width: float=minf(220,ThemeDB.fallback_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,16).x)
+    var width: float=minf(220,ThemeDB.fallback_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,22).x)
     for offset in [Vector2(18,-11),Vector2(18,22),Vector2(-width-18,-11),Vector2(-width-18,22)]:
-        var r:=Rect2(pixel+offset-Vector2(2,16),Vector2(width+6,22))
+        var r:=Rect2(pixel+offset-Vector2(2,22),Vector2(width+6,30))
         if not Rect2(Vector2(22,42),size-Vector2(44,85)).encloses(r):continue
         if occupied_labels.any(func(other):return other.intersects(r)):continue
-        text(pixel+offset,label,16,color,width+4);occupied_labels.append(r);return
+        text(pixel+offset,label,22,color,width+4);occupied_labels.append(r);return
 func _draw() -> void:
     if game==null:return
     if not initialized:reset_view()
@@ -94,9 +94,8 @@ func _draw() -> void:
         path(road.points,Color("#a99b7f") if regional else Color("#a2aea1"),width+2.3)
         path(road.points,Color("#ded4ac") if trail else (Color("#f0d997") if regional else Color("#f4f0d8")),width)
     if mode=="region" and zoom<2:
-        for entry in [[Vector2(8500,1600),"MEGACITY",21],[Vector2(30700,5600),"SONNENHAGEN",20],[Vector2(27000,25000),"LINDENFELDER",19],[Vector2(55000,4800),"FICHTENWALD",21],[Vector2(70300,9500),"HOHES FREILAND",18],[Vector2(87700,11600),"HEIDEKAMM",18],[Vector2(92300,27900),"MÜHLENAU",19]]:
-            var p: Vector2=point(entry[0]);text(p,entry[1],int(entry[2]),ink,260)
-            occupied_labels.append(Rect2(p-Vector2(0,23),Vector2(210,28)))
+        for entry in [[Vector2(8500,1600),"MEGACITY",21],[Vector2(30700,5600),"SONNENHAGEN",20],[Vector2(27000,25000),"LINDENFELDER",19],[Vector2(55000,4800),"FICHTENWALD",21],[Vector2(70300,9500),"HOHES FREILAND",18],[Vector2(87700,11600),"HEIDEKAMM",18],[Vector2(92300,27900),"MÜHLENAU",19],[Vector2(111500,25000),"WACHOLDERWEITEN",18],[Vector2(130000,46300),"ECHOWARTE",19]]:
+            region_title(entry[0],str(entry[1]),int(entry[2])+3,ink)
     markers=build_markers()
     for m in markers:
         var pixel:=point(Vector2(m.pos))
@@ -130,7 +129,7 @@ func build_markers() -> Array:
     if mode=="region" and zoom<2 and category in ["Ziele","Orte"]:
         result.append({"pos":Vector2(5100,4220),"name":"Zentrum","glyph":"C","color":Color("#52756c")})
         for p in game.region_pois:
-            if str(p.id) in ["suburb_square","lake_view","trailhead","ranger","ridge_view","far_view","village_square","old_mill","south_view"]:result.append(marker_data(p))
+            if str(p.id) in ["suburb_square","lake_view","trailhead","ranger","ridge_view","far_view","village_square","old_mill","south_view","echo_station","echo_view","echo_gate"]:result.append(marker_data(p))
         return result
     if category=="Erleben":
         for p in game.life_places:result.append({"pos":p.pos,"name":p.name,"glyph":"★" if game.life_seen.get(p.id,false) else "!","color":Color("#84693e")})
@@ -205,3 +204,12 @@ func _gui_input(event: InputEvent) -> void:
         last_drag=event.position;accept_event()
     elif event is InputEventMagnifyGesture:zoom_by(event.factor);accept_event()
     elif event is InputEventPanGesture:center+=event.delta*40/maxf(.0001,scale_base*zoom);queue_redraw();accept_event()
+
+func region_title(world: Vector2,title: String,font_size: int,tint: Color) -> void:
+    var p:=point(world)
+    var width: float=minf(320,ThemeDB.fallback_font.get_string_size(title,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size).x)
+    for offset in [Vector2.ZERO,Vector2(0,-32),Vector2(-width*.4,32),Vector2(-width*.7,-48)]:
+        var r:=Rect2(p+offset-Vector2(2,font_size),Vector2(width+6,font_size+9))
+        if not Rect2(Vector2(20,50),size-Vector2(40,98)).encloses(r):continue
+        if occupied_labels.any(func(other):return other.intersects(r)):continue
+        text(p+offset,title,font_size,tint,width+4);occupied_labels.append(r);return

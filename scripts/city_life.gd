@@ -62,6 +62,7 @@ static func build(g: Node) -> void:
         place("lookout","Bank der Abendlichter",Vector2(24600,14430),"bench","Eine Bank am östlichen Stadtrand. Ein guter Ort, um ohne Eile wieder zu Kräften zu kommen."),
         place("village_board","Mühlenau · Dorfbrett",Vector2(94950,29570),"post","Tessa sammelt Neuigkeiten von Hof, Mühle und Stadt."),
         place("mill_box","Lichtkasten der alten Mühle",Vector2(96095,32820),"utility","Das Dorf wartet auf die Reparatur des alten Mühlenlichts.")]
+    g.life_places.append_array(g.StoryRegion.city_places(g))
     var plazas: Array=[]
     for p in g.life_places:
         if Vector2(p.pos).x>=g.CITY_SIZE.x:continue
